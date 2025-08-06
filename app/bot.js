@@ -302,6 +302,16 @@ async function callPushCall(channelId, channelConfig, keyword, originalMessage, 
         apiUrl.searchParams.append('to', channelConfig.phone_number.replace('+', '')); // 移除 + 號
         
         console.log(`🔗 [${channelConfig.name || channelId}] API URL: ${apiUrl.toString().replace(channelConfig.api_key, '****')}`);
+
+        const now = Date.now();
+        const phoneKey = channelConfig.phone_number;
+        if (!stats.lastCallTime) stats.lastCallTime = {};
+        if (stats.lastCallTime[phoneKey] && now - stats.lastCallTime[phoneKey] < 15000) {
+            console.log(`⛔ 已在15秒內對 ${phoneKey} 撥打過，跳過這次通知`);
+            return;
+        }
+        stats.lastCallTime[phoneKey] = now;
+
         
         // 更新API使用統計
         stats.apiUsage[apiKeyShort].totalCalls++;
@@ -314,6 +324,8 @@ async function callPushCall(channelId, channelConfig, keyword, originalMessage, 
             },
             timeout: 30000 // 30秒超時
         });
+
+        
         
         if (response.status === 200) {
             // 成功
