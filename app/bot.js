@@ -304,13 +304,14 @@ async function callPushCall(channelId, channelConfig, keyword, originalMessage, 
         console.log(`🔗 [${channelConfig.name || channelId}] API URL: ${apiUrl.toString().replace(channelConfig.api_key, '****')}`);
 
         const now = Date.now();
-        const phoneKey = channelConfig.phone_number;
+        const phoneKey = `${channelConfig.phone_number}-${channelConfig.from}`; // 更細緻的 key
         if (!stats.lastCallTime) stats.lastCallTime = {};
         if (stats.lastCallTime[phoneKey] && now - stats.lastCallTime[phoneKey] < 15000) {
             console.log(`⛔ 已在15秒內對 ${phoneKey} 撥打過，跳過這次通知`);
             return;
         }
         stats.lastCallTime[phoneKey] = now;
+
 
         
         // 更新API使用統計
