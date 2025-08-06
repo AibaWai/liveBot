@@ -287,82 +287,66 @@ client.on('messageCreate', async (message) => {
 // 呼叫 PushCall API 函數
 async function callPushCall(channelId, channelConfig, keyword, originalMessage, youtubeUrl = '') {
     const apiKeyShort = channelConfig.api_key.substring(0, 8);
-    
     try {
         console.log(`📞 [${channelConfig.name || channelId}] 準備撥打電話通知...`);
         console.log(`🔑 使用 API Key: ${apiKeyShort}****`);
         console.log(`📱 目標號碼: ${channelConfig.phone_number}`);
+        console.log(`📞 來電顯示號碼 (from): ${channelConfig.from}`);
         console.log(`💬 通知內容: ${channelConfig.message}`);
         console.log(`🔍 觸發關鍵字: ${keyword}`);
-        
-        // PushCall API 使用 GET 請求
+
+        // 構建 GET 請求 URL
         const apiUrl = new URL('https://pushcall.me/api/call');
         apiUrl.searchParams.append('api_key', channelConfig.api_key);
-        apiUrl.searchParams.append('from', channelConfig.from.replace('+', '')); // Caller ID index
-        apiUrl.searchParams.append('to', channelConfig.phone_number.replace('+', '')); // 移除 + 號
-        
-        console.log(`🔗 [${channelConfig.name || channelId}] API URL: ${apiUrl.toString().replace(channelConfig.api_key, '****')}`);
+        apiUrl.searchParams.append('from', channelConfig.from.replace('+', ''));
+        apiUrl.searchParams.append('to', channelConfig.phone_number.replace('+', ''));
 
+        console.log(`🔗 API URL: ${apiUrl.toString().replace(channelConfig.api_key, '****')}`);
+
+        // 改用 phone_number + from 組合做為獨立通知 key
         const now = Date.now();
-        const phoneKey = `${channelConfig.phone_number}-${channelConfig.from}`; // 更細緻的 key
+        const callKey = `${channelConfig.phone_number}-${channelConfig.from}`;
         if (!stats.lastCallTime) stats.lastCallTime = {};
-        if (stats.lastCallTime[phoneKey] && now - stats.lastCallTime[phoneKey] < 15000) {
-            console.log(`⛔ 已在15秒內對 ${phoneKey} 撥打過，跳過這次通知`);
+        if (stats.lastCallTime[callKey] && now - stats.lastCallTime[callKey] < 15000) {
+            console.log(`⛔ 已在15秒內對 ${callKey} 撥打過，跳過這次通知`);
             return;
         }
-        stats.lastCallTime[phoneKey] = now;
+        stats.lastCallTime[callKey] = now;
 
-
-        
-        // 更新API使用統計
+        // 更新 API 使用統計
         stats.apiUsage[apiKeyShort].totalCalls++;
         stats.apiUsage[apiKeyShort].lastUsed = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
-        
-        // 發送 GET 請求
+
+        // 執行 API 呼叫
         const response = await axios.get(apiUrl.toString(), {
-            headers: {
-                'User-Agent': 'Discord-Live-Bot-DualAPI/1.0'
-            },
-            timeout: 30000 // 30秒超時
+            headers: { 'User-Agent': 'Discord-Live-Bot-DualAPI/1.0' },
+            timeout: 30000
         });
 
-        
-        
         if (response.status === 200) {
-            // 成功
             stats.channelStats[channelId].callsMade++;
             stats.channelStats[channelId].lastCallSuccess = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
             stats.apiUsage[apiKeyShort].successCalls++;
-            
             console.log(`✅ [${channelConfig.name || channelId}] 電話通知撥打成功！`);
             console.log(`📊 API 回應:`, JSON.stringify(response.data, null, 2));
-            console.log(`📈 API ${apiKeyShort}**** 使用統計: ${stats.apiUsage[apiKeyShort].successCalls}/${stats.apiUsage[apiKeyShort].totalCalls} 成功`);
         } else {
-            // 異常狀態
             stats.apiUsage[apiKeyShort].failedCalls++;
-            stats.channelStats[channelId].lastCallError = `狀態碼 ${response.status}: ${new Date().toLocaleString('zh-TW')}`;
-            
-            console.log(`⚠️  [${channelConfig.name || channelId}] API 回應狀態異常:`, response.status);
+            stats.channelStats[channelId].lastCallError = `狀態碼 ${response.status}: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}`;
+            console.log(`⚠️ [${channelConfig.name || channelId}] API 回應狀態異常:`, response.status);
             console.log('📋 回應內容:', response.data);
         }
-        
     } catch (error) {
-        // 錯誤處理
         stats.apiUsage[apiKeyShort].failedCalls++;
-        stats.channelStats[channelId].lastCallError = `${error.message}: ${new Date().toLocaleString('zh-TW')}`;
-        
-        console.error(`❌ [${channelConfig.name || channelId}] PushCall API 呼叫失敗:`);
-        console.error(`🔑 API Key: ${apiKeyShort}****`);
-        console.error('🔍 錯誤訊息:', error.message);
-        
+        stats.channelStats[channelId].lastCallError = `${error.message}: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}`;
+        console.error(`❌ [${channelConfig.name || channelId}] PushCall API 呼叫失敗:`, error.message);
         if (error.response) {
-            console.error('📋 API 錯誤回應:', error.response.status);
-            console.error('📄 錯誤詳情:', error.response.data);
+            console.error('📋 API 錯誤回應:', error.response.status, error.response.data);
         } else if (error.request) {
-            console.error('🌐 網路請求失敗，請檢查網路連線');
+            console.error('🌐 網路請求失敗，請檢查網路');
         }
     }
 }
+
 
 // Discord 客戶端錯誤處理
 client.on('error', (error) => {
