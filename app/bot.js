@@ -298,10 +298,7 @@ async function callPushCall(channelId, channelConfig, keyword, originalMessage, 
         // PushCall API 使用 GET 請求
         const apiUrl = new URL('https://pushcall.me/api/call');
         apiUrl.searchParams.append('api_key', channelConfig.api_key);
-
-        const callerIdIndex = channelConfig.from || 1; // 預設值為 1（如果沒設定）
-        apiUrl.searchParams.append('from', callerIdIndex.toString());
-
+        apiUrl.searchParams.append('from', channelConfig.from.replace('+', '')); // Caller ID index
         apiUrl.searchParams.append('to', channelConfig.phone_number.replace('+', '')); // 移除 + 號
         
         console.log(`🔗 [${channelConfig.name || channelId}] API URL: ${apiUrl.toString().replace(channelConfig.api_key, '****')}`);
