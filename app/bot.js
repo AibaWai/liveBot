@@ -139,6 +139,7 @@ client.on('messageCreate', async (message) => {
     }
 });
 
+
 // 修正版的 PushCall API 呼叫函數
 async function callPushCallMe(originalMessage, youtubeUrl = '') {
     try {
