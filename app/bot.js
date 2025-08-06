@@ -6,10 +6,10 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-console.log('🚀 Discord Live Alert Bot 啟動中...');
+console.log('🚀 雙 API 多頻道 Discord Live Alert Bot 啟動中...');
 
 // 檢查必要的環境變數
-const requiredEnvVars = ['DISCORD_TOKEN', 'CHANNEL_ID', 'PUSHCALLME_API_KEY', 'PHONE_NUMBER'];
+const requiredEnvVars = ['DISCORD_TOKEN', 'CHANNEL_CONFIGS'];
 const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
 
 if (missingVars.length > 0) {
@@ -18,22 +18,56 @@ if (missingVars.length > 0) {
     process.exit(1);
 }
 
-// 設定參數 (從環境變數讀取)
+// 解析頻道設定 JSON
+let channelConfigs = {};
+try {
+    channelConfigs = JSON.parse(process.env.CHANNEL_CONFIGS);
+    console.log('⚙️  頻道設定載入成功:', Object.keys(channelConfigs).length, '個頻道');
+} catch (error) {
+    console.error('❌ 頻道設定 JSON 格式錯誤:', error.message);
+    console.error('請檢查 CHANNEL_CONFIGS 環境變數格式');
+    process.exit(1);
+}
+
+// 基本設定
 const config = {
     DISCORD_TOKEN: process.env.DISCORD_TOKEN,
-    CHANNEL_ID: process.env.CHANNEL_ID,
-    PUSHCALLME_CONFIG: {
-        api_key: process.env.PUSHCALLME_API_KEY,
-        phone_number: process.env.PHONE_NUMBER,
-        message: '三枝明那開始直播了！快來看～',
-        voice: 'female',
-        language: 'zh-TW'
-    }
+    CHANNEL_CONFIGS: channelConfigs
 };
 
-console.log('⚙️  設定載入完成');
-console.log(`📺 監聽頻道 ID: ${config.CHANNEL_ID}`);
-console.log(`📞 通知號碼: ${config.PUSHCALLME_CONFIG.phone_number}`);
+// 驗證頻道設定格式
+for (const [channelId, channelConfig] of Object.entries(config.CHANNEL_CONFIGS)) {
+    // 檢查必要欄位
+    if (!channelConfig.keywords || !Array.isArray(channelConfig.keywords)) {
+        console.error(`❌ 頻道 ${channelId} 的 keywords 設定錯誤，必須是陣列`);
+        process.exit(1);
+    }
+    if (!channelConfig.message) {
+        console.error(`❌ 頻道 ${channelId} 缺少 message 設定`);
+        process.exit(1);
+    }
+    if (!channelConfig.api_key) {
+        console.error(`❌ 頻道 ${channelId} 缺少 api_key 設定`);
+        process.exit(1);
+    }
+    if (!channelConfig.phone_number) {
+        console.error(`❌ 頻道 ${channelId} 缺少 phone_number 設定`);
+        process.exit(1);
+    }
+    
+    // 驗證API設定
+    console.log(`🔑 頻道 ${channelId} 使用 API Key: ${channelConfig.api_key.substring(0, 8)}****`);
+    console.log(`📱 頻道 ${channelId} 通知號碼: ${channelConfig.phone_number}`);
+}
+
+console.log('📋 監控設定摘要:');
+for (const [channelId, channelConfig] of Object.entries(config.CHANNEL_CONFIGS)) {
+    console.log(`   📺 頻道 ${channelId} (${channelConfig.name || '未命名'}):`);
+    console.log(`      🔍 關鍵字: ${channelConfig.keywords.join(', ')}`);
+    console.log(`      💬 通知訊息: ${channelConfig.message}`);
+    console.log(`      🔑 API Key: ${channelConfig.api_key.substring(0, 8)}****`);
+    console.log(`      📞 電話: ${channelConfig.phone_number}`);
+}
 
 // 建立 Discord 客戶端
 const client = new Client({
@@ -47,27 +81,88 @@ const client = new Client({
 // 統計資訊
 let stats = {
     startTime: Date.now(),
-    messagesProcessed: 0,
-    liveDetected: 0,
-    callsMade: 0,
-    lastLiveDetection: null
+    totalMessagesProcessed: 0,
+    channelStats: {},
+    lastDetections: [],
+    apiUsage: {} // 追蹤每個API的使用情況
 };
 
-// 健康檢查端點 (Koyeb 和 UptimeRobot 需要)
+// 初始化頻道統計
+for (const [channelId, channelConfig] of Object.entries(config.CHANNEL_CONFIGS)) {
+    stats.channelStats[channelId] = {
+        messagesProcessed: 0,
+        keywordsDetected: 0,
+        callsMade: 0,
+        lastDetection: null,
+        lastCallSuccess: null,
+        lastCallError: null
+    };
+    
+    // 初始化API使用統計
+    const apiKey = channelConfig.api_key.substring(0, 8);
+    if (!stats.apiUsage[apiKey]) {
+        stats.apiUsage[apiKey] = {
+            totalCalls: 0,
+            successCalls: 0,
+            failedCalls: 0,
+            lastUsed: null,
+            phoneNumbers: new Set()
+        };
+    }
+    stats.apiUsage[apiKey].phoneNumbers.add(channelConfig.phone_number);
+}
+
+// 健康檢查端點
 app.get('/', (req, res) => {
     const uptime = Math.floor((Date.now() - stats.startTime) / 1000);
+    const channelStatsFormatted = {};
+    
+    // 格式化頻道統計
+    for (const [channelId, channelStat] of Object.entries(stats.channelStats)) {
+        const channelConfig = config.CHANNEL_CONFIGS[channelId];
+        channelStatsFormatted[channelId] = {
+            頻道資訊: {
+                名稱: channelConfig.name || '未命名',
+                關鍵字: channelConfig.keywords,
+                通知訊息: channelConfig.message,
+                API帳號: channelConfig.api_key.substring(0, 8) + '****',
+                通知號碼: channelConfig.phone_number
+            },
+            統計: {
+                訊息處理數: channelStat.messagesProcessed,
+                關鍵字偵測數: channelStat.keywordsDetected,
+                通話撥打數: channelStat.callsMade,
+                最後偵測時間: channelStat.lastDetection || '尚未偵測到',
+                最後成功通話: channelStat.lastCallSuccess || '尚未成功',
+                最後錯誤: channelStat.lastCallError || '無錯誤'
+            }
+        };
+    }
+    
+    // 格式化API使用統計
+    const apiUsageFormatted = {};
+    for (const [apiKey, usage] of Object.entries(stats.apiUsage)) {
+        apiUsageFormatted[apiKey + '****'] = {
+            總通話數: usage.totalCalls,
+            成功數: usage.successCalls,
+            失敗數: usage.failedCalls,
+            成功率: usage.totalCalls > 0 ? `${Math.round(usage.successCalls / usage.totalCalls * 100)}%` : 'N/A',
+            最後使用: usage.lastUsed || '尚未使用',
+            關聯電話: Array.from(usage.phoneNumbers)
+        };
+    }
+    
     res.json({
-        status: 'Discord Live Alert Bot 運行中 🤖',
+        status: '雙 API 多頻道 Discord Live Alert Bot 運行中 🤖📞📞',
         uptime: `${Math.floor(uptime / 3600)}小時 ${Math.floor((uptime % 3600) / 60)}分鐘`,
         bot_status: client.user ? `✅ ${client.user.tag}` : '❌ 未連線',
         connected_guilds: client.guilds.cache.size,
-        monitoring_channel: config.CHANNEL_ID,
-        stats: {
-            訊息處理數: stats.messagesProcessed,
-            直播偵測數: stats.liveDetected,
-            通話撥打數: stats.callsMade,
-            最後偵測時間: stats.lastLiveDetection || '尚未偵測到'
-        },
+        monitoring_channels: Object.keys(config.CHANNEL_CONFIGS).length,
+        total_messages_processed: stats.totalMessagesProcessed,
+        api_accounts: Object.keys(stats.apiUsage).length,
+        channels: channelStatsFormatted,
+        api_usage: apiUsageFormatted,
+        recent_detections: stats.lastDetections.slice(-10), // 最近10次偵測
         timestamp: new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })
     });
 });
@@ -76,9 +171,22 @@ app.get('/health', (req, res) => {
     res.json({ 
         status: client.user ? 'healthy' : 'unhealthy',
         bot: client.user?.tag || 'Not ready',
-        guilds: client.guilds.cache.size,
+        channels: Object.keys(config.CHANNEL_CONFIGS).length,
+        apis: Object.keys(stats.apiUsage).length,
         uptime: Math.floor((Date.now() - stats.startTime) / 1000)
     });
+});
+
+// API 使用統計端點
+app.get('/api-stats', (req, res) => {
+    const apiStatsDetailed = {};
+    for (const [apiKey, usage] of Object.entries(stats.apiUsage)) {
+        apiStatsDetailed[apiKey + '****'] = {
+            ...usage,
+            phoneNumbers: Array.from(usage.phoneNumbers)
+        };
+    }
+    res.json(apiStatsDetailed);
 });
 
 // 啟動 Express 伺服器
@@ -89,39 +197,76 @@ app.listen(PORT, () => {
 // Discord Bot 事件處理
 client.once('ready', () => {
     console.log(`✅ Discord Bot 已上線: ${client.user.tag}`);
-    console.log(`🎯 正在監聽頻道: ${config.CHANNEL_ID}`);
     console.log(`🏠 已加入 ${client.guilds.cache.size} 個伺服器`);
-    console.log('⏰ 開始 24/7 監聽直播通知...');
+    console.log(`📺 正在監聽 ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道`);
+    console.log(`🔑 使用 ${Object.keys(stats.apiUsage).length} 個 PushCall API 帳號`);
+    console.log('⏰ 開始多頻道多API監聽...');
     
     // 設定 Bot 狀態
-    client.user.setActivity('監聽直播通知中...', { type: 'WATCHING' });
+    client.user.setActivity(`監聽 ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道`, { type: 'WATCHING' });
 });
 
 // 監聽所有訊息
 client.on('messageCreate', async (message) => {
     try {
-        // 統計處理的訊息數
-        stats.messagesProcessed++;
+        // 統計總處理的訊息數
+        stats.totalMessagesProcessed++;
         
         // 忽略自己的訊息
         if (message.author.bot && message.author.id === client.user.id) {
             return;
         }
         
-        // 檢查是否為指定頻道
-        if (message.channel.id !== config.CHANNEL_ID) {
-            return;
+        // 檢查是否為我們監聽的頻道
+        const channelId = message.channel.id;
+        if (!config.CHANNEL_CONFIGS[channelId]) {
+            return; // 不是我們監聽的頻道，忽略
         }
         
-        console.log(`📨 收到頻道訊息: ${message.content.substring(0, 100)}...`);
+        // 更新頻道統計
+        stats.channelStats[channelId].messagesProcessed++;
         
-        // 檢查訊息是否包含 "live over" (直播通知關鍵字)
-        if (message.content.includes('live over')) {
-            stats.liveDetected++;
-            stats.lastLiveDetection = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
+        const channelConfig = config.CHANNEL_CONFIGS[channelId];
+        const messageContent = message.content.toLowerCase();
+        
+        console.log(`📨 [頻道 ${channelConfig.name || channelId}] 收到訊息: ${message.content.substring(0, 100)}...`);
+        
+        // 檢查是否包含任何關鍵字
+        let foundKeyword = null;
+        for (const keyword of channelConfig.keywords) {
+            if (messageContent.includes(keyword.toLowerCase())) {
+                foundKeyword = keyword;
+                break;
+            }
+        }
+        
+        if (foundKeyword) {
+            // 更新統計
+            stats.channelStats[channelId].keywordsDetected++;
+            stats.channelStats[channelId].lastDetection = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
             
-            console.log('🔔 偵測到直播通知！');
+            // 記錄最近偵測
+            const detection = {
+                時間: new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' }),
+                頻道: channelConfig.name || channelId,
+                頻道ID: channelId,
+                關鍵字: foundKeyword,
+                訊息: message.content.substring(0, 150),
+                作者: message.author.username,
+                使用API: channelConfig.api_key.substring(0, 8) + '****',
+                通知號碼: channelConfig.phone_number
+            };
+            stats.lastDetections.push(detection);
+            
+            // 只保留最近50次記錄
+            if (stats.lastDetections.length > 50) {
+                stats.lastDetections = stats.lastDetections.slice(-50);
+            }
+            
+            console.log(`🔔 [${channelConfig.name || channelId}] 偵測到關鍵字: "${foundKeyword}"`);
             console.log(`📄 完整訊息: ${message.content}`);
+            console.log(`🔑 將使用 API: ${channelConfig.api_key.substring(0, 8)}****`);
+            console.log(`📞 通知號碼: ${channelConfig.phone_number}`);
             
             // 提取 YouTube 連結 (選用)
             const youtubeMatch = message.content.match(/https:\/\/www\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]+)/);
@@ -131,48 +276,70 @@ client.on('messageCreate', async (message) => {
                 console.log(`🎬 YouTube 連結: ${youtubeUrl}`);
             }
             
-            // 呼叫 PushCallMe API
-            await callPushCallMe(message.content, youtubeUrl);
+            // 呼叫對應的 PushCall API
+            await callPushCall(channelId, channelConfig, foundKeyword, message.content, youtubeUrl);
         }
     } catch (error) {
         console.error('❌ 處理訊息時發生錯誤:', error.message);
     }
 });
 
-
-// 修正版的 PushCall API 呼叫函數
-async function callPushCallMe(originalMessage, youtubeUrl = '') {
+// 呼叫 PushCall API 函數
+async function callPushCall(channelId, channelConfig, keyword, originalMessage, youtubeUrl = '') {
+    const apiKeyShort = channelConfig.api_key.substring(0, 8);
+    
     try {
-        console.log('📞 準備撥打電話通知...');
-        console.log(`📱 目標號碼: ${config.PUSHCALLME_CONFIG.phone_number}`);
+        console.log(`📞 [${channelConfig.name || channelId}] 準備撥打電話通知...`);
+        console.log(`🔑 使用 API Key: ${apiKeyShort}****`);
+        console.log(`📱 目標號碼: ${channelConfig.phone_number}`);
+        console.log(`💬 通知內容: ${channelConfig.message}`);
+        console.log(`🔍 觸發關鍵字: ${keyword}`);
         
-        // PushCall API 使用 GET 請求，參數放在 URL 中
+        // PushCall API 使用 GET 請求
         const apiUrl = new URL('https://pushcall.me/api/call');
-        apiUrl.searchParams.append('api_key', config.PUSHCALLME_CONFIG.api_key);
-        apiUrl.searchParams.append('from', '1'); // Caller ID index (1-5)
-        apiUrl.searchParams.append('to', config.PUSHCALLME_CONFIG.phone_number.replace('+', '')); // 移除 + 號
+        apiUrl.searchParams.append('api_key', channelConfig.api_key);
+        apiUrl.searchParams.append('from', '1'); // Caller ID index
+        apiUrl.searchParams.append('to', channelConfig.phone_number.replace('+', '')); // 移除 + 號
         
-        console.log(`🔗 API URL: ${apiUrl.toString().replace(config.PUSHCALLME_CONFIG.api_key, '****')}`);
+        console.log(`🔗 [${channelConfig.name || channelId}] API URL: ${apiUrl.toString().replace(channelConfig.api_key, '****')}`);
+        
+        // 更新API使用統計
+        stats.apiUsage[apiKeyShort].totalCalls++;
+        stats.apiUsage[apiKeyShort].lastUsed = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
         
         // 發送 GET 請求
         const response = await axios.get(apiUrl.toString(), {
             headers: {
-                'User-Agent': 'Discord-Live-Bot/1.0'
+                'User-Agent': 'Discord-Live-Bot-DualAPI/1.0'
             },
             timeout: 30000 // 30秒超時
         });
         
         if (response.status === 200) {
-            stats.callsMade++;
-            console.log('✅ 電話通知撥打成功！');
-            console.log('📊 API 回應:', JSON.stringify(response.data, null, 2));
+            // 成功
+            stats.channelStats[channelId].callsMade++;
+            stats.channelStats[channelId].lastCallSuccess = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
+            stats.apiUsage[apiKeyShort].successCalls++;
+            
+            console.log(`✅ [${channelConfig.name || channelId}] 電話通知撥打成功！`);
+            console.log(`📊 API 回應:`, JSON.stringify(response.data, null, 2));
+            console.log(`📈 API ${apiKeyShort}**** 使用統計: ${stats.apiUsage[apiKeyShort].successCalls}/${stats.apiUsage[apiKeyShort].totalCalls} 成功`);
         } else {
-            console.log('⚠️  API 回應狀態異常:', response.status);
+            // 異常狀態
+            stats.apiUsage[apiKeyShort].failedCalls++;
+            stats.channelStats[channelId].lastCallError = `狀態碼 ${response.status}: ${new Date().toLocaleString('zh-TW')}`;
+            
+            console.log(`⚠️  [${channelConfig.name || channelId}] API 回應狀態異常:`, response.status);
             console.log('📋 回應內容:', response.data);
         }
         
     } catch (error) {
-        console.error('❌ PushCall API 呼叫失敗:');
+        // 錯誤處理
+        stats.apiUsage[apiKeyShort].failedCalls++;
+        stats.channelStats[channelId].lastCallError = `${error.message}: ${new Date().toLocaleString('zh-TW')}`;
+        
+        console.error(`❌ [${channelConfig.name || channelId}] PushCall API 呼叫失敗:`);
+        console.error(`🔑 API Key: ${apiKeyShort}****`);
         console.error('🔍 錯誤訊息:', error.message);
         
         if (error.response) {
