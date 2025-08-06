@@ -139,32 +139,29 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// 呼叫 PushCallMe API 函數
+// 修正版的 PushCall API 呼叫函數
 async function callPushCallMe(originalMessage, youtubeUrl = '') {
     try {
-        // 構建 API 請求資料
-        const requestData = {
-            api_key: config.PUSHCALLME_CONFIG.api_key,
-            phone_number: config.PUSHCALLME_CONFIG.phone_number,
-            message: config.PUSHCALLME_CONFIG.message,
-            voice: config.PUSHCALLME_CONFIG.voice,
-            language: config.PUSHCALLME_CONFIG.language
-        };
-        
         console.log('📞 準備撥打電話通知...');
-        console.log(`📱 目標號碼: ${requestData.phone_number}`);
-        console.log(`💬 通知內容: ${requestData.message}`);
+        console.log(`📱 目標號碼: ${config.PUSHCALLME_CONFIG.phone_number}`);
         
-        // 發送 API 請求
-        const response = await axios.post('https://api.pushcall.me/v1/call', requestData, {
+        // PushCall API 使用 GET 請求，參數放在 URL 中
+        const apiUrl = new URL('https://pushcall.me/api/call');
+        apiUrl.searchParams.append('api_key', config.PUSHCALLME_CONFIG.api_key);
+        apiUrl.searchParams.append('from', '1'); // Caller ID index (1-5)
+        apiUrl.searchParams.append('to', config.PUSHCALLME_CONFIG.phone_number.replace('+', '')); // 移除 + 號
+        
+        console.log(`🔗 API URL: ${apiUrl.toString().replace(config.PUSHCALLME_CONFIG.api_key, '****')}`);
+        
+        // 發送 GET 請求
+        const response = await axios.get(apiUrl.toString(), {
             headers: {
-                'Content-Type': 'application/json',
                 'User-Agent': 'Discord-Live-Bot/1.0'
             },
             timeout: 30000 // 30秒超時
         });
         
-        if (response.status === 200 || response.status === 201) {
+        if (response.status === 200) {
             stats.callsMade++;
             console.log('✅ 電話通知撥打成功！');
             console.log('📊 API 回應:', JSON.stringify(response.data, null, 2));
@@ -174,7 +171,7 @@ async function callPushCallMe(originalMessage, youtubeUrl = '') {
         }
         
     } catch (error) {
-        console.error('❌ PushCallMe API 呼叫失敗:');
+        console.error('❌ PushCall API 呼叫失敗:');
         console.error('🔍 錯誤訊息:', error.message);
         
         if (error.response) {
