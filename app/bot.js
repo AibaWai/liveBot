@@ -304,7 +304,7 @@ async function callPushCall(channelId, channelConfig, keyword, originalMessage, 
         console.log(`🔗 API URL: ${apiUrl.toString().replace(channelConfig.api_key, '****')}`);
 
         // 改用 phone_number + from 組合做為獨立通知 key
-        const now = Date.now();
+
         const callKey = `${channelConfig.phone_number}-${keyword}`;
         const now = Date.now();
         if (!stats.lastCallTime) stats.lastCallTime = {};
