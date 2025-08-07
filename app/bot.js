@@ -34,10 +34,18 @@ try {
             process.exit(1);
         }
         
+        // 驗證 from 參數必須是 1-5 的數字
+        const fromIndex = parseInt(config.from);
+        if (isNaN(fromIndex) || fromIndex < 1 || fromIndex > 5) {
+            console.error(`❌ 頻道 ${channelId} 的 'from' 參數必須是 1-5 之間的數字，目前值: ${config.from}`);
+            console.error('   PushCall API 的 from 參數是來電顯示的索引 (1-5)，不是完整電話號碼');
+            process.exit(1);
+        }
+        
         console.log(`📺 監聽頻道: ${config.name} (${channelId})`);
         console.log(`   關鍵字: ${config.keywords.join(', ')}`);
         console.log(`   通知號碼: ${config.phone_number}`);
-        console.log(`   來電顯示: ${config.from}`);
+        console.log(`   來電顯示索引: ${config.from}`);
     }
 } catch (error) {
     console.error('❌ 解析 CHANNEL_CONFIGS 失敗:', error.message);
@@ -62,9 +70,11 @@ let stats = {
     totalCallsMade: 0
 };
 
-// 防重複機制 - 記錄最近處理的訊息
+// 防重複機制 - 記錄最近處理的訊息和 API 呼叫
 let recentMessages = new Map();
+let recentAPICalls = new Map();
 const DUPLICATE_WINDOW = 10000; // 10秒內的重複訊息會被忽略
+const API_COOLDOWN = 15000; // 15秒內對同一號碼的 API 呼叫冷卻時間
 
 // 初始化每個頻道的統計
 for (const channelId of Object.keys(channelConfigs)) {
@@ -208,16 +218,41 @@ async function callPushCallMe(config, originalMessage, youtubeUrl = '', channelI
     try {
         console.log(`📞 準備為 ${config.name} 撥打電話通知...`);
         console.log(`📱 目標號碼: ${config.phone_number}`);
-        console.log(`📞 來電顯示: ${config.from}`);
+        console.log(`📞 來電顯示索引: ${config.from}`);
         
-        // 加入短暫延遲避免 API 限制
-        console.log('⏳ 等待 2 秒避免 API 限制...');
-        await new Promise(resolve => setTimeout(resolve, 2000));
+        // 檢查 API 冷卻時間
+        const apiKey = `${config.phone_number}-${config.from}`;
+        const now = Date.now();
+        
+        if (recentAPICalls.has(apiKey)) {
+            const lastCall = recentAPICalls.get(apiKey);
+            const timeSinceLastCall = now - lastCall;
+            
+            if (timeSinceLastCall < API_COOLDOWN) {
+                const remainingTime = Math.ceil((API_COOLDOWN - timeSinceLastCall) / 1000);
+                console.log(`⏸️  API 冷卻中，還需等待 ${remainingTime} 秒...`);
+                console.log(`🚫 跳過此次通話以避免重複呼叫`);
+                return;
+            }
+        }
+        
+        // 記錄此次 API 呼叫時間
+        recentAPICalls.set(apiKey, now);
+        
+        // 清理過期的 API 呼叫記錄
+        for (const [key, timestamp] of recentAPICalls.entries()) {
+            if (now - timestamp > API_COOLDOWN) {
+                recentAPICalls.delete(key);
+            }
+        }
+        
+        console.log('⏳ 等待 3 秒避免 API 限制...');
+        await new Promise(resolve => setTimeout(resolve, 3000));
         
         // PushCall API 使用 GET 請求，參數放在 URL 中
         const apiUrl = new URL('https://pushcall.me/api/call');
         apiUrl.searchParams.append('api_key', config.api_key);
-        apiUrl.searchParams.append('from', config.from);
+        apiUrl.searchParams.append('from', config.from.toString()); // 確保是字串
         apiUrl.searchParams.append('to', config.phone_number.replace('+', '')); // 移除 + 號
         
         console.log(`🔗 API URL: ${apiUrl.toString().replace(config.api_key, '****')}`);
@@ -230,7 +265,7 @@ async function callPushCallMe(config, originalMessage, youtubeUrl = '', channelI
             timeout: 30000 // 30秒超時
         });
         
-        if (response.status === 200) {
+        if (response.status === 200 && response.data?.success) {
             // 正確更新統計
             if (stats.channelStats[channelId]) {
                 stats.channelStats[channelId].callsMade++;
@@ -241,8 +276,8 @@ async function callPushCallMe(config, originalMessage, youtubeUrl = '', channelI
             console.log('📊 API 回應:', JSON.stringify(response.data, null, 2));
             console.log(`📈 統計更新: ${config.name} 通話次數 +1, 總計: ${stats.totalCallsMade}`);
         } else {
-            console.log(`⚠️  ${config.name} API 回應狀態異常:`, response.status);
-            console.log('📋 回應內容:', response.data);
+            console.log(`⚠️  ${config.name} API 回應異常:`, response.status);
+            console.log('📋 回應內容:', JSON.stringify(response.data, null, 2));
         }
         
     } catch (error) {
@@ -251,12 +286,14 @@ async function callPushCallMe(config, originalMessage, youtubeUrl = '', channelI
         
         if (error.response) {
             console.error('📋 API 錯誤回應:', error.response.status);
-            console.error('📄 錯誤詳情:', error.response.data);
+            console.error('📄 錯誤詳情:', JSON.stringify(error.response.data, null, 2));
             
             // 特殊處理 400 錯誤（太多請求）
             if (error.response.status === 400 && error.response.data?.message?.includes('Too many requests')) {
-                console.log('⚠️  API 請求頻率限制，將在稍後重試...');
-                // 可選：在這裡實作重試機制
+                console.log('⚠️  API 請求頻率限制，已記錄冷卻時間');
+                // 延長此號碼的冷卻時間
+                const apiKey = `${config.phone_number}-${config.from}`;
+                recentAPICalls.set(apiKey, Date.now() + API_COOLDOWN);
             }
         } else if (error.request) {
             console.error('🌐 網路請求失敗，請檢查網路連線');
