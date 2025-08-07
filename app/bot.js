@@ -217,6 +217,71 @@ app.get('/api-stats', (req, res) => {
     res.json(apiStatsDetailed);
 });
 
+// 通話歷史查詢端點
+app.get('/call-history', (req, res) => {
+    const limit = parseInt(req.query.limit) || 20;
+    const calls = Array.from(callHistory.entries())
+        .slice(-limit)
+        .map(([id, record]) => ({
+            通話序號: id,
+            ...record
+        }))
+        .reverse(); // 最新的在前面
+    
+    res.json({
+        總通話記錄數: callHistory.size,
+        顯示數量: calls.length,
+        通話記錄: calls,
+        說明: '如果看到重複的成功記錄但只有一次API請求，可能是電信商或VoIP服務的重撥機制'
+    });
+});
+
+// 診斷端點 - 專門用於排查重複通話問題
+app.get('/diagnose', (req, res) => {
+    const now = Date.now();
+    const recentCalls = Array.from(callHistory.entries())
+        .slice(-10)
+        .map(([id, record]) => ({
+            序號: id,
+            狀態: record.狀態,
+            時間: record.時間,
+            API: record.API,
+            目標: record.目標號碼,
+            回應: record.API回應 || record.錯誤訊息 || 'N/A'
+        }));
+    
+    const activeCooldownsDetailed = {};
+    for (const [key, timestamp] of callCooldowns.entries()) {
+        const remaining = Math.ceil((timestamp + COOLDOWN_DURATION - now) / 1000);
+        if (remaining > 0) {
+            activeCooldownsDetailed[key] = {
+                剩餘秒數: remaining,
+                設定時間: new Date(timestamp).toLocaleString('zh-TW'),
+                可用時間: new Date(timestamp + COOLDOWN_DURATION).toLocaleString('zh-TW')
+            };
+        }
+    }
+    
+    res.json({
+        診斷時間: new Date().toLocaleString('zh-TW'),
+        系統狀態: {
+            Bot狀態: client.user ? `✅ ${client.user.tag}` : '❌ 未連線',
+            監聽頻道數: Object.keys(config.CHANNEL_CONFIGS).length,
+            冷卻持續時間: `${COOLDOWN_DURATION / 1000}秒`,
+            活躍冷卻數: Object.keys(activeCooldownsDetailed).length
+        },
+        最近通話: recentCalls,
+        活躍冷卻: activeCooldownsDetailed,
+        建議: [
+            '如果PushCall後台只顯示1次撥號但收到2次電話，這通常是：',
+            '1. 電信商的自動重撥機制（網路不穩定時）',
+            '2. VoIP服務商的重試邏輯',
+            '3. 手機雙卡或VoLTE設定問題',
+            '建議檢查PushCall後台的詳細通話記錄和狀態'
+        ]
+    });
+});
+
 // 清理過期的冷卻記錄
 function cleanupCooldowns() {
     const now = Date.now();
