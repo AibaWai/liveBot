@@ -62,6 +62,10 @@ let stats = {
     totalCallsMade: 0
 };
 
+// 防重複機制 - 記錄最近處理的訊息
+let recentMessages = new Map();
+const DUPLICATE_WINDOW = 10000; // 10秒內的重複訊息會被忽略
+
 // 初始化每個頻道的統計
 for (const channelId of Object.keys(channelConfigs)) {
     stats.channelStats[channelId] = {
@@ -154,6 +158,28 @@ client.on('messageCreate', async (message) => {
         );
         
         if (foundKeyword) {
+            // 防重複機制 - 檢查是否為重複訊息
+            const messageKey = `${message.channel.id}-${message.content}-${foundKeyword}`;
+            const now = Date.now();
+            
+            if (recentMessages.has(messageKey)) {
+                const lastProcessed = recentMessages.get(messageKey);
+                if (now - lastProcessed < DUPLICATE_WINDOW) {
+                    console.log(`⏭️  忽略重複訊息 (${Math.floor((now - lastProcessed) / 1000)}秒前已處理)`);
+                    return;
+                }
+            }
+            
+            // 記錄此訊息處理時間
+            recentMessages.set(messageKey, now);
+            
+            // 清理過期的記錄
+            for (const [key, timestamp] of recentMessages.entries()) {
+                if (now - timestamp > DUPLICATE_WINDOW) {
+                    recentMessages.delete(key);
+                }
+            }
+            
             const channelStat = stats.channelStats[message.channel.id];
             channelStat.liveDetected++;
             channelStat.lastLiveDetection = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
@@ -170,7 +196,7 @@ client.on('messageCreate', async (message) => {
             }
             
             // 呼叫 PushCallMe API
-            await callPushCallMe(channelConfig, message.content, youtubeUrl);
+            await callPushCallMe(channelConfig, message.content, youtubeUrl, message.channel.id);
         }
     } catch (error) {
         console.error('❌ 處理訊息時發生錯誤:', error.message);
@@ -178,11 +204,15 @@ client.on('messageCreate', async (message) => {
 });
 
 // PushCall API 呼叫函數
-async function callPushCallMe(config, originalMessage, youtubeUrl = '') {
+async function callPushCallMe(config, originalMessage, youtubeUrl = '', channelId) {
     try {
         console.log(`📞 準備為 ${config.name} 撥打電話通知...`);
         console.log(`📱 目標號碼: ${config.phone_number}`);
         console.log(`📞 來電顯示: ${config.from}`);
+        
+        // 加入短暫延遲避免 API 限制
+        console.log('⏳ 等待 2 秒避免 API 限制...');
+        await new Promise(resolve => setTimeout(resolve, 2000));
         
         // PushCall API 使用 GET 請求，參數放在 URL 中
         const apiUrl = new URL('https://pushcall.me/api/call');
@@ -201,12 +231,15 @@ async function callPushCallMe(config, originalMessage, youtubeUrl = '') {
         });
         
         if (response.status === 200) {
-            stats.channelStats[config.channelId] = stats.channelStats[config.channelId] || { callsMade: 0 };
-            stats.channelStats[config.channelId].callsMade++;
+            // 正確更新統計
+            if (stats.channelStats[channelId]) {
+                stats.channelStats[channelId].callsMade++;
+            }
             stats.totalCallsMade++;
             
             console.log(`✅ ${config.name} 電話通知撥打成功！`);
             console.log('📊 API 回應:', JSON.stringify(response.data, null, 2));
+            console.log(`📈 統計更新: ${config.name} 通話次數 +1, 總計: ${stats.totalCallsMade}`);
         } else {
             console.log(`⚠️  ${config.name} API 回應狀態異常:`, response.status);
             console.log('📋 回應內容:', response.data);
@@ -219,6 +252,12 @@ async function callPushCallMe(config, originalMessage, youtubeUrl = '') {
         if (error.response) {
             console.error('📋 API 錯誤回應:', error.response.status);
             console.error('📄 錯誤詳情:', error.response.data);
+            
+            // 特殊處理 400 錯誤（太多請求）
+            if (error.response.status === 400 && error.response.data?.message?.includes('Too many requests')) {
+                console.log('⚠️  API 請求頻率限制，將在稍後重試...');
+                // 可選：在這裡實作重試機制
+            }
         } else if (error.request) {
             console.error('🌐 網路請求失敗，請檢查網路連線');
         }
