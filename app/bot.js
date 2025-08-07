@@ -54,10 +54,15 @@ for (const [channelId, channelConfig] of Object.entries(config.CHANNEL_CONFIGS))
         console.error(`❌ 頻道 ${channelId} 缺少 phone_number 設定`);
         process.exit(1);
     }
+    if (!channelConfig.from) {
+        console.error(`❌ 頻道 ${channelId} 缺少 from 設定`);
+        process.exit(1);
+    }
     
     // 驗證API設定
     console.log(`🔑 頻道 ${channelId} 使用 API Key: ${channelConfig.api_key.substring(0, 8)}****`);
     console.log(`📱 頻道 ${channelId} 通知號碼: ${channelConfig.phone_number}`);
+    console.log(`📞 頻道 ${channelId} 來電顯示: ${channelConfig.from}`);
 }
 
 console.log('📋 監控設定摘要:');
@@ -67,6 +72,7 @@ for (const [channelId, channelConfig] of Object.entries(config.CHANNEL_CONFIGS))
     console.log(`      💬 通知訊息: ${channelConfig.message}`);
     console.log(`      🔑 API Key: ${channelConfig.api_key.substring(0, 8)}****`);
     console.log(`      📞 電話: ${channelConfig.phone_number}`);
+    console.log(`      📞 來電顯示: ${channelConfig.from}`);
 }
 
 // 建立 Discord 客戶端
@@ -78,7 +84,7 @@ const client = new Client({
     ]
 });
 
-// 統計資訊
+// 統計資訊和防重複機制
 let stats = {
     startTime: Date.now(),
     totalMessagesProcessed: 0,
@@ -87,12 +93,20 @@ let stats = {
     apiUsage: {} // 追蹤每個API的使用情況
 };
 
+// 防重複通話機制 - 使用 Map 來更好地管理
+const callCooldowns = new Map();
+const COOLDOWN_DURATION = 30000; // 30秒防重複時間
+
+// 處理中的訊息 Set，防止並發處理同一訊息
+const processingMessages = new Set();
+
 // 初始化頻道統計
 for (const [channelId, channelConfig] of Object.entries(config.CHANNEL_CONFIGS)) {
     stats.channelStats[channelId] = {
         messagesProcessed: 0,
         keywordsDetected: 0,
         callsMade: 0,
+        callsSkipped: 0, // 新增跳過的通話統計
         lastDetection: null,
         lastCallSuccess: null,
         lastCallError: null
@@ -126,12 +140,14 @@ app.get('/', (req, res) => {
                 關鍵字: channelConfig.keywords,
                 通知訊息: channelConfig.message,
                 API帳號: channelConfig.api_key.substring(0, 8) + '****',
-                通知號碼: channelConfig.phone_number
+                通知號碼: channelConfig.phone_number,
+                來電顯示: channelConfig.from
             },
             統計: {
                 訊息處理數: channelStat.messagesProcessed,
                 關鍵字偵測數: channelStat.keywordsDetected,
                 通話撥打數: channelStat.callsMade,
+                跳過通話數: channelStat.callsSkipped, // 顯示跳過的通話
                 最後偵測時間: channelStat.lastDetection || '尚未偵測到',
                 最後成功通話: channelStat.lastCallSuccess || '尚未成功',
                 最後錯誤: channelStat.lastCallError || '無錯誤'
@@ -152,6 +168,16 @@ app.get('/', (req, res) => {
         };
     }
     
+    // 顯示當前冷卻中的通話
+    const activeCooldowns = {};
+    const now = Date.now();
+    for (const [key, timestamp] of callCooldowns.entries()) {
+        const remaining = Math.ceil((timestamp + COOLDOWN_DURATION - now) / 1000);
+        if (remaining > 0) {
+            activeCooldowns[key] = `${remaining}秒`;
+        }
+    }
+    
     res.json({
         status: '雙 API 多頻道 Discord Live Alert Bot 運行中 🤖📞📞',
         uptime: `${Math.floor(uptime / 3600)}小時 ${Math.floor((uptime % 3600) / 60)}分鐘`,
@@ -160,6 +186,8 @@ app.get('/', (req, res) => {
         monitoring_channels: Object.keys(config.CHANNEL_CONFIGS).length,
         total_messages_processed: stats.totalMessagesProcessed,
         api_accounts: Object.keys(stats.apiUsage).length,
+        cooldown_duration: `${COOLDOWN_DURATION / 1000}秒`,
+        active_cooldowns: activeCooldowns,
         channels: channelStatsFormatted,
         api_usage: apiUsageFormatted,
         recent_detections: stats.lastDetections.slice(-10), // 最近10次偵測
@@ -189,6 +217,19 @@ app.get('/api-stats', (req, res) => {
     res.json(apiStatsDetailed);
 });
 
+// 清理過期的冷卻記錄
+function cleanupCooldowns() {
+    const now = Date.now();
+    for (const [key, timestamp] of callCooldowns.entries()) {
+        if (now - timestamp > COOLDOWN_DURATION) {
+            callCooldowns.delete(key);
+        }
+    }
+}
+
+// 每分鐘清理一次過期記錄
+setInterval(cleanupCooldowns, 60000);
+
 // 啟動 Express 伺服器
 app.listen(PORT, () => {
     console.log(`🌐 HTTP 伺服器運行在 port ${PORT}`);
@@ -200,6 +241,7 @@ client.once('ready', () => {
     console.log(`🏠 已加入 ${client.guilds.cache.size} 個伺服器`);
     console.log(`📺 正在監聽 ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道`);
     console.log(`🔑 使用 ${Object.keys(stats.apiUsage).length} 個 PushCall API 帳號`);
+    console.log(`⏰ 防重複通話時間: ${COOLDOWN_DURATION / 1000}秒`);
     console.log('⏰ 開始多頻道多API監聽...');
     
     // 設定 Bot 狀態
@@ -222,6 +264,19 @@ client.on('messageCreate', async (message) => {
         if (!config.CHANNEL_CONFIGS[channelId]) {
             return; // 不是我們監聽的頻道，忽略
         }
+        
+        // 防止並發處理同一訊息
+        const messageKey = `${channelId}-${message.id}`;
+        if (processingMessages.has(messageKey)) {
+            console.log(`🔄 訊息 ${messageKey} 正在處理中，跳過重複處理`);
+            return;
+        }
+        processingMessages.add(messageKey);
+        
+        // 5秒後清理處理記錄
+        setTimeout(() => {
+            processingMessages.delete(messageKey);
+        }, 5000);
         
         // 更新頻道統計
         stats.channelStats[channelId].messagesProcessed++;
@@ -254,7 +309,8 @@ client.on('messageCreate', async (message) => {
                 訊息: message.content.substring(0, 150),
                 作者: message.author.username,
                 使用API: channelConfig.api_key.substring(0, 8) + '****',
-                通知號碼: channelConfig.phone_number
+                通知號碼: channelConfig.phone_number,
+                來電顯示: channelConfig.from
             };
             stats.lastDetections.push(detection);
             
@@ -267,6 +323,7 @@ client.on('messageCreate', async (message) => {
             console.log(`📄 完整訊息: ${message.content}`);
             console.log(`🔑 將使用 API: ${channelConfig.api_key.substring(0, 8)}****`);
             console.log(`📞 通知號碼: ${channelConfig.phone_number}`);
+            console.log(`📞 來電顯示: ${channelConfig.from}`);
             
             // 提取 YouTube 連結 (選用)
             const youtubeMatch = message.content.match(/https:\/\/www\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]+)/);
@@ -287,69 +344,98 @@ client.on('messageCreate', async (message) => {
 // 呼叫 PushCall API 函數
 async function callPushCall(channelId, channelConfig, keyword, originalMessage, youtubeUrl = '') {
     const apiKeyShort = channelConfig.api_key.substring(0, 8);
+    
     try {
+        // 生成唯一的冷卻Key：頻道ID + API Key + 來電號碼 + 目標號碼
+        const cooldownKey = `${channelId}-${channelConfig.api_key}-${channelConfig.from}-${channelConfig.phone_number}`;
+        const now = Date.now();
+        
+        // 檢查是否在冷卻時間內
+        if (callCooldowns.has(cooldownKey)) {
+            const lastCallTime = callCooldowns.get(cooldownKey);
+            const timeSinceLastCall = now - lastCallTime;
+            
+            if (timeSinceLastCall < COOLDOWN_DURATION) {
+                const remainingTime = Math.ceil((COOLDOWN_DURATION - timeSinceLastCall) / 1000);
+                console.log(`⛔ [${channelConfig.name || channelId}] 冷卻中，還需等待 ${remainingTime} 秒`);
+                console.log(`🔑 API: ${apiKeyShort}**** | 📞 ${channelConfig.from} → ${channelConfig.phone_number}`);
+                
+                // 更新跳過統計
+                stats.channelStats[channelId].callsSkipped++;
+                return;
+            }
+        }
+        
+        // 記錄這次通話時間
+        callCooldowns.set(cooldownKey, now);
+        
         console.log(`📞 [${channelConfig.name || channelId}] 準備撥打電話通知...`);
         console.log(`🔑 使用 API Key: ${apiKeyShort}****`);
         console.log(`📱 目標號碼: ${channelConfig.phone_number}`);
-        console.log(`📞 來電顯示號碼 (from): ${channelConfig.from}`);
+        console.log(`📱 來電顯示: ${channelConfig.from}`);
         console.log(`💬 通知內容: ${channelConfig.message}`);
         console.log(`🔍 觸發關鍵字: ${keyword}`);
-
-        // 構建 GET 請求 URL
+        
+        // PushCall API 使用 GET 請求
         const apiUrl = new URL('https://pushcall.me/api/call');
         apiUrl.searchParams.append('api_key', channelConfig.api_key);
-        apiUrl.searchParams.append('from', channelConfig.from.replace('+', ''));
-        apiUrl.searchParams.append('to', channelConfig.phone_number.replace('+', ''));
-
-        console.log(`🔗 API URL: ${apiUrl.toString().replace(channelConfig.api_key, '****')}`);
-
-        // 改用 phone_number + from 組合做為獨立通知 key
-
-        const callKey = `${channelConfig.phone_number}-${keyword}`;
-        const now = Date.now();
-        if (!stats.lastCallTime) stats.lastCallTime = {};
-
-        if (stats.lastCallTime[callKey] && now - stats.lastCallTime[callKey] < 30000) {
-            console.log(`⛔ 在30秒內已通知過「${keyword}」，跳過這次通話`);
-            return;
-        }
-        stats.lastCallTime[callKey] = now;
-
-
-        // 更新 API 使用統計
+        apiUrl.searchParams.append('from', channelConfig.from.replace('+', '')); // Caller ID
+        apiUrl.searchParams.append('to', channelConfig.phone_number.replace('+', '')); // 移除 + 號
+        
+        console.log(`🔗 [${channelConfig.name || channelId}] API URL: ${apiUrl.toString().replace(channelConfig.api_key, '****')}`);
+        
+        // 更新API使用統計
         stats.apiUsage[apiKeyShort].totalCalls++;
         stats.apiUsage[apiKeyShort].lastUsed = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
-
-        // 執行 API 呼叫
+        
+        // 發送 GET 請求
         const response = await axios.get(apiUrl.toString(), {
-            headers: { 'User-Agent': 'Discord-Live-Bot-DualAPI/1.0' },
-            timeout: 30000
+            headers: {
+                'User-Agent': 'Discord-Live-Bot-DualAPI/1.0'
+            },
+            timeout: 30000 // 30秒超時
         });
-
+        
         if (response.status === 200) {
+            // 成功
             stats.channelStats[channelId].callsMade++;
             stats.channelStats[channelId].lastCallSuccess = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
             stats.apiUsage[apiKeyShort].successCalls++;
+            
             console.log(`✅ [${channelConfig.name || channelId}] 電話通知撥打成功！`);
             console.log(`📊 API 回應:`, JSON.stringify(response.data, null, 2));
+            console.log(`📈 API ${apiKeyShort}**** 使用統計: ${stats.apiUsage[apiKeyShort].successCalls}/${stats.apiUsage[apiKeyShort].totalCalls} 成功`);
+            console.log(`⏰ 該組合下次可用時間: ${new Date(now + COOLDOWN_DURATION).toLocaleString('zh-TW')}`);
         } else {
+            // 異常狀態 - 但不算作失敗，移除冷卻記錄讓它可以重試
+            callCooldowns.delete(cooldownKey);
             stats.apiUsage[apiKeyShort].failedCalls++;
-            stats.channelStats[channelId].lastCallError = `狀態碼 ${response.status}: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}`;
-            console.log(`⚠️ [${channelConfig.name || channelId}] API 回應狀態異常:`, response.status);
+            stats.channelStats[channelId].lastCallError = `狀態碼 ${response.status}: ${new Date().toLocaleString('zh-TW')}`;
+            
+            console.log(`⚠️  [${channelConfig.name || channelId}] API 回應狀態異常:`, response.status);
             console.log('📋 回應內容:', response.data);
         }
+        
     } catch (error) {
+        // 錯誤處理 - 移除冷卻記錄讓它可以重試
+        const cooldownKey = `${channelId}-${channelConfig.api_key}-${channelConfig.from}-${channelConfig.phone_number}`;
+        callCooldowns.delete(cooldownKey);
+        
         stats.apiUsage[apiKeyShort].failedCalls++;
-        stats.channelStats[channelId].lastCallError = `${error.message}: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' })}`;
-        console.error(`❌ [${channelConfig.name || channelId}] PushCall API 呼叫失敗:`, error.message);
+        stats.channelStats[channelId].lastCallError = `${error.message}: ${new Date().toLocaleString('zh-TW')}`;
+        
+        console.error(`❌ [${channelConfig.name || channelId}] PushCall API 呼叫失敗:`);
+        console.error(`🔑 API Key: ${apiKeyShort}****`);
+        console.error('🔍 錯誤訊息:', error.message);
+        
         if (error.response) {
-            console.error('📋 API 錯誤回應:', error.response.status, error.response.data);
+            console.error('📋 API 錯誤回應:', error.response.status);
+            console.error('📄 錯誤詳情:', error.response.data);
         } else if (error.request) {
-            console.error('🌐 網路請求失敗，請檢查網路');
+            console.error('🌐 網路請求失敗，請檢查網路連線');
         }
     }
 }
-
 
 // Discord 客戶端錯誤處理
 client.on('error', (error) => {
