@@ -341,14 +341,23 @@ client.on('messageCreate', async (message) => {
     }
 });
 
+// 全局通話記錄 - 追蹤所有API請求
+const callHistory = new Map();
+let callSequenceNumber = 0;
+
 // 呼叫 PushCall API 函數
 async function callPushCall(channelId, channelConfig, keyword, originalMessage, youtubeUrl = '') {
     const apiKeyShort = channelConfig.api_key.substring(0, 8);
+    const callId = ++callSequenceNumber;
+    const timestamp = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
     
     try {
         // 生成唯一的冷卻Key：頻道ID + API Key + 來電號碼 + 目標號碼
         const cooldownKey = `${channelId}-${channelConfig.api_key}-${channelConfig.from}-${channelConfig.phone_number}`;
         const now = Date.now();
+        
+        console.log(`🆔 [通話序號 ${callId}] 開始處理通話請求`);
+        console.log(`📝 [通話序號 ${callId}] 冷卻Key: ${cooldownKey.replace(channelConfig.api_key, '****')}`);
         
         // 檢查是否在冷卻時間內
         if (callCooldowns.has(cooldownKey)) {
@@ -357,8 +366,20 @@ async function callPushCall(channelId, channelConfig, keyword, originalMessage, 
             
             if (timeSinceLastCall < COOLDOWN_DURATION) {
                 const remainingTime = Math.ceil((COOLDOWN_DURATION - timeSinceLastCall) / 1000);
-                console.log(`⛔ [${channelConfig.name || channelId}] 冷卻中，還需等待 ${remainingTime} 秒`);
-                console.log(`🔑 API: ${apiKeyShort}**** | 📞 ${channelConfig.from} → ${channelConfig.phone_number}`);
+                console.log(`⛔ [通話序號 ${callId}] 冷卻中，還需等待 ${remainingTime} 秒`);
+                console.log(`🔑 [通話序號 ${callId}] API: ${apiKeyShort}**** | 📞 ${channelConfig.from} → ${channelConfig.phone_number}`);
+                
+                // 記錄被跳過的通話
+                callHistory.set(callId, {
+                    狀態: '⛔ 冷卻跳過',
+                    時間: timestamp,
+                    頻道: channelConfig.name || channelId,
+                    API: apiKeyShort + '****',
+                    來電號碼: channelConfig.from,
+                    目標號碼: channelConfig.phone_number,
+                    冷卻剩餘: `${remainingTime}秒`,
+                    關鍵字: keyword
+                });
                 
                 // 更新跳過統計
                 stats.channelStats[channelId].callsSkipped++;
@@ -369,12 +390,24 @@ async function callPushCall(channelId, channelConfig, keyword, originalMessage, 
         // 記錄這次通話時間
         callCooldowns.set(cooldownKey, now);
         
-        console.log(`📞 [${channelConfig.name || channelId}] 準備撥打電話通知...`);
-        console.log(`🔑 使用 API Key: ${apiKeyShort}****`);
-        console.log(`📱 目標號碼: ${channelConfig.phone_number}`);
-        console.log(`📱 來電顯示: ${channelConfig.from}`);
-        console.log(`💬 通知內容: ${channelConfig.message}`);
-        console.log(`🔍 觸發關鍵字: ${keyword}`);
+        console.log(`📞 [通話序號 ${callId}] 準備撥打電話通知...`);
+        console.log(`🔑 [通話序號 ${callId}] 使用 API Key: ${apiKeyShort}****`);
+        console.log(`📱 [通話序號 ${callId}] 目標號碼: ${channelConfig.phone_number}`);
+        console.log(`📱 [通話序號 ${callId}] 來電顯示: ${channelConfig.from}`);
+        console.log(`💬 [通話序號 ${callId}] 通知內容: ${channelConfig.message}`);
+        console.log(`🔍 [通話序號 ${callId}] 觸發關鍵字: ${keyword}`);
+        
+        // 記錄準備發送的通話
+        callHistory.set(callId, {
+            狀態: '📤 準備發送',
+            時間: timestamp,
+            頻道: channelConfig.name || channelId,
+            API: apiKeyShort + '****',
+            來電號碼: channelConfig.from,
+            目標號碼: channelConfig.phone_number,
+            關鍵字: keyword,
+            訊息內容: originalMessage.substring(0, 100)
+        });
         
         // PushCall API 使用 GET 請求
         const apiUrl = new URL('https://pushcall.me/api/call');
@@ -382,19 +415,33 @@ async function callPushCall(channelId, channelConfig, keyword, originalMessage, 
         apiUrl.searchParams.append('from', channelConfig.from.replace('+', '')); // Caller ID
         apiUrl.searchParams.append('to', channelConfig.phone_number.replace('+', '')); // 移除 + 號
         
-        console.log(`🔗 [${channelConfig.name || channelId}] API URL: ${apiUrl.toString().replace(channelConfig.api_key, '****')}`);
+        console.log(`🔗 [通話序號 ${callId}] API URL: ${apiUrl.toString().replace(channelConfig.api_key, '****')}`);
+        console.log(`⏰ [通話序號 ${callId}] 請求發送時間: ${new Date().toISOString()}`);
+        
+        // 更新準備發送狀態
+        const currentRecord = callHistory.get(callId);
+        callHistory.set(callId, {
+            ...currentRecord,
+            狀態: '🚀 API請求中',
+            API請求時間: new Date().toISOString()
+        });
         
         // 更新API使用統計
         stats.apiUsage[apiKeyShort].totalCalls++;
         stats.apiUsage[apiKeyShort].lastUsed = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
         
         // 發送 GET 請求
+        const requestStartTime = Date.now();
         const response = await axios.get(apiUrl.toString(), {
             headers: {
-                'User-Agent': 'Discord-Live-Bot-DualAPI/1.0'
+                'User-Agent': 'Discord-Live-Bot-DualAPI/1.0',
+                'X-Request-ID': `call-${callId}` // 添加請求ID幫助追蹤
             },
             timeout: 30000 // 30秒超時
         });
+        const requestDuration = Date.now() - requestStartTime;
+        
+        console.log(`📡 [通話序號 ${callId}] API 請求完成，耗時: ${requestDuration}ms`);
         
         if (response.status === 200) {
             // 成功
@@ -402,18 +449,46 @@ async function callPushCall(channelId, channelConfig, keyword, originalMessage, 
             stats.channelStats[channelId].lastCallSuccess = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
             stats.apiUsage[apiKeyShort].successCalls++;
             
-            console.log(`✅ [${channelConfig.name || channelId}] 電話通知撥打成功！`);
-            console.log(`📊 API 回應:`, JSON.stringify(response.data, null, 2));
-            console.log(`📈 API ${apiKeyShort}**** 使用統計: ${stats.apiUsage[apiKeyShort].successCalls}/${stats.apiUsage[apiKeyShort].totalCalls} 成功`);
-            console.log(`⏰ 該組合下次可用時間: ${new Date(now + COOLDOWN_DURATION).toLocaleString('zh-TW')}`);
+            // 更新成功狀態
+            const successRecord = callHistory.get(callId);
+            callHistory.set(callId, {
+                ...successRecord,
+                狀態: '✅ 成功',
+                API回應時間: new Date().toISOString(),
+                請求耗時: `${requestDuration}ms`,
+                API回應: response.data,
+                HTTP狀態: response.status
+            });
+            
+            console.log(`✅ [通話序號 ${callId}] 電話通知撥打成功！`);
+            console.log(`📊 [通話序號 ${callId}] API 回應:`, JSON.stringify(response.data, null, 2));
+            console.log(`📈 [通話序號 ${callId}] API ${apiKeyShort}**** 使用統計: ${stats.apiUsage[apiKeyShort].successCalls}/${stats.apiUsage[apiKeyShort].totalCalls} 成功`);
+            console.log(`⏰ [通話序號 ${callId}] 該組合下次可用時間: ${new Date(now + COOLDOWN_DURATION).toLocaleString('zh-TW')}`);
+            
+            // 特殊檢查：如果API說成功但沒有返回通話ID，記錄警告
+            if (response.data && !response.data.call_id && !response.data.id) {
+                console.log(`⚠️  [通話序號 ${callId}] 警告：API回應成功但未包含通話ID，可能導致重複撥號`);
+            }
+            
         } else {
             // 異常狀態 - 但不算作失敗，移除冷卻記錄讓它可以重試
             callCooldowns.delete(cooldownKey);
             stats.apiUsage[apiKeyShort].failedCalls++;
             stats.channelStats[channelId].lastCallError = `狀態碼 ${response.status}: ${new Date().toLocaleString('zh-TW')}`;
             
-            console.log(`⚠️  [${channelConfig.name || channelId}] API 回應狀態異常:`, response.status);
-            console.log('📋 回應內容:', response.data);
+            // 更新失敗狀態
+            const failRecord = callHistory.get(callId);
+            callHistory.set(callId, {
+                ...failRecord,
+                狀態: `⚠️ HTTP ${response.status}`,
+                API回應時間: new Date().toISOString(),
+                請求耗時: `${requestDuration}ms`,
+                錯誤回應: response.data,
+                HTTP狀態: response.status
+            });
+            
+            console.log(`⚠️  [通話序號 ${callId}] API 回應狀態異常:`, response.status);
+            console.log(`📋 [通話序號 ${callId}] 回應內容:`, response.data);
         }
         
     } catch (error) {
@@ -424,16 +499,39 @@ async function callPushCall(channelId, channelConfig, keyword, originalMessage, 
         stats.apiUsage[apiKeyShort].failedCalls++;
         stats.channelStats[channelId].lastCallError = `${error.message}: ${new Date().toLocaleString('zh-TW')}`;
         
-        console.error(`❌ [${channelConfig.name || channelId}] PushCall API 呼叫失敗:`);
-        console.error(`🔑 API Key: ${apiKeyShort}****`);
-        console.error('🔍 錯誤訊息:', error.message);
+        // 更新錯誤狀態
+        const errorRecord = callHistory.get(callId) || {
+            時間: timestamp,
+            頻道: channelConfig.name || channelId,
+            API: apiKeyShort + '****',
+            來電號碼: channelConfig.from,
+            目標號碼: channelConfig.phone_number,
+            關鍵字: keyword
+        };
+        callHistory.set(callId, {
+            ...errorRecord,
+            狀態: `❌ ${error.code || '錯誤'}`,
+            錯誤時間: new Date().toISOString(),
+            錯誤訊息: error.message,
+            錯誤類型: error.name
+        });
+        
+        console.error(`❌ [通話序號 ${callId}] PushCall API 呼叫失敗:`);
+        console.error(`🔑 [通話序號 ${callId}] API Key: ${apiKeyShort}****`);
+        console.error(`🔍 [通話序號 ${callId}] 錯誤訊息:`, error.message);
         
         if (error.response) {
-            console.error('📋 API 錯誤回應:', error.response.status);
-            console.error('📄 錯誤詳情:', error.response.data);
+            console.error(`📋 [通話序號 ${callId}] API 錯誤回應:`, error.response.status);
+            console.error(`📄 [通話序號 ${callId}] 錯誤詳情:`, error.response.data);
         } else if (error.request) {
-            console.error('🌐 網路請求失敗，請檢查網路連線');
+            console.error(`🌐 [通話序號 ${callId}] 網路請求失敗，請檢查網路連線`);
         }
+    }
+    
+    // 限制通話歷史記錄數量
+    if (callHistory.size > 100) {
+        const oldestKey = callHistory.keys().next().value;
+        callHistory.delete(oldestKey);
     }
 }
 
