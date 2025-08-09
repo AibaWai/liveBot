@@ -470,7 +470,7 @@ client.once('ready', () => {
     startInstagramMonitoring();
 });
 
-// Discord消息監聽 (Discord頻道監控)
+// === Discord消息監聽 (Discord頻道監控) - 修正版本 ===
 client.on('messageCreate', async (message) => {
     try {
         // 統計
@@ -509,8 +509,10 @@ client.on('messageCreate', async (message) => {
             unifiedState.discord.channelStats[channelId].lastDetection = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
             
             console.log(`🔔 [Discord頻道監控] 檢測到關鍵字: "${foundKeyword}"`);
+            console.log(`📄 訊息: ${message.content}`);
+            console.log(`👤 作者: ${message.author.username}`);
             
-            // 記錄檢測
+            // 記錄檢測 (保留統計用)
             const detection = {
                 時間: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
                 頻道: channelConfig.name || channelId,
@@ -520,19 +522,14 @@ client.on('messageCreate', async (message) => {
             };
             unifiedState.discord.lastDetections.push(detection);
             
-            // 發送通知
-            await sendNotification(`🔔 **Discord頻道直播檢測**
-
-**頻道:** ${channelConfig.name || channelId}
-**關鍵字:** ${foundKeyword}
-**訊息:** ${message.content}
-**作者:** ${message.author.username}
-
-⏰ 檢測時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`, 'live_alert', 'Discord');
+            // === 移除Discord文字通知，只打電話 ===
+            // 原本的 sendNotification 呼叫已移除
             
             // 電話通知 (如果配置了專用API)
             if (channelConfig.api_key && channelConfig.phone_number) {
                 await callChannelSpecificAPI(channelId, channelConfig, foundKeyword, message.content);
+            } else {
+                console.log('⚠️ 頻道未配置電話通知，跳過');
             }
         }
         
@@ -638,39 +635,119 @@ async function handleDiscordCommands(message) {
     }
 }
 
-// 頻道專用API呼叫
+// === 修正的頻道專用API呼叫函數 ===
 async function callChannelSpecificAPI(channelId, channelConfig, keyword, originalMessage) {
-    if (!channelConfig.api_key || !channelConfig.phone_number) return;
+    if (!channelConfig.api_key || !channelConfig.phone_number) {
+        console.log('⚠️ 缺少API配置，跳過電話通知');
+        return;
+    }
     
     const apiKeyShort = channelConfig.api_key.substring(0, 8);
     
     try {
+        console.log(`📞 [${channelConfig.name || channelId}] 準備撥打電話通知...`);
+        console.log(`🔑 使用 API Key: ${apiKeyShort}****`);
+        console.log(`📱 目標號碼: ${channelConfig.phone_number}`);
+        console.log(`📟 來電顯示ID: ${channelConfig.caller_id || '1'}`);
+        console.log(`🔍 觸發關鍵字: ${keyword}`);
+        
         const apiUrl = new URL('https://pushcall.me/api/call');
         apiUrl.searchParams.append('api_key', channelConfig.api_key);
-        apiUrl.searchParams.append('from', channelConfig.from || '1');
+        // === 修正：使用 caller_id 而不是 from ===
+        apiUrl.searchParams.append('from', channelConfig.caller_id || '1');
         apiUrl.searchParams.append('to', channelConfig.phone_number.replace('+', ''));
+        
+        console.log(`🔗 [${channelConfig.name || channelId}] API 請求準備完成`);
+        
+        // 更新統計
+        if (!unifiedState.discord.apiUsage[apiKeyShort]) {
+            unifiedState.discord.apiUsage[apiKeyShort] = {
+                totalCalls: 0,
+                successCalls: 0,
+                failedCalls: 0,
+                lastUsed: null,
+                phoneNumbers: new Set()
+            };
+        }
         
         unifiedState.discord.apiUsage[apiKeyShort].totalCalls++;
         unifiedState.discord.apiUsage[apiKeyShort].lastUsed = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+        unifiedState.discord.apiUsage[apiKeyShort].phoneNumbers.add(channelConfig.phone_number);
         
-        const response = await axios.get(apiUrl.toString(), { timeout: 30000 });
+        const response = await axios.get(apiUrl.toString(), { 
+            headers: {
+                'User-Agent': 'Unified-Live-Monitor/1.0'
+            },
+            timeout: 30000 
+        });
         
-        if (response.status === 200) {
+        // === 修正錯誤處理：更寬鬆的成功判斷 ===
+        if (response.status >= 200 && response.status < 300) {
+            // 成功統計
             unifiedState.discord.channelStats[channelId].callsMade++;
             unifiedState.discord.channelStats[channelId].lastCallSuccess = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
             unifiedState.discord.apiUsage[apiKeyShort].successCalls++;
             unifiedState.notifications.phoneCallsMade++;
             
-            console.log(`✅ [頻道專用API] 電話通知成功: ${channelConfig.name || channelId}`);
+            console.log(`✅ [${channelConfig.name || channelId}] 電話通知撥打成功!`);
+            console.log(`📊 HTTP狀態: ${response.status}`);
+            console.log(`📊 API回應: ${JSON.stringify(response.data)}`);
+            console.log(`📈 API ${apiKeyShort}**** 使用統計: ${unifiedState.discord.apiUsage[apiKeyShort].successCalls}/${unifiedState.discord.apiUsage[apiKeyShort].totalCalls} 成功`);
+            
+            // === 可選：發送簡單的成功確認到Discord ===
+            // 如果您想要最小化的成功通知，可以取消註解下面這行
+            // await sendNotification(`📞 ${channelConfig.name} 電話通知已發送 (${keyword})`, 'info', 'PhoneAPI');
+            
+        } else {
+            // 非2xx狀態碼視為失敗
+            throw new Error(`API回應異常狀態: ${response.status}`);
         }
+        
     } catch (error) {
+        // 錯誤處理
+        if (!unifiedState.discord.apiUsage[apiKeyShort]) {
+            unifiedState.discord.apiUsage[apiKeyShort] = {
+                totalCalls: 0,
+                successCalls: 0,
+                failedCalls: 0,
+                lastUsed: null,
+                phoneNumbers: new Set()
+            };
+        }
+        
         unifiedState.discord.apiUsage[apiKeyShort].failedCalls++;
         unifiedState.discord.channelStats[channelId].lastCallError = `${error.message}: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`;
         
-        console.error(`❌ [頻道專用API] 電話通知失敗: ${channelConfig.name || channelId}`);
-        console.error('錯誤:', error.message);
+        console.error(`❌ [${channelConfig.name || channelId}] 電話通知失敗:`);
+        console.error(`🔑 API Key: ${apiKeyShort}****`);
+        console.error(`📟 來電顯示ID: ${channelConfig.caller_id || '1'}`);
+        console.error(`📱 目標號碼: ${channelConfig.phone_number}`);
+        console.error('🔍 錯誤訊息:', error.message);
+        
+        // 詳細錯誤分析
+        if (error.response) {
+            console.error('📋 API錯誤回應:', error.response.status, error.response.statusText);
+            console.error('📄 錯誤詳情:', error.response.data);
+            
+            // 根據HTTP狀態碼提供建議
+            if (error.response.status === 400) {
+                console.error('💡 400錯誤可能原因:');
+                console.error('   - caller_id 不存在或無權限');
+                console.error('   - phone_number 格式錯誤');
+                console.error('   - API Key 權限不足');
+            } else if (error.response.status === 401) {
+                console.error('💡 401錯誤: API Key 無效或過期');
+            } else if (error.response.status === 429) {
+                console.error('💡 429錯誤: API 呼叫頻率過高，請稍後再試');
+            }
+        } else if (error.request) {
+            console.error('🌐 網路請求失敗，請檢查網路連線');
+        }
+        
+        // === 可選：發送錯誤通知到Discord ===
+        // 如果您想要錯誤通知，可以取消註解下面這行
+        await sendNotification(`❌ ${channelConfig.name} 電話通知失敗: ${error.message}`, 'error', 'PhoneAPI');
     }
-}
 
 // === Web 狀態面板 ===
 app.use(express.json());
