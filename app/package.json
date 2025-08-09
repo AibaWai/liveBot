@@ -1,27 +1,28 @@
 {
-  "name": "instagram-live-monitor-enhanced",
-  "version": "3.0.0",
-  "description": "Enhanced Instagram Live monitor with multi-strategy detection and anti-detection measures",
+  "name": "unified-live-monitor",
+  "version": "4.0.0",
+  "description": "Unified Instagram + Discord Live monitor with phone notifications",
   "main": "main.js",
   "scripts": {
     "start": "node main.js",
-    "health": "node health-server.js",
     "dev": "node main.js"
   },
   "keywords": [
     "instagram",
+    "discord",
     "live",
     "monitor",
-    "discord",
     "bot",
-    "detection",
-    "anti-detection",
-    "multi-strategy"
+    "notification",
+    "pushcall",
+    "unified"
   ],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "discord.js": "^14.14.1"
+    "discord.js": "^14.14.1",
+    "express": "^4.18.2",
+    "axios": "^1.6.0"
   },
   "engines": {
     "node": ">=18.0.0"

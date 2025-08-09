@@ -17,9 +17,9 @@ RUN mkdir -p /app/debug-files
 
 # Health check
 HEALTHCHECK --interval=5m --timeout=30s --start-period=5s --retries=3 \
-  CMD node -e "console.log('Health check passed')" || exit 1
+  CMD node -e "require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })" || exit 1
 
-# Expose port (for Koyeb)
-EXPOSE 8000
+# Expose port (for Koyeb) - 改為 3000
+EXPOSE 3000
 
 CMD ["node", "main.js"]
