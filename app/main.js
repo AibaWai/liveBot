@@ -217,6 +217,7 @@ function makeRequest(url, options = {}) {
     });
 }
 
+
 // 統一通知函數
 async function sendNotification(message, type = 'info', source = 'system') {
     try {
@@ -229,8 +230,8 @@ async function sendNotification(message, type = 'info', source = 'system') {
         
         console.log(`📤 [${source}] Discord通知已發送: ${type}`);
         
-        // 如果是直播通知且配置了電話通知
-        if (type === 'live_alert' && config.PUSHCALL_API_KEY) {
+        // 只有 Instagram 直播通知才調用統一電話通知
+        if (type === 'live_alert' && source === 'Instagram' && config.PUSHCALL_API_KEY) {
             await makePhoneCall(`${config.TARGET_USERNAME} 開始直播了！`, source);
         }
     } catch (error) {
@@ -639,6 +640,7 @@ async function handleDiscordCommands(message) {
 }
 
 // 頻道專用API呼叫
+// 頻道專用API呼叫
 async function callChannelSpecificAPI(channelId, channelConfig, keyword, originalMessage) {
     if (!channelConfig.api_key || !channelConfig.phone_number) return;
     
@@ -647,7 +649,7 @@ async function callChannelSpecificAPI(channelId, channelConfig, keyword, origina
     try {
         const apiUrl = new URL('https://pushcall.me/api/call');
         apiUrl.searchParams.append('api_key', channelConfig.api_key);
-        apiUrl.searchParams.append('from', channelConfig.from || '1');
+        apiUrl.searchParams.append('from', channelConfig.caller_id || '1'); // 修改這行
         apiUrl.searchParams.append('to', channelConfig.phone_number.replace('+', ''));
         
         unifiedState.discord.apiUsage[apiKeyShort].totalCalls++;
@@ -1047,6 +1049,8 @@ process.on('SIGTERM', async () => {
     client.destroy();
     process.exit(0);
 });
+
+
 
 // === 啟動 Discord Bot ===
 console.log('🔐 正在登入Discord...');
