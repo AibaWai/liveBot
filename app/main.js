@@ -521,15 +521,7 @@ client.on('messageCreate', async (message) => {
             };
             unifiedState.discord.lastDetections.push(detection);
             
-            // 發送通知
-            await sendNotification(`🔔 **Discord頻道直播檢測**
-
-**頻道:** ${channelConfig.name || channelId}
-**關鍵字:** ${foundKeyword}
-**訊息:** ${message.content}
-**作者:** ${message.author.username}
-
-⏰ 檢測時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`, 'live_alert', 'Discord');
+            
             
             // 電話通知 (如果配置了專用API)
             if (channelConfig.api_key && channelConfig.phone_number) {
