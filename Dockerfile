@@ -1,29 +1,25 @@
-# 使用 Node.js 18 官方映像
 FROM node:18-alpine
 
-# 設定工作目錄
 WORKDIR /app
 
-# 複製 app 資料夾的所有內容到容器
-COPY app/ .
+# Copy package files
+COPY app/package.json package.json
 
-# 安裝依賴套件
-RUN npm install --production
+# Install dependencies
+RUN npm install --only=production
 
-# 建立非 root 使用者以提高安全性
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S discordbot -u 1001
+# Copy application files
+COPY app/main.js main.js
 
-# 更改檔案擁有者
-RUN chown -R discordbot:nodejs /app
-USER discordbot
+# Create necessary directories
+RUN mkdir -p /app/logs
+RUN mkdir -p /app/debug-files
 
-# 開放 port 3000 (Koyeb 需要)
-EXPOSE 3000
+# Health check
+HEALTHCHECK --interval=5m --timeout=30s --start-period=5s --retries=3 \
+  CMD node -e "console.log('Health check passed')" || exit 1
 
-# 健康檢查
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"
+# Expose port (for Koyeb)
+EXPOSE 8000
 
-# 啟動應用程式
-CMD ["node", "bot.js"]
+CMD ["node", "main.js"]

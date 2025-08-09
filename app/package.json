@@ -1,20 +1,33 @@
 {
-  "name": "discord-live-bot",
-  "version": "1.0.0",
-  "description": "Discord bot for live stream notifications with PushCallMe integration",
-  "main": "bot.js",
+  "name": "instagram-live-monitor-enhanced",
+  "version": "3.0.0",
+  "description": "Enhanced Instagram Live monitor with multi-strategy detection and anti-detection measures",
+  "main": "main.js",
   "scripts": {
-    "start": "node bot.js"
+    "start": "node main.js",
+    "health": "node health-server.js",
+    "dev": "node main.js"
   },
+  "keywords": [
+    "instagram",
+    "live",
+    "monitor",
+    "discord",
+    "bot",
+    "detection",
+    "anti-detection",
+    "multi-strategy"
+  ],
+  "author": "",
+  "license": "MIT",
   "dependencies": {
-    "discord.js": "^14.14.1",
-    "axios": "^1.6.0",
-    "express": "^4.18.2"
+    "discord.js": "^14.14.1"
   },
   "engines": {
-    "node": "18.x"
+    "node": ">=18.0.0"
   },
-  "keywords": ["discord", "bot", "live", "stream", "notification"],
-  "author": "Your Name",
-  "license": "MIT"
+  "repository": {
+    "type": "git",
+    "url": "your-repo-url"
+  }
 }
