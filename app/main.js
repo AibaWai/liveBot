@@ -117,7 +117,7 @@ let unifiedState = {
     
     // Instagram 監控狀態
     instagram: {
-        isLiveNow: false,
+        isLiveNow: false,  // 這裡會被正確更新
         targetUserId: null,
         isMonitoring: false,
         consecutiveErrors: 0,
@@ -180,7 +180,7 @@ const client = new Client({
     ]
 });
 
-// === 簡化Instagram監控系統 ===（替換原有部分）
+// === 簡化Instagram監控系統 ===
 let instagramMonitor = null;
 
 async function startInstagramMonitoring() {
@@ -200,7 +200,7 @@ async function startInstagramMonitoring() {
         await instagramMonitor.startMonitoring(config.TARGET_USERNAME, async () => {
             // 檢測到直播時的處理
             if (!unifiedState.instagram.isLiveNow) {
-                unifiedState.instagram.isLiveNow = true;
+                unifiedState.instagram.isLiveNow = true;  // 正確更新狀態
                 console.log('🔴 [Instagram] 檢測到直播開始!');
                 
                 await sendNotification(`🔴 **@${config.TARGET_USERNAME} Instagram直播開始!** 🎥
@@ -208,7 +208,7 @@ async function startInstagramMonitoring() {
 📺 觀看: https://www.instagram.com/${config.TARGET_USERNAME}/
 ⏰ 檢測時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
 🛡️ 3帳號輪換系統 + 時間段智能監控
-🌙 深夜模式: 自動降低檢查頻率
+🕐 日本時間調整: 深夜降頻，活躍時段密集監控
 
 🚀 快去看直播吧！`, 'live_alert', 'Instagram');
             }
@@ -217,10 +217,36 @@ async function startInstagramMonitoring() {
         // 更新狀態
         unifiedState.instagram.isMonitoring = true;
         
+        // 啟動直播狀態檢查循環
+        startLiveStatusCheck();
+        
     } catch (error) {
         console.error('❌ [Instagram] 簡化監控啟動失敗:', error.message);
-        // 可以在這裡加入降級處理
     }
+}
+
+// 添加直播狀態檢查循環
+function startLiveStatusCheck() {
+    setInterval(async () => {
+        if (!instagramMonitor || !unifiedState.instagram.isMonitoring) return;
+        
+        try {
+            const currentlyLive = await instagramMonitor.checkLive(config.TARGET_USERNAME);
+            
+            // 檢查直播結束
+            if (!currentlyLive && unifiedState.instagram.isLiveNow) {
+                unifiedState.instagram.isLiveNow = false;
+                console.log('⚫ [Instagram] 直播已結束');
+                
+                await sendNotification(`⚫ @${config.TARGET_USERNAME} Instagram直播已結束
+
+⏰ 結束時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
+📊 監控系統持續運行中...`, 'info', 'Instagram');
+            }
+        } catch (error) {
+            console.error('❌ [直播狀態檢查] 錯誤:', error.message);
+        }
+    }, 60000); // 每分鐘檢查一次狀態
 }
 
 // 停止Instagram監控
@@ -228,6 +254,7 @@ function stopInstagramMonitoring() {
     if (instagramMonitor) {
         instagramMonitor.stopMonitoring();
         unifiedState.instagram.isMonitoring = false;
+        unifiedState.instagram.isLiveNow = false;  // 重置直播狀態
         console.log('⏹️ [Instagram] 監控已停止');
     }
 }
@@ -236,7 +263,10 @@ function stopInstagramMonitoring() {
 function getInstagramStatus() {
     if (instagramMonitor && typeof instagramMonitor.getStatus === 'function') {
         try {
-            return instagramMonitor.getStatus();
+            const igStatus = instagramMonitor.getStatus();
+            // 確保直播狀態正確
+            igStatus.isLiveNow = unifiedState.instagram.isLiveNow;
+            return igStatus;
         } catch (error) {
             console.error('❌ [狀態] 獲取Instagram狀態失敗:', error.message);
         }
@@ -244,7 +274,7 @@ function getInstagramStatus() {
     
     // 返回默認狀態
     return {
-        isMonitoring: false,
+        isMonitoring: unifiedState.instagram.isMonitoring,
         totalAccounts: 0,
         availableAccounts: 0,
         disabledAccounts: 0,
@@ -255,9 +285,10 @@ function getInstagramStatus() {
         totalRequests: 0,
         successfulRequests: 0,
         consecutiveErrors: 0,
-        isLiveNow: false,
+        isLiveNow: unifiedState.instagram.isLiveNow,  // 使用統一狀態
         lastCheck: null,
         targetUserId: null,
+        japanTime: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
         accountDetails: []
     };
 }
@@ -313,19 +344,28 @@ client.once('ready', () => {
     console.log(`✅ Discord Bot 已上線: ${client.user.tag}`);
     console.log(`📺 Instagram監控目標: @${config.TARGET_USERNAME}`);
     console.log(`📋 Discord頻道監控: ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道`);
+    console.log(`🕐 當前日本時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`);
     
     // 發送啟動通知
-    sendNotification(`🚀 **統一直播監控機器人已啟動**
+    sendNotification(`🚀 **統一直播監控機器人已啟動** (日本時間)
 
 **Instagram監控:** @${config.TARGET_USERNAME}
 **Discord頻道監控:** ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道
 **電話通知:** ${config.PUSHCALL_API_KEY ? '✅ 已配置' : '❌ 未配置'}
+**時區:** 🕐 日本時間 (JST)
+
+**智能間隔調整:**
+🌙 深夜 (02-06): 10-15分鐘間隔
+🌅 早晨 (07-08): 3-5分鐘間隔
+☀️ 活躍 (09-24): 90-180秒間隔
+🌃 深夜前期 (00-02): 3-5分鐘間隔
 
 📋 **可用命令:**
 \`!ig-start\` - 開始Instagram監控
 \`!ig-stop\` - 停止Instagram監控
 \`!ig-status\` - Instagram監控狀態
 \`!ig-check\` - 手動檢查Instagram
+\`!ig-accounts\` - 檢查帳號狀態
 \`!status\` - 完整系統狀態
 \`!help\` - 顯示幫助
 
@@ -395,8 +435,6 @@ client.on('messageCreate', async (message) => {
             };
             unifiedState.discord.lastDetections.push(detection);
             
-            
-            
             // 電話通知 (如果配置了專用API)
             if (channelConfig.api_key && channelConfig.phone_number) {
                 await callChannelSpecificAPI(channelId, channelConfig, foundKeyword, message.content);
@@ -430,7 +468,7 @@ async function handleDiscordCommands(message) {
         const runtime = Math.round((Date.now() - unifiedState.startTime) / 60000);
         const igStatus = getInstagramStatus();
         
-        const statusMsg = `📊 **Instagram監控狀態**
+        const statusMsg = `📊 **Instagram監控狀態** (日本時間)
 
 **目標:** @${config.TARGET_USERNAME}
 **當前狀態:** ${unifiedState.instagram.isLiveNow ? '🔴 直播中' : '⚫ 離線'}
@@ -443,11 +481,12 @@ async function handleDiscordCommands(message) {
 🚫 已停用帳號: ${igStatus.disabledAccounts || 0}
 📊 今日請求: ${igStatus.dailyRequests}/${igStatus.maxDailyRequests}
 
-**時間段智能監控:**
-🌙 深夜 (02-06): 10分鐘間隔
-🌅 早晨 (07-08): 3分鐘間隔  
-☀️ 活躍 (09-24): 90秒間隔
-🌃 深夜前期 (00-02): 5分鐘間隔`;
+**時間段智能監控 (日本時間):**
+🕐 當前時間: ${igStatus.japanTime}
+🌙 深夜 (02-06): 10-15分鐘間隔
+🌅 早晨 (07-08): 3-5分鐘間隔  
+☀️ 活躍 (09-24): 90-180秒間隔
+🌃 深夜前期 (00-02): 3-5分鐘間隔`;
 
         await message.reply(statusMsg);
     }
@@ -463,6 +502,7 @@ async function handleDiscordCommands(message) {
                 
                 await message.reply(`📊 **手動檢查結果:** ${status}
 
+🕐 檢查時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
 🔐 可用帳號: ${igStatus.availableAccounts}/${igStatus.totalAccounts}
 🚫 已停用帳號: ${igStatus.disabledAccounts || 0}
 📊 今日請求: ${igStatus.dailyRequests}/${igStatus.maxDailyRequests}`);
@@ -480,12 +520,13 @@ async function handleDiscordCommands(message) {
             try {
                 const igStatus = getInstagramStatus();
                 
-                let statusMsg = `🔐 **Instagram帳號狀態**
+                let statusMsg = `🔐 **Instagram帳號狀態** (日本時間)
 
 📊 **總覽:**
 • 總帳號數: ${igStatus.totalAccounts}
 • 可用帳號: ${igStatus.availableAccounts} ✅
 • 已停用帳號: ${igStatus.disabledAccounts || 0} 🚫
+• 檢查時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
 
 📋 **帳號詳情:**\n`;
 
@@ -497,9 +538,10 @@ async function handleDiscordCommands(message) {
                     
                     statusMsg += `${statusIcon} **${account.id}**: ${account.isDisabled ? '已停用' : '可用'}${cooldownInfo}\n`;
                     statusMsg += `   └ 成功率: ${successRate}%, 今日請求: ${account.dailyRequests}\n`;
+                    statusMsg += `   └ 最後使用: ${account.lastUsed}\n`;
                 });
 
-                if (igStatus.disabledAccounts > 0) {
+                if ((igStatus.disabledAccounts || 0) > 0) {
                     statusMsg += `\n⚠️ **注意:** 有 ${igStatus.disabledAccounts} 個帳號已被停用，需要更新cookies！`;
                 }
 
@@ -516,10 +558,11 @@ async function handleDiscordCommands(message) {
         const runtime = Math.round((Date.now() - unifiedState.startTime) / 60000);
         const igStatus = getInstagramStatus();
         
-        const statusMsg = `📊 **統一監控系統狀態**
+        const statusMsg = `📊 **統一監控系統狀態** (日本時間)
 
 **系統運行時間:** ${runtime} 分鐘
 **Bot狀態:** ${unifiedState.botReady ? '✅ 在線' : '❌ 離線'}
+**當前日本時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
 
 **Instagram監控:**
 • 目標: @${config.TARGET_USERNAME}
@@ -527,7 +570,7 @@ async function handleDiscordCommands(message) {
 • 監控: ${unifiedState.instagram.isMonitoring ? '✅ 運行中' : '❌ 停止'}
 • 可用帳號: ${igStatus.availableAccounts}/${igStatus.totalAccounts}
 • 已停用帳號: ${igStatus.disabledAccounts || 0}
-• 成功率: ${unifiedState.instagram.totalRequests > 0 ? Math.round((unifiedState.instagram.successfulRequests / unifiedState.instagram.totalRequests) * 100) : 0}%
+• 成功率: ${igStatus.successRate}%
 
 **Discord頻道監控:**
 • 監控頻道數: ${Object.keys(config.CHANNEL_CONFIGS).length}
@@ -543,7 +586,7 @@ async function handleDiscordCommands(message) {
     }
     
     else if (cmd === '!help') {
-        await message.reply(`🔍 **統一直播監控機器人**
+        await message.reply(`🔍 **統一直播監控機器人** (日本時間版)
 
 **Instagram監控命令:**
 \`!ig-start\` - 開始Instagram監控
@@ -556,15 +599,16 @@ async function handleDiscordCommands(message) {
 \`!status\` - 完整系統狀態
 \`!help\` - 顯示此幫助
 
-**功能:**
+**功能特色:**
+🕐 日本時間 (JST) 智能調整
 🔒 Instagram安全監控 (90-180s隨機間隔)
 📺 Discord頻道關鍵字監控
 📞 電話通知 (如果配置)
-🚫 Cookie失效自動停用 + 提醒
+🛡️ Cookie失效自動停用 + 提醒
+🌙 深夜/早晨時段自動降頻
 🛡️ 自動錯誤處理與恢復`);
     }
 }
-
 
 // 頻道專用API呼叫
 async function callChannelSpecificAPI(channelId, channelConfig, keyword, originalMessage) {
@@ -575,7 +619,7 @@ async function callChannelSpecificAPI(channelId, channelConfig, keyword, origina
     try {
         const apiUrl = new URL('https://pushcall.me/api/call');
         apiUrl.searchParams.append('api_key', channelConfig.api_key);
-        apiUrl.searchParams.append('from', channelConfig.caller_id || '1'); // 修改這行
+        apiUrl.searchParams.append('from', channelConfig.caller_id || '1');
         apiUrl.searchParams.append('to', channelConfig.phone_number.replace('+', ''));
         
         unifiedState.discord.apiUsage[apiKeyShort].totalCalls++;
@@ -600,7 +644,7 @@ async function callChannelSpecificAPI(channelId, channelConfig, keyword, origina
     }
 }
 
-// === Web 狀態面板整合 === (替換原有的這個部分)
+// === Web 狀態面板整合 ===
 function getInstagramMonitorInstance() {
     return instagramMonitor;
 }
@@ -640,11 +684,10 @@ function initializeWebStatusPanel() {
     }
 }
 
-
-
 // 啟動Express服務器
 app.listen(PORT, () => {
     console.log(`🌐 HTTP伺服器運行在 port ${PORT}`);
+    console.log(`🕐 服務器啟動時間 (日本時間): ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`);
 });
 
 // === 錯誤處理 ===
@@ -684,8 +727,6 @@ process.on('SIGTERM', async () => {
     client.destroy();
     process.exit(0);
 });
-
-
 
 // === 啟動 Discord Bot ===
 console.log('🔐 正在登入Discord...');

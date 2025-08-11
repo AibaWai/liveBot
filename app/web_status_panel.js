@@ -11,6 +11,36 @@ class WebStatusPanel {
         this.setupRoutes();
     }
     
+    // 獲取日本時間字符串
+    getJapanTimeString() {
+        return new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+    }
+    
+    // 獲取日本時間的小時
+    getJapanHour() {
+        return new Date().toLocaleString('ja-JP', { 
+            timeZone: 'Asia/Tokyo',
+            hour: '2-digit',
+            hour12: false
+        }).split(':')[0];
+    }
+    
+    // 根據日本時間獲取時間段描述
+    getTimeSlotDescription() {
+        const hour = parseInt(this.getJapanHour());
+        
+        if (hour >= 2 && hour <= 6) {
+            return '🌙 深夜模式 (10-15分鐘間隔)';
+        } else if (hour >= 0 && hour <= 1) {
+            return '🌃 深夜前期 (3-5分鐘間隔)';
+        } else if (hour >= 7 && hour <= 8) {
+            return '🌅 早晨時段 (3-5分鐘間隔)';
+        } else if (hour >= 9 && hour <= 23) {
+            return '☀️ 活躍時段 (90-180秒間隔)';
+        }
+        return '🕐 一般時段';
+    }
+    
     // 安全獲取Instagram監控狀態
     getInstagramStatus() {
         try {
@@ -38,6 +68,8 @@ class WebStatusPanel {
             dailyRequests: 0,
             maxDailyRequests: 0,
             invalidCookieAccounts: 0,
+            japanTime: this.getJapanTimeString(),
+            japanHour: parseInt(this.getJapanHour()),
             accountDetails: []
         };
     }
@@ -56,6 +88,7 @@ class WebStatusPanel {
                 res.status(500).send(`
                     <h1>監控系統載入中...</h1>
                     <p>系統正在初始化，請稍後刷新頁面</p>
+                    <p>當前日本時間: ${this.getJapanTimeString()}</p>
                     <script>setTimeout(() => location.reload(), 5000);</script>
                 `);
             }
@@ -132,6 +165,19 @@ class WebStatusPanel {
                             <div class="stat-number">${cookieSummary.recentlyFailed}</div>
                             <div class="stat-label">近期失敗</div>
                         </div>
+                        <div class="stat-box">
+                            <div class="stat-number">${parseInt(this.getJapanHour())}</div>
+                            <div class="stat-label">日本時間 (時)</div>
+                        </div>
+                    </div>
+                    
+                    <div class="time-info">
+                        <div class="current-time">
+                            🕐 當前日本時間: ${cookieSummary.japanTime}
+                        </div>
+                        <div class="time-slot">
+                            ${this.getTimeSlotDescription()}
+                        </div>
                     </div>
                     
                     <div class="cookie-accounts">
@@ -187,6 +233,7 @@ class WebStatusPanel {
         <div class="cookie-unavailable">
             <p>Cookie狀態信息暫時不可用</p>
             <p>系統正在初始化中...</p>
+            <p>當前日本時間: ${this.getJapanTimeString()}</p>
         </div>
         `;
     }
@@ -201,7 +248,7 @@ class WebStatusPanel {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>統一直播監控機器人</title>
+    <title>統一直播監控機器人 (日本時間)</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -226,6 +273,23 @@ class WebStatusPanel {
             margin-bottom: 10px;
         }
         .header p { color: #888; font-size: 1.1em; }
+        .header .time-display {
+            background: rgba(42, 42, 42, 0.8);
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 15px;
+            border: 1px solid #4CAF50;
+        }
+        .time-display .japan-time {
+            font-size: 1.3em;
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        .time-display .time-slot {
+            font-size: 1.1em;
+            color: #2196F3;
+            margin-top: 5px;
+        }
         
         .main-status {
             display: grid;

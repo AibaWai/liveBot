@@ -1,4 +1,4 @@
-// 簡化版Instagram監控 - 3帳號輪換 + 90秒間隔 + Cookie失效提醒
+// 簡化版Instagram監控 - 3帳號輪換 + 90秒間隔 + Cookie失效提醒 + 日本時間
 const https = require('https');
 const crypto = require('crypto');
 
@@ -17,7 +17,7 @@ class SimplifiedInstagramMonitor {
         this.accounts = this.loadAccounts();
         this.currentAccountIndex = 0;
         this.dailyRequestCount = 0;
-        this.dailyDate = new Date().toDateString();
+        this.dailyDate = this.getJapanDateString();  // 使用日本時間
         this.accountStats = new Map();
         this.cooldownAccounts = new Map();
         this.isMonitoring = false;
@@ -29,13 +29,32 @@ class SimplifiedInstagramMonitor {
         
         this.initializeStats();
         
-        // 豐富的User-Agent池
+        // 豐富的User-Agent池 (使用old_main.js的方式)
         this.userAgents = [
-            'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
-            'Mozilla/5.0 (Linux; Android 14; SM-G998B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36',
-            'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'Instagram 302.0.0.23.113 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 492113219)',
+            'Instagram 299.0.0.51.109 Android (32/12; 440dpi; 1080x2340; OnePlus; CPH2423; OP515FL1; qcom; en_US; 486741830)',
+            'Instagram 301.0.0.29.124 Android (33/13; 480dpi; 1080x2400; Xiaomi; 2201116SG; lisa; qcom; en_US; 491671575)',
+            'Instagram 300.1.0.23.111 Android (31/12; 420dpi; 1080x2400; google; Pixel 6; oriole; google; en_US; 489553847)'
         ];
+    }
+    
+    // 獲取日本時間的日期字符串
+    getJapanDateString() {
+        return new Date().toLocaleDateString('ja-JP', { 
+            timeZone: 'Asia/Tokyo',
+            year: 'numeric',
+            month: '2-digit', 
+            day: '2-digit'
+        });
+    }
+    
+    // 獲取日本時間的小時
+    getJapanHour() {
+        return new Date().toLocaleString('ja-JP', { 
+            timeZone: 'Asia/Tokyo',
+            hour: '2-digit',
+            hour12: false
+        }).split(':')[0];
     }
     
     // 載入帳號配置
@@ -286,9 +305,9 @@ class SimplifiedInstagramMonitor {
     
     // 檢查是否可以運行
     canOperate() {
-        // 檢查每日限制
-        const today = new Date().toDateString();
-        if (this.dailyDate !== today) {
+        // 檢查每日限制 (使用日本時間)
+        const todayJapan = this.getJapanDateString();
+        if (this.dailyDate !== todayJapan) {
             this.resetDailyCounters();
         }
         
@@ -304,30 +323,27 @@ class SimplifiedInstagramMonitor {
     
     // 重置每日計數器
     resetDailyCounters() {
-        this.dailyDate = new Date().toDateString();
+        this.dailyDate = this.getJapanDateString();
         this.dailyRequestCount = 0;
         this.accountStats.forEach(stats => {
             stats.dailyRequests = 0;
         });
-        console.log('🌅 [重置] 每日計數器已重置');
+        console.log('🌅 [重置] 每日計數器已重置 (日本時間)');
     }
     
-    // 生成真實的cookies
-    generateRealisticCookies(account) {
-        const mid = crypto.randomBytes(16).toString('hex');
-        const ig_did = crypto.randomUUID();
-        
-        return [
-            `sessionid=${account.sessionId}`,
-            `csrftoken=${account.csrfToken}`,
-            `ds_user_id=${account.dsUserId}`,
-            `mid=${mid}`,
-            `ig_did=${ig_did}`,
-            'ig_nrcb=1'
-        ].join('; ');
+    // 生成設備數據 (使用old_main.js的方法)
+    generateDeviceData() {
+        return {
+            deviceId: 'android-' + Array.from({ length: 16 }, () => Math.floor(Math.random() * 16).toString(16)).join(''),
+            uuid: 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                const r = Math.random() * 16 | 0;
+                const v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            })
+        };
     }
     
-    // 安全HTTP請求
+    // 安全HTTP請求 (使用old_main.js的方法)
     makeRequest(url, options) {
         return new Promise((resolve, reject) => {
             const req = https.request(url, options, (res) => {
@@ -336,7 +352,7 @@ class SimplifiedInstagramMonitor {
                 res.on('end', () => {
                     resolve({ 
                         statusCode: res.statusCode, 
-                        data 
+                        data: data
                     });
                 });
             });
@@ -347,11 +363,59 @@ class SimplifiedInstagramMonitor {
                 reject(new Error('Request timeout'));
             });
             
+            if (options.body) req.write(options.body);
             req.end();
         });
     }
     
-    // 檢查Instagram直播
+    // 獲取用戶ID (使用old_main.js的成功方法)
+    async getUserId(username, account) {
+        const deviceData = this.generateDeviceData();
+        const sessionData = {
+            ...deviceData,
+            userAgent: this.userAgents[Math.floor(Math.random() * this.userAgents.length)],
+            cookies: `sessionid=${account.sessionId}; csrftoken=${account.csrfToken}; ds_user_id=${account.dsUserId}`
+        };
+        
+        try {
+            await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
+            
+            const timestamp = Math.floor(Date.now() / 1000);
+            const response = await this.makeRequest(`https://i.instagram.com/api/v1/users/web_profile_info/?username=${username}`, {
+                method: 'GET',
+                headers: {
+                    'User-Agent': sessionData.userAgent,
+                    'Accept': 'application/json',
+                    'Cookie': sessionData.cookies,
+                    'X-IG-App-Locale': 'en_US',
+                    'X-IG-Device-Locale': 'en_US',
+                    'X-Pigeon-Session-Id': sessionData.uuid,
+                    'X-Pigeon-Rawclienttime': timestamp,
+                    'X-IG-Connection-Type': 'WIFI',
+                    'X-IG-App-ID': '567067343352427',
+                    'X-IG-Device-ID': sessionData.deviceId,
+                    'Host': 'i.instagram.com'
+                }
+            });
+            
+            if (response.statusCode === 200) {
+                const data = JSON.parse(response.data);
+                if (data.data?.user?.id) {
+                    console.log(`✅ [Instagram] 用戶ID: ${data.data.user.id}`);
+                    return data.data.user.id;
+                }
+            }
+            
+            console.log(`❌ [Instagram] 獲取用戶ID失敗: ${response.statusCode}`);
+            return null;
+            
+        } catch (error) {
+            console.error('❌ [Instagram] 獲取用戶ID錯誤:', error.message);
+            return null;
+        }
+    }
+    
+    // 檢查Instagram直播 (使用old_main.js的成功方法)
     async checkLive(username) {
         if (!this.canOperate()) {
             console.log('⏸️ [檢查] 系統限制，跳過檢查');
@@ -398,108 +462,78 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
             // 智能延遲
             await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 3000));
             
-            const userAgent = this.userAgents[Math.floor(Math.random() * this.userAgents.length)];
-            const cookies = this.generateRealisticCookies(account);
-            
-            // 嘗試多個API端點
-            const endpoints = [
-                `https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`,
-                `https://i.instagram.com/api/v1/users/web_profile_info/?username=${username}`,
-                `https://www.instagram.com/${username}/?__a=1&__d=dis`
-            ];
-            
-            let lastError = null;
-            
-            for (const [index, url] of endpoints.entries()) {
-                try {
-                    console.log(`🔄 [檢查] 嘗試端點 ${index + 1}/${endpoints.length}`);
-                    
-                    const headers = {
-                        'User-Agent': userAgent,
-                        'Accept': '*/*',
-                        'Accept-Language': 'en-US,en;q=0.9',
-                        'Cookie': cookies,
-                        'X-Requested-With': 'XMLHttpRequest',
-                        'Referer': `https://www.instagram.com/${username}/`,
-                        'Origin': 'https://www.instagram.com'
-                    };
-                    
-                    // 為不同端點調整headers
-                    if (index === 0 || index === 1) {
-                        headers['X-CSRFToken'] = account.csrfToken;
-                        headers['X-IG-App-ID'] = '936619743392459'; // Instagram Web App ID
-                    }
-                    
-                    const response = await this.makeRequest(url, {
-                        method: 'GET',
-                        headers: headers
-                    });
-                    
-                    console.log(`📊 [檢查] 端點 ${index + 1} 回應: HTTP ${response.statusCode}`);
-                    
-                    if (response.statusCode === 200) {
-                        this.recordRequest(account.id, true);
-                        
-                        // 嘗試解析回應
-                        try {
-                            const data = JSON.parse(response.data);
-                            
-                            // 檢查不同的數據結構
-                            if (data.data?.user) {
-                                const user = data.data.user;
-                                if (user.is_live || user.broadcast || user.live_broadcast_id) {
-                                    console.log('🔴 [檢查] 檢測到直播!');
-                                    return true;
-                                }
-                            } else if (data.graphql?.user) {
-                                const user = data.graphql.user;
-                                if (user.is_live || user.broadcast || user.live_broadcast_id) {
-                                    console.log('🔴 [檢查] 檢測到直播!');
-                                    return true;
-                                }
-                            }
-                            
-                            console.log('⚫ [檢查] 目前無直播');
-                            return false;
-                            
-                        } catch (parseError) {
-                            console.log('⚠️ [檢查] JSON解析失敗，嘗試HTML解析');
-                            
-                            // 嘗試從HTML中檢測直播
-                            if (response.data.includes('"is_live":true') || 
-                                response.data.includes('live_broadcast') ||
-                                response.data.includes('LiveReels')) {
-                                console.log('🔴 [檢查] 從HTML檢測到直播!');
-                                return true;
-                            }
-                            
-                            return false;
-                        }
-                    } else if (response.statusCode === 429) {
-                        // Rate limit - 立即停止嘗試
-                        throw new Error(`Rate limited (HTTP 429)`);
-                    } else if (response.statusCode === 400 && index < endpoints.length - 1) {
-                        // HTTP 400 - 嘗試下一個端點
-                        console.log(`⚠️ [檢查] 端點 ${index + 1} 返回400，嘗試下一個...`);
-                        lastError = new Error(`HTTP ${response.statusCode}`);
-                        continue;
-                    } else {
-                        throw new Error(`HTTP ${response.statusCode}`);
-                    }
-                    
-                } catch (error) {
-                    lastError = error;
-                    if (error.message.includes('429')) {
-                        // Rate limit - 停止所有嘗試
-                        break;
-                    }
-                    console.log(`⚠️ [檢查] 端點 ${index + 1} 失敗: ${error.message}`);
-                    continue;
-                }
+            // 首先獲取用戶ID
+            const userId = await this.getUserId(username, account);
+            if (!userId) {
+                this.recordRequest(account.id, false, 'user_id_failed');
+                return false;
             }
             
-            // 所有端點都失敗
-            throw lastError || new Error('All endpoints failed');
+            // 檢查story端點 (old_main.js的成功方法)
+            await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1500));
+            
+            const deviceData = this.generateDeviceData();
+            const sessionData = {
+                ...deviceData,
+                userAgent: this.userAgents[Math.floor(Math.random() * this.userAgents.length)],
+                cookies: `sessionid=${account.sessionId}; csrftoken=${account.csrfToken}; ds_user_id=${account.dsUserId}`
+            };
+            
+            const timestamp = Math.floor(Date.now() / 1000);
+            const response = await this.makeRequest(`https://i.instagram.com/api/v1/feed/user/${userId}/story/`, {
+                method: 'GET',
+                headers: {
+                    'User-Agent': sessionData.userAgent,
+                    'Accept': 'application/json',
+                    'Cookie': sessionData.cookies,
+                    'X-IG-App-Locale': 'en_US',
+                    'X-Pigeon-Session-Id': sessionData.uuid,
+                    'X-Pigeon-Rawclienttime': timestamp,
+                    'X-IG-App-ID': '567067343352427',
+                    'X-IG-Device-ID': sessionData.deviceId,
+                    'Host': 'i.instagram.com'
+                }
+            });
+            
+            console.log(`📊 [檢查] Story端點回應: HTTP ${response.statusCode}`);
+            
+            if (response.statusCode === 200) {
+                const data = JSON.parse(response.data);
+                this.recordRequest(account.id, true);
+                
+                // 檢查直播 (old_main.js的邏輯)
+                if (data.broadcast) {
+                    console.log('🔴 [Instagram] 發現直播!');
+                    return true;
+                }
+                
+                if (data.reel?.items) {
+                    for (const item of data.reel.items) {
+                        if (item.media_type === 4) {
+                            console.log('🔴 [Instagram] Reel中發現直播!');
+                            return true;
+                        }
+                    }
+                }
+                
+                console.log('⚫ [檢查] 目前無直播');
+                return false;
+                
+            } else {
+                // 分析錯誤類型
+                let errorType = 'network_error';
+                if (response.statusCode === 401) {
+                    errorType = 'unauthorized';
+                } else if (response.statusCode === 403) {
+                    errorType = 'forbidden';
+                } else if (response.statusCode === 429) {
+                    errorType = 'rate_limit';
+                }
+                
+                console.log(`❌ [檢查] Story端點失敗: HTTP ${response.statusCode}`);
+                this.recordRequest(account.id, false, errorType);
+                return false;
+            }
             
         } catch (error) {
             console.error(`❌ [檢查] ${account.id} 失敗: ${error.message}`);
@@ -513,9 +547,6 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
                 errorType = 'forbidden';
             } else if (error.message.includes('429')) {
                 errorType = 'rate_limit';
-            } else if (error.message.includes('400')) {
-                errorType = 'bad_request';
-                console.log('💡 [建議] HTTP 400可能表示需要更新請求格式或帳號token');
             }
             
             this.recordRequest(account.id, false, errorType);
@@ -541,9 +572,9 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
         }
     }
     
-    // 計算下次檢查間隔 (考慮時間段)
+    // 計算下次檢查間隔 (根據日本時間調整)
     calculateNextInterval() {
-        const hour = new Date().getHours(); // 日本時間
+        const hour = parseInt(this.getJapanHour()); // 日本時間的小時
         const availableAccounts = this.accounts.filter(account => {
             const stats = this.accountStats.get(account.id);
             const cooldownEnd = this.cooldownAccounts.get(account.id) || 0;
@@ -555,23 +586,23 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
         
         let interval = SAFE_CONFIG.minInterval;
         
-        // 時間段調整
+        // 根據日本時間調整間隔
         if (hour >= 2 && hour <= 6) {
-            // 深夜時段 (2am-6am) - 大幅減少檢查
-            interval = 600; // 10分鐘間隔
-            console.log('🌙 [深夜模式] 使用10分鐘間隔');
+            // 深夜時段 (2am-6am) - 10~15分鐘間隔
+            interval = 600 + Math.random() * 300; // 10-15分鐘
+            console.log('🌙 [深夜模式] 使用10-15分鐘間隔');
         } else if (hour >= 0 && hour <= 1) {
-            // 深夜前期 (12am-2am) - 適中間隔
-            interval = 300; // 5分鐘間隔
-            console.log('🌃 [深夜前期] 使用5分鐘間隔');
+            // 深夜前期 (12am-2am) - 3~5分鐘間隔
+            interval = 180 + Math.random() * 120; // 3-5分鐘
+            console.log('🌃 [深夜前期] 使用3-5分鐘間隔');
         } else if (hour >= 7 && hour <= 8) {
-            // 早晨時段 (7am-8am) - 適中間隔
-            interval = 180; // 3分鐘間隔
-            console.log('🌅 [早晨時段] 使用3分鐘間隔');
+            // 早晨時段 (7am-8am) - 3~5分鐘間隔
+            interval = 180 + Math.random() * 120; // 3-5分鐘
+            console.log('🌅 [早晨時段] 使用3-5分鐘間隔');
         } else if (hour >= 9 && hour <= 23) {
-            // 白天活躍時段 (9am-11pm) - 正常間隔
-            interval = SAFE_CONFIG.minInterval; // 90秒間隔
-            console.log('☀️ [活躍時段] 使用90秒間隔');
+            // 白天活躍時段 (9am-11pm) - 90~180秒間隔
+            interval = SAFE_CONFIG.minInterval + Math.random() * (SAFE_CONFIG.maxInterval - SAFE_CONFIG.minInterval);
+            console.log('☀️ [活躍時段] 使用90-180秒間隔');
         }
         
         // 根據可用帳號調整
@@ -579,11 +610,10 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
             interval = Math.max(interval, SAFE_CONFIG.maxInterval);
         }
         
-        // 隨機化 (±20%)
-        const randomFactor = 0.8 + (Math.random() * 0.4);
-        interval = Math.floor(interval * randomFactor);
+        // 最小間隔限制
+        interval = Math.max(interval, SAFE_CONFIG.minInterval);
         
-        return Math.max(interval, SAFE_CONFIG.minInterval);
+        return Math.floor(interval);
     }
     
     // 啟動監控
@@ -596,9 +626,10 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
         this.isMonitoring = true;
         let isLiveNow = false;
         
-        console.log('🚀 [簡化監控] 開始Instagram監控');
+        console.log('🚀 [簡化監控] 開始Instagram監控 (日本時間)');
         console.log(`📊 [配置] 間隔: ${SAFE_CONFIG.minInterval}-${SAFE_CONFIG.maxInterval}秒`);
         console.log(`🔐 [帳號] 總數: ${this.accounts.length}`);
+        console.log(`🕐 [時間] 當前日本時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`);
         
         const monitorLoop = async () => {
             if (!this.isMonitoring) return;
@@ -620,7 +651,8 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
                 
                 // 計算下次檢查間隔
                 const nextInterval = this.calculateNextInterval();
-                console.log(`⏰ [監控] 下次檢查: ${Math.round(nextInterval/60)}分鐘後`);
+                const nextCheckTime = new Date(Date.now() + nextInterval * 1000).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+                console.log(`⏰ [監控] 下次檢查: ${Math.round(nextInterval/60)}分鐘後 (${nextCheckTime})`);
                 
                 // 顯示狀態
                 const availableCount = this.accounts.filter(account => {
@@ -633,6 +665,7 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
                 }).length;
                 
                 console.log(`📊 [狀態] 可用帳號: ${availableCount}/${this.accounts.length}, 今日請求: ${this.dailyRequestCount}/${SAFE_CONFIG.maxDailyRequests}`);
+                console.log(`🕐 [日本時間] ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`);
                 
                 setTimeout(monitorLoop, nextInterval * 1000);
                 
@@ -671,13 +704,33 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
             return cookieStats.isCurrentlyInvalid;
         }).length;
         
+        // 計算成功率
+        let totalRequests = 0;
+        let totalSuccessful = 0;
+        this.accountStats.forEach(stats => {
+            totalRequests += stats.successCount + stats.errorCount;
+            totalSuccessful += stats.successCount;
+        });
+        const successRate = totalRequests > 0 ? Math.round((totalSuccessful / totalRequests) * 100) : 0;
+        
         return {
             isMonitoring: this.isMonitoring,
+            isLiveNow: false, // 這個值會在main.js中更新
             totalAccounts: this.accounts.length,
             availableAccounts: availableCount,
+            disabledAccounts: invalidCookieCount, // 重命名以保持向後兼容
             invalidCookieAccounts: invalidCookieCount,
             dailyRequests: this.dailyRequestCount,
             maxDailyRequests: SAFE_CONFIG.maxDailyRequests,
+            accountStatus: availableCount > 0 ? 'active' : 'no_available_accounts',
+            totalRequests: totalRequests,
+            successfulRequests: totalSuccessful,
+            successRate: successRate,
+            consecutiveErrors: 0, // 這個可以根據需要計算
+            lastCheck: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
+            targetUserId: null,
+            japanTime: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
+            japanHour: parseInt(this.getJapanHour()),
             accountDetails: Array.from(this.accountStats.entries()).map(([id, stats]) => {
                 const cookieStats = this.cookieFailureStats.get(id);
                 return {
@@ -687,6 +740,7 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
                     errorCount: stats.errorCount,
                     lastUsed: stats.lastUsed ? new Date(stats.lastUsed).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : 'Never',
                     inCooldown: this.cooldownAccounts.has(id) && this.cooldownAccounts.get(id) > Date.now(),
+                    isDisabled: cookieStats.isCurrentlyInvalid, // 向後兼容
                     cookieStatus: cookieStats.isCurrentlyInvalid ? 'Invalid' : 'Valid',
                     consecutiveFailures: cookieStats.consecutiveFailures,
                     invalidSince: cookieStats.invalidSince ? new Date(cookieStats.invalidSince).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null
@@ -702,6 +756,7 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
             validAccounts: 0,
             invalidAccounts: 0,
             recentlyFailed: 0,
+            japanTime: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
             details: []
         };
         
