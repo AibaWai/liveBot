@@ -2,18 +2,13 @@
 const https = require('https');
 const crypto = require('crypto');
 
-// 安全配置 (確保充足的請求額度 + Cookie監控)
+// 安全配置 (確保充足的請求額度)
 const SAFE_CONFIG = {
     minInterval: 90,         // 90秒最小間隔 (活躍時段)
     maxInterval: 180,        // 3分鐘最大間隔
     maxRequestsPerAccount: 300,  // 每個帳號每天300次
     accountCooldownMinutes: 20,  // 基礎冷卻20分鐘 (會動態調整)
     maxDailyRequests: 750,       // 全系統每天750次 (充足緩衝)
-    
-    // Cookie監控配置
-    cookieWarningDays: 3,        // Cookie過期前3天開始警告
-    cookieExpireCheckHours: 12,  // 每12小時檢查一次Cookie狀態
-    consecutiveFailuresForAlert: 3, // 連續3次失敗後發送提醒
 };
 
 class SimplifiedInstagramMonitor {
@@ -26,11 +21,6 @@ class SimplifiedInstagramMonitor {
         this.cooldownAccounts = new Map();
         this.isMonitoring = false;
         
-        // Cookie監控
-        this.cookieAlerts = new Map(); // 記錄每個帳號的警告狀態
-        this.lastCookieCheck = new Map(); // 記錄最後檢查時間
-        this.onCookieAlert = null; // Cookie警告回調函數
-        
         this.initializeStats();
         
         // 豐富的User-Agent池
@@ -40,9 +30,6 @@ class SimplifiedInstagramMonitor {
             'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36',
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         ];
-        
-        // 啟動Cookie監控
-        this.startCookieMonitoring();
     }
     
     // 載入帳號配置
@@ -79,25 +66,14 @@ class SimplifiedInstagramMonitor {
         return accounts;
     }
     
-    // 初始化統計 (包含Cookie狀態)
+    // 初始化統計
     initializeStats() {
         this.accounts.forEach(account => {
             this.accountStats.set(account.id, {
                 dailyRequests: 0,
                 successCount: 0,
                 errorCount: 0,
-                lastUsed: 0,
-                consecutiveFailures: 0, // 追蹤連續失敗次數
-                lastSuccessTime: Date.now(),
-                cookieStatus: 'unknown', // unknown, active, warning, expired
-                lastCookieCheck: 0
-            });
-            
-            // 初始化Cookie警告狀態
-            this.cookieAlerts.set(account.id, {
-                warningsSent: 0,
-                lastWarningTime: 0,
-                isExpired: false
+                lastUsed: 0
             });
         });
     }
@@ -130,7 +106,7 @@ class SimplifiedInstagramMonitor {
         return bestAccount;
     }
     
-    // 記錄請求結果 (智能冷卻 + Cookie狀態分析)
+    // 記錄請求結果 (智能冷卻)
     recordRequest(accountId, success, errorType = null) {
         const stats = this.accountStats.get(accountId);
         if (!stats) return;
@@ -141,10 +117,6 @@ class SimplifiedInstagramMonitor {
         
         if (success) {
             stats.successCount++;
-            stats.consecutiveFailures = 0; // 重置連續失敗
-            stats.lastSuccessTime = Date.now();
-            stats.cookieStatus = 'active'; // 成功表示Cookie正常
-            
             // 成功時減少現有的冷卻時間
             if (this.cooldownAccounts.has(accountId)) {
                 const currentCooldown = this.cooldownAccounts.get(accountId);
@@ -153,10 +125,6 @@ class SimplifiedInstagramMonitor {
             }
         } else {
             stats.errorCount++;
-            stats.consecutiveFailures++; // 增加連續失敗次數
-            
-            // 分析Cookie狀態
-            this.analyzeCookieStatus(accountId, errorType, stats.consecutiveFailures);
             
             // 根據錯誤類型和可用帳號數量智能調整冷卻
             const availableAccountsCount = this.accounts.filter(account => {
@@ -177,9 +145,8 @@ class SimplifiedInstagramMonitor {
             // 根據錯誤類型調整
             if (errorType === 'rate_limit') {
                 cooldownMinutes = Math.min(cooldownMinutes * 1.5, 45); // 最多45分鐘
-            } else if (errorType === 'forbidden' || errorType === 'unauthorized') {
+            } else if (errorType === 'forbidden') {
                 cooldownMinutes = Math.min(cooldownMinutes * 2, 60); // 最多1小時
-                stats.cookieStatus = 'expired'; // 可能Cookie過期
             }
             
             this.setCooldown(accountId, cooldownMinutes);
@@ -188,7 +155,7 @@ class SimplifiedInstagramMonitor {
         const successRate = stats.successCount + stats.errorCount > 0 ? 
             Math.round(stats.successCount / (stats.successCount + stats.errorCount) * 100) : 0;
             
-        console.log(`📊 [統計] ${accountId}: 今日${stats.dailyRequests}次, 成功率${successRate}%, Cookie狀態: ${stats.cookieStatus}`);
+        console.log(`📊 [統計] ${accountId}: 今日${stats.dailyRequests}次, 成功率${successRate}%`);
     }
     
     // 設置帳號冷卻
@@ -447,7 +414,7 @@ class SimplifiedInstagramMonitor {
         console.log('⏹️ [監控] 已停止');
     }
     
-    // 獲取狀態 (包含Cookie信息)
+    // 獲取狀態
     getStatus() {
         const availableCount = this.accounts.filter(account => {
             const stats = this.accountStats.get(account.id);
@@ -462,230 +429,15 @@ class SimplifiedInstagramMonitor {
             availableAccounts: availableCount,
             dailyRequests: this.dailyRequestCount,
             maxDailyRequests: SAFE_CONFIG.maxDailyRequests,
-            cookieStatus: this.getCookieStatusSummary(),
             accountDetails: Array.from(this.accountStats.entries()).map(([id, stats]) => ({
                 id,
                 dailyRequests: stats.dailyRequests,
                 successCount: stats.successCount,
                 errorCount: stats.errorCount,
-                consecutiveFailures: stats.consecutiveFailures,
-                cookieStatus: stats.cookieStatus,
-                lastSuccessTime: stats.lastSuccessTime ? new Date(stats.lastSuccessTime).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : 'Never',
                 lastUsed: stats.lastUsed ? new Date(stats.lastUsed).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : 'Never',
-                inCooldown: this.cooldownAccounts.has(id) && this.cooldownAccounts.get(id) > Date.now(),
-                warningsSent: this.cookieAlerts.get(id)?.warningsSent || 0
+                inCooldown: this.cooldownAccounts.has(id) && this.cooldownAccounts.get(id) > Date.now()
             }))
         };
-    }
-    
-    // 設置Cookie警告回調
-    setCookieAlertCallback(callback) {
-        this.onCookieAlert = callback;
-    }
-    
-    // 分析Cookie狀態
-    analyzeCookieStatus(accountId, errorType, consecutiveFailures) {
-        const stats = this.accountStats.get(accountId);
-        if (!stats) return;
-        
-        let newStatus = stats.cookieStatus;
-        
-        // 根據錯誤類型判斷Cookie狀態
-        if (errorType === 'unauthorized' || errorType === 'forbidden') {
-            newStatus = 'expired';
-        } else if (errorType === 'challenge_required') {
-            newStatus = 'warning';
-        } else if (consecutiveFailures >= SAFE_CONFIG.consecutiveFailuresForAlert) {
-            newStatus = 'warning';
-        }
-        
-        // 如果狀態發生變化，觸發警告
-        if (newStatus !== stats.cookieStatus) {
-            stats.cookieStatus = newStatus;
-            this.handleCookieStatusChange(accountId, newStatus, errorType);
-        }
-    }
-    
-    // 處理Cookie狀態變化
-    async handleCookieStatusChange(accountId, newStatus, errorType) {
-        const alertInfo = this.cookieAlerts.get(accountId);
-        const now = Date.now();
-        
-        // 避免重複警告 (30分鐘內不重複)
-        if (alertInfo && (now - alertInfo.lastWarningTime) < 1800000) {
-            return;
-        }
-        
-        let alertMessage = '';
-        let alertLevel = 'warning';
-        
-        switch (newStatus) {
-            case 'expired':
-                alertMessage = `🚨 **Cookie過期警告**
-                
-**帳號:** ${accountId}
-**狀態:** Cookie可能已過期
-**錯誤類型:** ${errorType}
-**時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-
-**建議操作:**
-1. 重新登入Instagram獲取新Cookie
-2. 更新環境變數中的Cookie信息
-3. 重新部署應用
-
-⚠️ **影響:** 此帳號將無法繼續監控，請盡快更新！`;
-                alertLevel = 'critical';
-                alertInfo.isExpired = true;
-                break;
-                
-            case 'warning':
-                alertMessage = `⚠️ **Cookie狀態警告**
-                
-**帳號:** ${accountId}
-**狀態:** Cookie可能即將過期
-**連續失敗:** ${this.accountStats.get(accountId)?.consecutiveFailures || 0} 次
-**時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-
-**建議操作:**
-- 密切關注此帳號狀態
-- 準備更新Cookie
-- 如繼續失敗將升級為過期警告
-
-💡 **提示:** 考慮提前更新Cookie以避免監控中斷`;
-                alertLevel = 'warning';
-                break;
-        }
-        
-        if (alertMessage && this.onCookieAlert) {
-            alertInfo.warningsSent++;
-            alertInfo.lastWarningTime = now;
-            this.cookieAlerts.set(accountId, alertInfo);
-            
-            await this.onCookieAlert(alertMessage, alertLevel, accountId);
-            console.log(`🔔 [Cookie警告] ${accountId} 狀態: ${newStatus}`);
-        }
-    }
-    
-    // 啟動Cookie監控
-    startCookieMonitoring() {
-        console.log('🍪 [Cookie監控] 啟動定期Cookie狀態檢查');
-        
-        // 每12小時執行一次全面檢查
-        setInterval(async () => {
-            await this.performCookieHealthCheck();
-        }, SAFE_CONFIG.cookieExpireCheckHours * 3600000);
-        
-        // 30分鐘後執行首次檢查
-        setTimeout(() => {
-            this.performCookieHealthCheck();
-        }, 1800000);
-    }
-    
-    // 執行Cookie健康檢查
-    async performCookieHealthCheck() {
-        console.log('🍪 [Cookie檢查] 執行定期健康檢查');
-        
-        for (const account of this.accounts) {
-            const stats = this.accountStats.get(account.id);
-            if (!stats) continue;
-            
-            const timeSinceLastSuccess = Date.now() - stats.lastSuccessTime;
-            const hoursSinceSuccess = timeSinceLastSuccess / (1000 * 60 * 60);
-            
-            // 如果超過24小時沒有成功請求，發送預警
-            if (hoursSinceSuccess > 24 && stats.cookieStatus !== 'expired') {
-                await this.handleCookieStatusChange(account.id, 'warning', 'long_time_no_success');
-            }
-            
-            // 如果連續失敗超過閾值，升級警告
-            if (stats.consecutiveFailures >= SAFE_CONFIG.consecutiveFailuresForAlert) {
-                if (stats.cookieStatus === 'active') {
-                    await this.handleCookieStatusChange(account.id, 'warning', 'consecutive_failures');
-                }
-            }
-        }
-    }
-    
-    // 獲取Cookie狀態摘要
-    getCookieStatusSummary() {
-        const statusCounts = {
-            active: 0,
-            warning: 0,
-            expired: 0,
-            unknown: 0
-        };
-        
-        this.accounts.forEach(account => {
-            const stats = this.accountStats.get(account.id);
-            if (stats) {
-                statusCounts[stats.cookieStatus] = (statusCounts[stats.cookieStatus] || 0) + 1;
-            }
-        });
-        
-        return {
-            total: this.accounts.length,
-            ...statusCounts,
-            overallStatus: this.getOverallCookieStatus(statusCounts)
-        };
-    }
-    
-    // 獲取整體Cookie狀態
-    getOverallCookieStatus(statusCounts) {
-        if (statusCounts.expired > 0) {
-            return statusCounts.expired >= this.accounts.length ? 'all_expired' : 'some_expired';
-        } else if (statusCounts.warning > 0) {
-            return 'warning';
-        } else if (statusCounts.active > 0) {
-            return 'healthy';
-        } else {
-            return 'unknown';
-        }
-    }
-    
-    // 手動檢查特定帳號Cookie
-    async checkAccountCookie(accountId) {
-        const account = this.accounts.find(acc => acc.id === accountId);
-        if (!account) {
-            throw new Error(`帳號 ${accountId} 不存在`);
-        }
-        
-        try {
-            console.log(`🍪 [Cookie檢查] 手動檢查 ${accountId}`);
-            
-            // 執行一個簡單的API請求來測試Cookie
-            const userAgent = this.userAgents[Math.floor(Math.random() * this.userAgents.length)];
-            const cookies = this.generateRealisticCookies(account);
-            
-            const response = await this.makeRequest('https://www.instagram.com/api/v1/accounts/current_user/', {
-                method: 'GET',
-                headers: {
-                    'User-Agent': userAgent,
-                    'Accept': '*/*',
-                    'Cookie': cookies,
-                    'X-CSRFToken': account.csrfToken,
-                    'X-Requested-With': 'XMLHttpRequest'
-                }
-            });
-            
-            const stats = this.accountStats.get(accountId);
-            
-            if (response.statusCode === 200) {
-                stats.cookieStatus = 'active';
-                stats.lastSuccessTime = Date.now();
-                stats.consecutiveFailures = 0;
-                return { status: 'active', message: 'Cookie有效' };
-            } else if (response.statusCode === 401 || response.statusCode === 403) {
-                stats.cookieStatus = 'expired';
-                return { status: 'expired', message: 'Cookie已過期，需要更新' };
-            } else {
-                stats.cookieStatus = 'warning';
-                return { status: 'warning', message: `Cookie狀態可疑 (HTTP ${response.statusCode})` };
-            }
-            
-        } catch (error) {
-            console.error(`❌ [Cookie檢查] ${accountId} 檢查失敗:`, error.message);
-            return { status: 'error', message: `檢查失敗: ${error.message}` };
-        }
     }
 }
 
