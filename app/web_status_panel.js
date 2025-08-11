@@ -109,6 +109,86 @@ class WebStatusPanel {
             }
         });
     }
+
+    generateCookieStatusHTML() {
+    try {
+        const instagramMonitor = this.getInstagramMonitor();
+        if (instagramMonitor && typeof instagramMonitor.getCookieStatusSummary === 'function') {
+            const cookieSummary = instagramMonitor.getCookieStatusSummary();
+            
+            return `
+            <div class="cookie-summary">
+                <div class="stats-grid">
+                    <div class="stat-box ${cookieSummary.validAccounts === cookieSummary.totalAccounts ? '' : 'warning'}">
+                        <div class="stat-number">${cookieSummary.validAccounts}</div>
+                        <div class="stat-label">有效帳號</div>
+                    </div>
+                    <div class="stat-box ${cookieSummary.invalidAccounts > 0 ? 'error' : ''}">
+                        <div class="stat-number">${cookieSummary.invalidAccounts}</div>
+                        <div class="stat-label">失效帳號</div>
+                    </div>
+                    <div class="stat-box ${cookieSummary.recentlyFailed > 0 ? 'warning' : ''}">
+                        <div class="stat-number">${cookieSummary.recentlyFailed}</div>
+                        <div class="stat-label">近期失敗</div>
+                    </div>
+                </div>
+                
+                <div class="cookie-accounts">
+                    ${cookieSummary.details.map(account => `
+                        <div class="cookie-account ${account.status === 'Invalid' ? 'invalid' : 'valid'}">
+                            <div class="account-header">
+                                <span class="account-name">${account.id}</span>
+                                <span class="account-status ${account.status.toLowerCase()}">${account.status === 'Valid' ? '✅ 有效' : '❌ 失效'}</span>
+                            </div>
+                            <div class="account-details">
+                                <div class="detail-item">
+                                    <span>Session ID:</span>
+                                    <span class="session-id">${account.sessionId}</span>
+                                </div>
+                                ${account.consecutiveFailures > 0 ? `
+                                <div class="detail-item warning">
+                                    <span>連續失敗:</span>
+                                    <span>${account.consecutiveFailures} 次</span>
+                                </div>
+                                ` : ''}
+                                ${account.lastFailure ? `
+                                <div class="detail-item">
+                                    <span>最後失敗:</span>
+                                    <span>${account.lastFailure}</span>
+                                </div>
+                                ` : ''}
+                                ${account.invalidSince ? `
+                                <div class="detail-item error">
+                                    <span>失效時間:</span>
+                                    <span>${account.invalidSince}</span>
+                                </div>
+                                ` : ''}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+                
+                ${cookieSummary.invalidAccounts > 0 ? `
+                <div class="cookie-warning">
+                    ⚠️ <strong>注意:</strong> 有 ${cookieSummary.invalidAccounts} 個帳號的cookies已失效，需要立即更新！
+                    <br>
+                    📋 <strong>修復步驟:</strong> 
+                    1. 重新登入Instagram → 2. 複製新的cookies → 3. 更新環境變數 → 4. 重新部署
+                </div>
+                ` : ''}
+            `;
+        }
+    } catch (error) {
+        console.error('❌ [Web面板] 生成Cookie狀態失敗:', error.message);
+    }
+    
+    return `
+    <div class="cookie-unavailable">
+        <p>Cookie狀態信息暫時不可用</p>
+        <p>系統正在初始化中...</p>
+    </div>
+    `;
+}
     
     generateStatusHTML() {
         const uptime = Math.floor((Date.now() - this.unifiedState.startTime) / 1000);
@@ -290,6 +370,112 @@ class WebStatusPanel {
             margin-bottom: 20px;
             text-align: center;
         }
+
+        .cookie-summary {
+            margin-bottom: 20px;
+        }
+        
+        .cookie-accounts {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .cookie-account {
+            background: rgba(26, 26, 46, 0.8);
+            border-radius: 10px;
+            padding: 15px;
+            border-left: 3px solid #4CAF50;
+        }
+        
+        .cookie-account.invalid {
+            border-left-color: #f44336;
+            background: rgba(46, 26, 26, 0.8);
+        }
+        
+        .account-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        
+        .account-name {
+            font-weight: bold;
+            color: #2196F3;
+        }
+        
+        .account-status.valid {
+            color: #4CAF50;
+        }
+        
+        .account-status.invalid {
+            color: #f44336;
+        }
+        
+        .account-details {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        
+        .detail-item {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.9em;
+            padding: 3px 0;
+        }
+        
+        .detail-item.warning {
+            color: #ff9800;
+        }
+        
+        .detail-item.error {
+            color: #f44336;
+        }
+        
+        .session-id {
+            font-family: 'Courier New', monospace;
+            font-size: 0.8em;
+            background: rgba(0,0,0,0.3);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+        
+        .cookie-warning {
+            background: rgba(255, 152, 0, 0.2);
+            border: 1px solid #ff9800;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 15px;
+            color: #ffb74d;
+        }
+        
+        .cookie-unavailable {
+            text-align: center;
+            color: #888;
+            font-style: italic;
+            padding: 20px;
+        }
+        
+        .stat-box.warning {
+            border-left: 3px solid #ff9800;
+        }
+        
+        .stat-box.error {
+            border-left: 3px solid #f44336;
+        }
+        
+        .stat-box.warning .stat-number {
+            color: #ff9800;
+        }
+        
+        .stat-box.error .stat-number {
+            color: #f44336;
+        }
     </style>
     <script>
         // Auto refresh every 30 seconds
@@ -380,6 +566,11 @@ class WebStatusPanel {
                     <span class="status-value">${this.unifiedState.notifications.lastNotification || '無'}</span>
                 </div>
             </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">🔑 帳號Cookie狀態</div>
+            ${this.generateCookieStatusHTML()}
         </div>
 
         <div class="section">

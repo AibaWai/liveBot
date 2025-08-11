@@ -180,7 +180,7 @@ const client = new Client({
     ]
 });
 
-// === 簡化Instagram監控系統 ===
+// === 簡化Instagram監控系統 ===（替換原有部分）
 let instagramMonitor = null;
 
 async function startInstagramMonitoring() {
@@ -191,7 +191,9 @@ async function startInstagramMonitoring() {
         }
         
         const SimplifiedInstagramMonitor = require('./simplified_instagram_monitor');
-        instagramMonitor = new SimplifiedInstagramMonitor();
+        
+        // 創建監控實例時傳入Discord通知回調函數
+        instagramMonitor = new SimplifiedInstagramMonitor(sendNotification);
         
         console.log('🚀 [Instagram] 啟動簡化監控系統');
         
@@ -230,7 +232,7 @@ function stopInstagramMonitoring() {
     }
 }
 
-// 獲取Instagram監控狀態
+// 修改獲取Instagram監控狀態函數
 function getInstagramStatus() {
     if (instagramMonitor && typeof instagramMonitor.getStatus === 'function') {
         try {
@@ -245,6 +247,7 @@ function getInstagramStatus() {
         isMonitoring: false,
         totalAccounts: 0,
         availableAccounts: 0,
+        disabledAccounts: 0,
         dailyRequests: 0,
         maxDailyRequests: 0,
         accountStatus: 'initializing',
@@ -429,21 +432,22 @@ async function handleDiscordCommands(message) {
         
         const statusMsg = `📊 **Instagram監控狀態**
 
-    **目標:** @${config.TARGET_USERNAME}
-    **當前狀態:** ${unifiedState.instagram.isLiveNow ? '🔴 直播中' : '⚫ 離線'}
-    **監控:** ${igStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
+**目標:** @${config.TARGET_USERNAME}
+**當前狀態:** ${unifiedState.instagram.isLiveNow ? '🔴 直播中' : '⚫ 離線'}
+**監控:** ${igStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
 
-    **3帳號輪換系統:**
-    ⏱️ 運行時間: ${runtime} 分鐘
-    🔐 總帳號數: ${igStatus.totalAccounts}
-    ✅ 可用帳號: ${igStatus.availableAccounts}
-    📊 今日請求: ${igStatus.dailyRequests}/${igStatus.maxDailyRequests}
+**3帳號輪換系統:**
+⏱️ 運行時間: ${runtime} 分鐘
+🔐 總帳號數: ${igStatus.totalAccounts}
+✅ 可用帳號: ${igStatus.availableAccounts}
+🚫 已停用帳號: ${igStatus.disabledAccounts || 0}
+📊 今日請求: ${igStatus.dailyRequests}/${igStatus.maxDailyRequests}
 
-    **時間段智能監控:**
-    🌙 深夜 (02-06): 10分鐘間隔
-    🌅 早晨 (07-08): 3分鐘間隔  
-    ☀️ 活躍 (09-24): 90秒間隔
-    🌃 深夜前期 (00-02): 5分鐘間隔`;
+**時間段智能監控:**
+🌙 深夜 (02-06): 10分鐘間隔
+🌅 早晨 (07-08): 3分鐘間隔  
+☀️ 活躍 (09-24): 90秒間隔
+🌃 深夜前期 (00-02): 5分鐘間隔`;
 
         await message.reply(statusMsg);
     }
@@ -459,8 +463,9 @@ async function handleDiscordCommands(message) {
                 
                 await message.reply(`📊 **手動檢查結果:** ${status}
 
-    🔐 可用帳號: ${igStatus.availableAccounts}/${igStatus.totalAccounts}
-    📊 今日請求: ${igStatus.dailyRequests}/${igStatus.maxDailyRequests}`);
+🔐 可用帳號: ${igStatus.availableAccounts}/${igStatus.totalAccounts}
+🚫 已停用帳號: ${igStatus.disabledAccounts || 0}
+📊 今日請求: ${igStatus.dailyRequests}/${igStatus.maxDailyRequests}`);
             } catch (error) {
                 await message.reply(`❌ 檢查失敗: ${error.message}`);
             }
@@ -469,8 +474,47 @@ async function handleDiscordCommands(message) {
         }
     }
     
+    // 簡化的帳號狀態檢查命令
+    else if (cmd === '!ig-accounts' || cmd === '!accounts') {
+        if (instagramMonitor) {
+            try {
+                const igStatus = getInstagramStatus();
+                
+                let statusMsg = `🔐 **Instagram帳號狀態**
+
+📊 **總覽:**
+• 總帳號數: ${igStatus.totalAccounts}
+• 可用帳號: ${igStatus.availableAccounts} ✅
+• 已停用帳號: ${igStatus.disabledAccounts || 0} 🚫
+
+📋 **帳號詳情:**\n`;
+
+                igStatus.accountDetails.forEach(account => {
+                    const statusIcon = account.isDisabled ? '🚫' : '✅';
+                    const cooldownInfo = account.inCooldown ? ' (冷卻中)' : '';
+                    const successRate = account.successCount + account.errorCount > 0 ? 
+                        Math.round(account.successCount / (account.successCount + account.errorCount) * 100) : 0;
+                    
+                    statusMsg += `${statusIcon} **${account.id}**: ${account.isDisabled ? '已停用' : '可用'}${cooldownInfo}\n`;
+                    statusMsg += `   └ 成功率: ${successRate}%, 今日請求: ${account.dailyRequests}\n`;
+                });
+
+                if (igStatus.disabledAccounts > 0) {
+                    statusMsg += `\n⚠️ **注意:** 有 ${igStatus.disabledAccounts} 個帳號已被停用，需要更新cookies！`;
+                }
+
+                await message.reply(statusMsg);
+            } catch (error) {
+                await message.reply(`❌ 獲取帳號狀態失敗: ${error.message}`);
+            }
+        } else {
+            await message.reply('❌ 帳號狀態檢查功能不可用');
+        }
+    }
+    
     else if (cmd === '!status') {
         const runtime = Math.round((Date.now() - unifiedState.startTime) / 60000);
+        const igStatus = getInstagramStatus();
         
         const statusMsg = `📊 **統一監控系統狀態**
 
@@ -481,6 +525,8 @@ async function handleDiscordCommands(message) {
 • 目標: @${config.TARGET_USERNAME}
 • 狀態: ${unifiedState.instagram.isLiveNow ? '🔴 直播中' : '⚫ 離線'}
 • 監控: ${unifiedState.instagram.isMonitoring ? '✅ 運行中' : '❌ 停止'}
+• 可用帳號: ${igStatus.availableAccounts}/${igStatus.totalAccounts}
+• 已停用帳號: ${igStatus.disabledAccounts || 0}
 • 成功率: ${unifiedState.instagram.totalRequests > 0 ? Math.round((unifiedState.instagram.successfulRequests / unifiedState.instagram.totalRequests) * 100) : 0}%
 
 **Discord頻道監控:**
@@ -504,6 +550,7 @@ async function handleDiscordCommands(message) {
 \`!ig-stop\` - 停止Instagram監控
 \`!ig-status\` - Instagram監控狀態
 \`!ig-check\` - 手動檢查Instagram
+\`!ig-accounts\` - 檢查帳號狀態
 
 **系統命令:**
 \`!status\` - 完整系統狀態
@@ -513,11 +560,12 @@ async function handleDiscordCommands(message) {
 🔒 Instagram安全監控 (90-180s隨機間隔)
 📺 Discord頻道關鍵字監控
 📞 電話通知 (如果配置)
+🚫 Cookie失效自動停用 + 提醒
 🛡️ 自動錯誤處理與恢復`);
     }
 }
 
-// 頻道專用API呼叫
+
 // 頻道專用API呼叫
 async function callChannelSpecificAPI(channelId, channelConfig, keyword, originalMessage) {
     if (!channelConfig.api_key || !channelConfig.phone_number) return;
