@@ -1,4 +1,4 @@
-// 簡化版Instagram監控 - 3帳號輪換 + 90秒間隔 + 簡化Cookie失效提醒
+// 簡化版Instagram監控 - 使用能工作的直播檢測邏輯
 const https = require('https');
 const crypto = require('crypto');
 
@@ -20,12 +20,15 @@ class SimplifiedInstagramMonitor {
         this.accountStats = new Map();
         this.cooldownAccounts = new Map();
         this.isMonitoring = false;
-        this.notificationCallback = notificationCallback; // Discord通知回調函數
+        this.notificationCallback = notificationCallback;
         
         // 簡化的Cookie失效追蹤
-        this.disabledAccounts = new Set(); // 已停用的帳號
-        this.cookieAlertSent = new Set(); // 已發送提醒的帳號
-        this.allAccountsDisabledAlertSent = false; // 是否已發送全部失效提醒
+        this.disabledAccounts = new Set();
+        this.cookieAlertSent = new Set();
+        this.allAccountsDisabledAlertSent = false;
+        
+        // 緩存用戶ID
+        this.userIdCache = new Map();
         
         this.initializeStats();
         
@@ -52,7 +55,9 @@ class SimplifiedInstagramMonitor {
                         id: `account_${i}`,
                         sessionId: parts[0].trim(),
                         csrfToken: parts[1].trim(),
-                        dsUserId: parts[2].trim()
+                        dsUserId: parts[2].trim(),
+                        uuid: this.generateUUID(),
+                        deviceId: this.generateDeviceId()
                     });
                 }
             }
@@ -64,12 +69,28 @@ class SimplifiedInstagramMonitor {
                 id: 'main_account',
                 sessionId: process.env.IG_SESSION_ID,
                 csrfToken: process.env.IG_CSRF_TOKEN,
-                dsUserId: process.env.IG_DS_USER_ID
+                dsUserId: process.env.IG_DS_USER_ID,
+                uuid: this.generateUUID(),
+                deviceId: this.generateDeviceId()
             });
         }
         
         console.log(`🔐 [簡化監控] 載入 ${accounts.length} 個Instagram帳號`);
         return accounts;
+    }
+    
+    // 生成UUID
+    generateUUID() {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            const v = c == 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        });
+    }
+    
+    // 生成設備ID
+    generateDeviceId() {
+        return crypto.randomBytes(16).toString('hex');
     }
     
     // 初始化統計
@@ -89,10 +110,9 @@ class SimplifiedInstagramMonitor {
     // 停用帳號並發送提醒
     async disableAccount(accountId, errorType) {
         if (this.disabledAccounts.has(accountId)) {
-            return; // 已經停用，不重複處理
+            return;
         }
         
-        // 只對認證相關錯誤停用帳號
         if (errorType !== 'unauthorized' && errorType !== 'forbidden') {
             return;
         }
@@ -105,7 +125,6 @@ class SimplifiedInstagramMonitor {
         
         console.log(`🚫 [帳號停用] ${accountId} 已停用 (${errorType})`);
         
-        // 發送單次Cookie失效提醒
         if (!this.cookieAlertSent.has(accountId) && this.notificationCallback) {
             const account = this.accounts.find(acc => acc.id === accountId);
             const alertMessage = `🚨 **Instagram帳號認證失效** 
@@ -132,7 +151,6 @@ class SimplifiedInstagramMonitor {
             }
         }
         
-        // 檢查是否所有帳號都已停用
         if (this.disabledAccounts.size === this.accounts.length && !this.allAccountsDisabledAlertSent) {
             await this.sendAllAccountsDisabledAlert();
         }
@@ -160,9 +178,7 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
 ⚡ **緊急處理:**
 1. 立即更新所有帳號的cookies
 2. 重新部署應用程式
-3. 確認監控恢復正常
-
-📞 如需緊急支援，請立即檢查系統配置！`;
+3. 確認監控恢復正常`;
 
         try {
             await this.notificationCallback(criticalMessage, 'critical_alert', 'Instagram');
@@ -173,16 +189,15 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
         }
     }
     
-    // 選擇最佳帳號（排除已停用的）
+    // 選擇最佳帳號
     selectBestAccount() {
         const now = Date.now();
         
-        // 過濾可用帳號（排除已停用的帳號）
         const availableAccounts = this.accounts.filter(account => {
             const stats = this.accountStats.get(account.id);
             const cooldownEnd = this.cooldownAccounts.get(account.id) || 0;
             
-            return !this.disabledAccounts.has(account.id) && // 排除已停用的帳號
+            return !this.disabledAccounts.has(account.id) &&
                    stats.dailyRequests < SAFE_CONFIG.maxRequestsPerAccount && 
                    now >= cooldownEnd;
         });
@@ -191,7 +206,6 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
             return null;
         }
         
-        // 選擇使用次數最少的帳號
         const bestAccount = availableAccounts.reduce((best, current) => {
             const bestStats = this.accountStats.get(best.id);
             const currentStats = this.accountStats.get(current.id);
@@ -202,7 +216,7 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
         return bestAccount;
     }
     
-    // 記錄請求結果 (智能冷卻 + Cookie檢查)
+    // 記錄請求結果
     recordRequest(accountId, success, errorType = null) {
         const stats = this.accountStats.get(accountId);
         if (!stats) return;
@@ -213,22 +227,19 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
         
         if (success) {
             stats.successCount++;
-            stats.consecutiveFailures = 0; // 重置連續失敗次數
+            stats.consecutiveFailures = 0;
             
-            // 成功時減少現有的冷卻時間
             if (this.cooldownAccounts.has(accountId)) {
                 const currentCooldown = this.cooldownAccounts.get(accountId);
-                const reducedCooldown = Math.max(Date.now(), currentCooldown - 300000); // 減少5分鐘
+                const reducedCooldown = Math.max(Date.now(), currentCooldown - 300000);
                 this.cooldownAccounts.set(accountId, reducedCooldown);
             }
         } else {
             stats.errorCount++;
             stats.consecutiveFailures++;
             
-            // 檢查是否需要停用帳號
             this.disableAccount(accountId, errorType);
             
-            // 根據錯誤類型和可用帳號數量智能調整冷卻
             const availableAccountsCount = this.accounts.filter(account => {
                 const accountStats = this.accountStats.get(account.id);
                 const cooldownEnd = this.cooldownAccounts.get(account.id) || 0;
@@ -239,17 +250,15 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
             
             let cooldownMinutes = SAFE_CONFIG.accountCooldownMinutes;
             
-            // 如果只剩1個可用帳號，減少冷卻時間
             if (availableAccountsCount <= 1) {
-                cooldownMinutes = Math.max(5, cooldownMinutes / 2); // 最少5分鐘
+                cooldownMinutes = Math.max(5, cooldownMinutes / 2);
                 console.log(`⚠️ [智能調整] 只剩${availableAccountsCount}個可用帳號，縮短冷卻至${cooldownMinutes}分鐘`);
             }
             
-            // 根據錯誤類型調整
             if (errorType === 'rate_limit') {
-                cooldownMinutes = Math.min(cooldownMinutes * 1.5, 45); // 最多45分鐘
+                cooldownMinutes = Math.min(cooldownMinutes * 1.5, 45);
             } else if (errorType === 'forbidden') {
-                cooldownMinutes = Math.min(cooldownMinutes * 2, 60); // 最多1小時
+                cooldownMinutes = Math.min(cooldownMinutes * 2, 60);
             }
             
             this.setCooldown(accountId, cooldownMinutes);
@@ -270,7 +279,6 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
     
     // 檢查是否可以運行
     canOperate() {
-        // 檢查每日限制
         const today = new Date().toDateString();
         if (this.dailyDate !== today) {
             this.resetDailyCounters();
@@ -281,7 +289,6 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
             return false;
         }
         
-        // 檢查可用帳號
         const availableAccount = this.selectBestAccount();
         return availableAccount !== null;
     }
@@ -296,10 +303,10 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
         console.log('🌅 [重置] 每日計數器已重置');
     }
     
-    // 生成真實的cookies
-    generateRealisticCookies(account) {
+    // 生成完整的cookies
+    generateCompleteCookies(account) {
         const mid = crypto.randomBytes(16).toString('hex');
-        const ig_did = crypto.randomUUID();
+        const ig_did = account.deviceId;
         
         return [
             `sessionid=${account.sessionId}`,
@@ -335,7 +342,53 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
         });
     }
     
-    // 檢查Instagram直播
+    // 獲取用戶ID
+    async getUserId(username) {
+        if (this.userIdCache.has(username)) {
+            return this.userIdCache.get(username);
+        }
+        
+        const account = this.selectBestAccount();
+        if (!account) return null;
+        
+        try {
+            const userAgent = this.userAgents[Math.floor(Math.random() * this.userAgents.length)];
+            const cookies = this.generateCompleteCookies(account);
+            
+            const response = await this.makeRequest(`https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`, {
+                method: 'GET',
+                headers: {
+                    'User-Agent': userAgent,
+                    'Accept': '*/*',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Cookie': cookies,
+                    'X-CSRFToken': account.csrfToken,
+                    'X-Requested-With': 'XMLHttpRequest',
+                    'Referer': `https://www.instagram.com/${username}/`,
+                    'Origin': 'https://www.instagram.com'
+                }
+            });
+            
+            if (response.statusCode === 200) {
+                const data = JSON.parse(response.data);
+                if (data.data?.user?.id) {
+                    const userId = data.data.user.id;
+                    this.userIdCache.set(username, userId);
+                    console.log(`✅ [用戶ID] ${username} -> ${userId}`);
+                    return userId;
+                }
+            }
+            
+            console.log(`❌ [用戶ID] 無法獲取 ${username} 的用戶ID: ${response.statusCode}`);
+            return null;
+            
+        } catch (error) {
+            console.error(`❌ [用戶ID] 獲取失敗:`, error.message);
+            return null;
+        }
+    }
+    
+    // 檢查Instagram直播（使用能工作的方法）
     async checkLive(username) {
         if (!this.canOperate()) {
             console.log('⏸️ [檢查] 系統限制，跳過檢查');
@@ -349,140 +402,97 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
         }
         
         try {
-            console.log(`🔍 [檢查] 使用 ${account.id} 檢查 @${username}`);
-            
-            // 智能延遲
-            await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 3000));
-            
-            const userAgent = this.userAgents[Math.floor(Math.random() * this.userAgents.length)];
-            const cookies = this.generateRealisticCookies(account);
-            
-            // 嘗試多個API端點
-            const endpoints = [
-                `https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`,
-                `https://i.instagram.com/api/v1/users/web_profile_info/?username=${username}`,
-                `https://www.instagram.com/${username}/?__a=1&__d=dis`
-            ];
-            
-            let lastError = null;
-            
-            for (const [index, url] of endpoints.entries()) {
-                try {
-                    console.log(`🔄 [檢查] 嘗試端點 ${index + 1}/${endpoints.length}`);
-                    
-                    const headers = {
-                        'User-Agent': userAgent,
-                        'Accept': '*/*',
-                        'Accept-Language': 'en-US,en;q=0.9',
-                        'Cookie': cookies,
-                        'X-Requested-With': 'XMLHttpRequest',
-                        'Referer': `https://www.instagram.com/${username}/`,
-                        'Origin': 'https://www.instagram.com'
-                    };
-                    
-                    // 為不同端點調整headers
-                    if (index === 0 || index === 1) {
-                        headers['X-CSRFToken'] = account.csrfToken;
-                        headers['X-IG-App-ID'] = '936619743392459'; // Instagram Web App ID
-                    }
-                    
-                    const response = await this.makeRequest(url, {
-                        method: 'GET',
-                        headers: headers
-                    });
-                    
-                    console.log(`📊 [檢查] 端點 ${index + 1} 回應: HTTP ${response.statusCode}`);
-                    
-                    if (response.statusCode === 200) {
-                        this.recordRequest(account.id, true);
-                        
-                        // 嘗試解析回應
-                        try {
-                            const data = JSON.parse(response.data);
-                            
-                            // 檢查不同的數據結構
-                            if (data.data?.user) {
-                                const user = data.data.user;
-                                if (user.is_live || user.broadcast || user.live_broadcast_id) {
-                                    console.log('🔴 [檢查] 檢測到直播!');
-                                    return true;
-                                }
-                            } else if (data.graphql?.user) {
-                                const user = data.graphql.user;
-                                if (user.is_live || user.broadcast || user.live_broadcast_id) {
-                                    console.log('🔴 [檢查] 檢測到直播!');
-                                    return true;
-                                }
-                            }
-                            
-                            console.log('⚫ [檢查] 目前無直播');
-                            return false;
-                            
-                        } catch (parseError) {
-                            console.log('⚠️ [檢查] JSON解析失敗，嘗試HTML解析');
-                            
-                            // 嘗試從HTML中檢測直播
-                            if (response.data.includes('"is_live":true') || 
-                                response.data.includes('live_broadcast') ||
-                                response.data.includes('LiveReels')) {
-                                console.log('🔴 [檢查] 從HTML檢測到直播!');
-                                return true;
-                            }
-                            
-                            return false;
-                        }
-                    } else if (response.statusCode === 429) {
-                        // Rate limit - 立即停止嘗試
-                        throw new Error(`Rate limited (HTTP 429)`);
-                    } else if (response.statusCode === 400 && index < endpoints.length - 1) {
-                        // HTTP 400 - 嘗試下一個端點
-                        console.log(`⚠️ [檢查] 端點 ${index + 1} 返回400，嘗試下一個...`);
-                        lastError = new Error(`HTTP ${response.statusCode}`);
-                        continue;
-                    } else {
-                        throw new Error(`HTTP ${response.statusCode}`);
-                    }
-                    
-                } catch (error) {
-                    lastError = error;
-                    if (error.message.includes('429')) {
-                        // Rate limit - 停止所有嘗試
-                        break;
-                    }
-                    console.log(`⚠️ [檢查] 端點 ${index + 1} 失敗: ${error.message}`);
-                    continue;
-                }
+            // 獲取用戶ID
+            const userId = await this.getUserId(username);
+            if (!userId) {
+                console.log('❌ [檢查] 無法獲取用戶ID');
+                this.recordRequest(account.id, false, 'bad_request');
+                return false;
             }
             
-            // 所有端點都失敗
-            throw lastError || new Error('All endpoints failed');
+            console.log(`🔍 [檢查] 使用 ${account.id} 檢查 @${username} (ID: ${userId})`);
+            
+            // 智能延遲
+            await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1500));
+            
+            const userAgent = this.userAgents[Math.floor(Math.random() * this.userAgents.length)];
+            const cookies = this.generateCompleteCookies(account);
+            const timestamp = Math.floor(Date.now() / 1000);
+            
+            // 使用能工作的story端點
+            const response = await this.makeRequest(`https://i.instagram.com/api/v1/feed/user/${userId}/story/`, {
+                method: 'GET',
+                headers: {
+                    'User-Agent': userAgent,
+                    'Accept': 'application/json',
+                    'Cookie': cookies,
+                    'X-IG-App-Locale': 'en_US',
+                    'X-Pigeon-Session-Id': account.uuid,
+                    'X-Pigeon-Rawclienttime': timestamp,
+                    'X-IG-App-ID': '567067343352427',
+                    'X-IG-Device-ID': account.deviceId,
+                    'Host': 'i.instagram.com'
+                }
+            });
+            
+            console.log(`📊 [檢查] 回應: HTTP ${response.statusCode}`);
+            
+            if (response.statusCode === 200) {
+                this.recordRequest(account.id, true);
+                
+                try {
+                    const data = JSON.parse(response.data);
+                    
+                    // 檢查直播 - 使用能工作的檢測邏輯
+                    if (data.broadcast) {
+                        console.log('🔴 [檢查] 發現直播 (broadcast)!');
+                        return true;
+                    }
+                    
+                    if (data.reel?.items) {
+                        for (const item of data.reel.items) {
+                            if (item.media_type === 4) { // 直播類型
+                                console.log('🔴 [檢查] Reel中發現直播!');
+                                return true;
+                            }
+                        }
+                    }
+                    
+                    console.log('⚫ [檢查] 目前無直播');
+                    return false;
+                    
+                } catch (parseError) {
+                    console.log('⚠️ [檢查] JSON解析失敗');
+                    return false;
+                }
+            } else {
+                // 處理錯誤狀態碼
+                let errorType = 'network_error';
+                
+                if (response.statusCode === 401) {
+                    errorType = 'unauthorized';
+                } else if (response.statusCode === 403) {
+                    errorType = 'forbidden';
+                } else if (response.statusCode === 429) {
+                    errorType = 'rate_limit';
+                } else if (response.statusCode === 400) {
+                    errorType = 'bad_request';
+                }
+                
+                this.recordRequest(account.id, false, errorType);
+                return false;
+            }
             
         } catch (error) {
             console.error(`❌ [檢查] ${account.id} 失敗: ${error.message}`);
-            
-            // 分析錯誤類型
-            let errorType = 'network_error';
-            
-            if (error.message.includes('401')) {
-                errorType = 'unauthorized';
-            } else if (error.message.includes('403')) {
-                errorType = 'forbidden';
-            } else if (error.message.includes('429')) {
-                errorType = 'rate_limit';
-            } else if (error.message.includes('400')) {
-                errorType = 'bad_request';
-                console.log('💡 [建議] HTTP 400可能表示需要更新請求格式或帳號token');
-            }
-            
-            this.recordRequest(account.id, false, errorType);
-            
+            this.recordRequest(account.id, false, 'network_error');
             return false;
         }
     }
     
-    // 計算下次檢查間隔 (考慮時間段) - 修復缺失的函數
+    // 計算下次檢查間隔
     calculateNextInterval() {
-        const hour = new Date().getHours(); // 日本時間
+        const hour = new Date().getHours();
         const availableAccounts = this.accounts.filter(account => {
             const stats = this.accountStats.get(account.id);
             const cooldownEnd = this.cooldownAccounts.get(account.id) || 0;
@@ -493,31 +503,24 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
         
         let interval = SAFE_CONFIG.minInterval;
         
-        // 時間段調整
         if (hour >= 2 && hour <= 6) {
-            // 深夜時段 (2am-6am) - 大幅減少檢查
             interval = 600; // 10分鐘間隔
             console.log('🌙 [深夜模式] 使用10分鐘間隔');
         } else if (hour >= 0 && hour <= 1) {
-            // 深夜前期 (12am-2am) - 適中間隔
             interval = 300; // 5分鐘間隔
             console.log('🌃 [深夜前期] 使用5分鐘間隔');
         } else if (hour >= 7 && hour <= 8) {
-            // 早晨時段 (7am-8am) - 適中間隔
             interval = 180; // 3分鐘間隔
             console.log('🌅 [早晨時段] 使用3分鐘間隔');
         } else if (hour >= 9 && hour <= 23) {
-            // 白天活躍時段 (9am-11pm) - 正常間隔
             interval = SAFE_CONFIG.minInterval; // 90秒間隔
             console.log('☀️ [活躍時段] 使用90秒間隔');
         }
         
-        // 根據可用帳號調整
         if (availableAccounts <= 1) {
             interval = Math.max(interval, SAFE_CONFIG.maxInterval);
         }
         
-        // 隨機化 (±20%)
         const randomFactor = 0.8 + (Math.random() * 0.4);
         interval = Math.floor(interval * randomFactor);
         
@@ -534,7 +537,7 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
         this.isMonitoring = true;
         let isLiveNow = false;
         
-        console.log('🚀 [簡化監控] 開始Instagram監控');
+        console.log('🚀 [簡化監控] 開始Instagram監控 (使用Story端點)');
         console.log(`📊 [配置] 間隔: ${SAFE_CONFIG.minInterval}-${SAFE_CONFIG.maxInterval}秒`);
         console.log(`🔐 [帳號] 總數: ${this.accounts.length}`);
         
@@ -544,7 +547,6 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
             try {
                 const currentlyLive = await this.checkLive(username);
                 
-                // 檢查狀態變化
                 if (currentlyLive && !isLiveNow) {
                     isLiveNow = true;
                     console.log('🔴 [監控] 檢測到直播開始!');
@@ -556,11 +558,9 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
                     console.log('⚫ [監控] 直播已結束');
                 }
                 
-                // 計算下次檢查間隔
                 const nextInterval = this.calculateNextInterval();
                 console.log(`⏰ [監控] 下次檢查: ${Math.round(nextInterval/60)}分鐘後`);
                 
-                // 顯示狀態
                 const availableCount = this.accounts.filter(account => {
                     const stats = this.accountStats.get(account.id);
                     const cooldownEnd = this.cooldownAccounts.get(account.id) || 0;
@@ -579,7 +579,6 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
             }
         };
         
-        // 初始延遲
         const initialDelay = 30 + Math.random() * 60;
         console.log(`⏳ [監控] ${Math.round(initialDelay)}秒後開始首次檢查`);
         setTimeout(monitorLoop, initialDelay * 1000);
@@ -606,7 +605,7 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
             totalAccounts: this.accounts.length,
             availableAccounts: availableCount,
             disabledAccounts: this.disabledAccounts.size,
-            invalidCookieAccounts: this.disabledAccounts.size, // 為兼容性保留
+            invalidCookieAccounts: this.disabledAccounts.size,
             dailyRequests: this.dailyRequestCount,
             maxDailyRequests: SAFE_CONFIG.maxDailyRequests,
             accountDetails: Array.from(this.accountStats.entries()).map(([id, stats]) => ({
