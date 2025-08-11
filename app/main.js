@@ -212,6 +212,9 @@ async function startInstagramMonitoring() {
             }
         });
         
+        // 更新狀態
+        unifiedState.instagram.isMonitoring = true;
+        
     } catch (error) {
         console.error('❌ [Instagram] 簡化監控啟動失敗:', error.message);
         // 可以在這裡加入降級處理
@@ -241,6 +244,50 @@ function getInstagramStatus() {
     };
 }
 
+// 統一通知函數
+async function sendNotification(message, type = 'info', source = 'system') {
+    try {
+        const channel = await client.channels.fetch(config.NOTIFICATION_CHANNEL_ID);
+        if (message.length > 1900) message = message.substring(0, 1900) + '...(truncated)';
+        
+        await channel.send(message);
+        unifiedState.notifications.discordMessages++;
+        unifiedState.notifications.lastNotification = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+        
+        console.log(`📤 [${source}] Discord通知已發送: ${type}`);
+        
+        // 只有 Instagram 直播通知才調用統一電話通知
+        if (type === 'live_alert' && source === 'Instagram' && config.PUSHCALL_API_KEY) {
+            await makePhoneCall(`${config.TARGET_USERNAME} 開始直播了！`, source);
+        }
+    } catch (error) {
+        console.error('❌ Discord通知發送失敗:', error.message);
+    }
+}
+
+// 電話通知函數
+async function makePhoneCall(message, source = 'system') {
+    if (!config.PUSHCALL_API_KEY || !config.PUSHCALL_TO) {
+        console.log('📞 電話通知未配置，跳過');
+        return;
+    }
+    
+    try {
+        const apiUrl = new URL('https://pushcall.me/api/call');
+        apiUrl.searchParams.append('api_key', config.PUSHCALL_API_KEY);
+        apiUrl.searchParams.append('from', config.PUSHCALL_FROM || '1');
+        apiUrl.searchParams.append('to', config.PUSHCALL_TO.replace('+', ''));
+        
+        const response = await axios.get(apiUrl.toString(), { timeout: 30000 });
+        
+        if (response.status === 200) {
+            unifiedState.notifications.phoneCallsMade++;
+            console.log(`✅ [${source}] 電話通知撥打成功`);
+        }
+    } catch (error) {
+        console.error(`❌ [${source}] 電話通知失敗:`, error.message);
+    }
+}
 
 // === Discord 事件處理 ===
 client.once('ready', () => {
@@ -267,7 +314,12 @@ client.once('ready', () => {
 🔄 準備開始監控...`, 'info', 'System');
     
     // 自動開始Instagram監控
-    startInstagramMonitoring();
+    startInstagramMonitoring().then(() => {
+    // Instagram監控啟動後，初始化Web狀態面板
+    setTimeout(() => {
+        initializeWebStatusPanel();
+    }, 2000); // 等待2秒確保所有組件都已初始化
+    });
 });
 
 // Discord消息監聽 (Discord頻道監控)
@@ -480,338 +532,24 @@ async function callChannelSpecificAPI(channelId, channelConfig, keyword, origina
     }
 }
 
-// === Web 狀態面板 ===
-app.use(express.json());
+// === Web 狀態面板整合 ===
+function getInstagramMonitorInstance() {
+    return instagramMonitor;
+}
 
-// 主狀態頁面
-app.get('/', (req, res) => {
-    const uptime = Math.floor((Date.now() - unifiedState.startTime) / 1000);
-    const instagramSuccessRate = unifiedState.instagram.totalRequests > 0 ? 
-        Math.round((unifiedState.instagram.successfulRequests / unifiedState.instagram.totalRequests) * 100) : 0;
-    
-    const html = `
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>統一直播監控機器人</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e, #16213e);
-            color: #e0e0e0;
-            min-height: 100vh;
-            padding: 20px;
-        }
-        .container { max-width: 1200px; margin: 0 auto; }
-        .header {
-            text-align: center;
-            padding: 30px 0;
-            border-bottom: 2px solid #333;
-            margin-bottom: 30px;
-        }
-        .header h1 {
-            font-size: 2.5em;
-            background: linear-gradient(45deg, #4CAF50, #2196F3);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 10px;
-        }
-        .header p { color: #888; font-size: 1.1em; }
-        
-        .main-status {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        .status-card {
-            background: rgba(42, 42, 42, 0.8);
-            border-radius: 15px;
-            padding: 25px;
-            border-left: 5px solid #4CAF50;
-            backdrop-filter: blur(10px);
-            transition: transform 0.3s ease;
-        }
-        .status-card:hover { transform: translateY(-5px); }
-        .status-card.warning { border-left-color: #ff9800; }
-        .status-card.error { border-left-color: #f44336; }
-        .status-card.live { border-left-color: #e91e63; }
-        
-        .card-title {
-            font-size: 1.3em;
-            font-weight: bold;
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-        .status-item {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 10px;
-            padding: 8px 0;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
-        }
-        .status-value {
-            font-weight: bold;
-            color: #4CAF50;
-        }
-        
-        .live-indicator {
-            text-align: center;
-            padding: 20px;
-            border-radius: 15px;
-            margin-bottom: 30px;
-            font-size: 1.8em;
-            font-weight: bold;
-        }
-        .live-yes {
-            background: linear-gradient(45deg, #e91e63, #f44336);
-            animation: pulse 2s infinite;
-        }
-        .live-no { background: rgba(66, 66, 66, 0.8); }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.8; transform: scale(1.05); }
-        }
-        
-        .section {
-            background: rgba(42, 42, 42, 0.6);
-            border-radius: 15px;
-            padding: 25px;
-            margin-bottom: 20px;
-            backdrop-filter: blur(10px);
-        }
-        .section-title {
-            font-size: 1.5em;
-            font-weight: bold;
-            margin-bottom: 20px;
-            color: #4CAF50;
-        }
-        
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-        }
-        .stat-box {
-            background: rgba(26, 26, 46, 0.8);
-            padding: 15px;
-            border-radius: 10px;
-            text-align: center;
-        }
-        .stat-number {
-            font-size: 2em;
-            font-weight: bold;
-            color: #2196F3;
-        }
-        .stat-label { color: #888; font-size: 0.9em; }
-        
-        .refresh-note {
-            text-align: center;
-            color: #666;
-            margin-top: 30px;
-            font-size: 0.9em;
-        }
-        
-        .commands {
-            background: rgba(26, 26, 46, 0.8);
-            border-radius: 10px;
-            padding: 20px;
-            margin-top: 20px;
-        }
-        .command {
-            background: rgba(0, 0, 0, 0.5);
-            padding: 10px 15px;
-            border-radius: 8px;
-            margin: 8px 0;
-            font-family: 'Courier New', monospace;
-            font-size: 0.9em;
-        }
-    </style>
-    <script>
-        // Auto refresh every 30 seconds
-        setTimeout(() => location.reload(), 30000);
-    </script>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🤖 統一直播監控機器人</h1>
-            <p>Instagram監控 + Discord頻道監控 + 電話通知</p>
-        </div>
+// 等待所有組件初始化後再設置狀態面板
+let webStatusPanel = null;
 
-        <div class="live-indicator ${unifiedState.instagram.isLiveNow ? 'live-yes' : 'live-no'}">
-            ${unifiedState.instagram.isLiveNow ? '🔴 @' + config.TARGET_USERNAME + ' 正在直播!' : '⚫ @' + config.TARGET_USERNAME + ' 離線中'}
-        </div>
+function initializeWebStatusPanel() {
+    if (!webStatusPanel && instagramMonitor) {
+        const WebStatusPanel = require('./web_status_panel');
+        webStatusPanel = new WebStatusPanel(app, unifiedState, config, client, getInstagramMonitorInstance);
+        console.log('🌐 [Web面板] 狀態面板已初始化');
+    }
+}
 
-        <div class="main-status">
-            <div class="status-card ${unifiedState.botReady ? '' : 'error'}">
-                <div class="card-title">🤖 Bot狀態</div>
-                <div class="status-item">
-                    <span>連線狀態:</span>
-                    <span class="status-value">${unifiedState.botReady ? '✅ 在線' : '❌ 離線'}</span>
-                </div>
-                <div class="status-item">
-                    <span>運行時間:</span>
-                    <span class="status-value">${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m</span>
-                </div>
-                <div class="status-item">
-                    <span>伺服器數:</span>
-                    <span class="status-value">${client.guilds?.cache.size || 0}</span>
-                </div>
-            </div>
 
-            <div class="status-card ${unifiedState.instagram.isMonitoring ? '' : 'warning'}">
-                <div class="card-title">📺 Instagram監控</div>
-                <div class="status-item">
-                    <span>目標用戶:</span>
-                    <span class="status-value">@${config.TARGET_USERNAME}</span>
-                </div>
-                <div class="status-item">
-                    <span>監控狀態:</span>
-                    <span class="status-value">${unifiedState.instagram.isMonitoring ? '✅ 運行中' : '❌ 已停止'}</span>
-                </div>
-                <div class="status-item">
-                    <span>帳號狀態:</span>
-                    <span class="status-value">${unifiedState.instagram.accountStatus}</span>
-                </div>
-                <div class="status-item">
-                    <span>成功率:</span>
-                    <span class="status-value">${instagramSuccessRate}%</span>
-                </div>
-            </div>
 
-            <div class="status-card">
-                <div class="card-title">📋 Discord監控</div>
-                <div class="status-item">
-                    <span>監控頻道:</span>
-                    <span class="status-value">${Object.keys(config.CHANNEL_CONFIGS).length}</span>
-                </div>
-                <div class="status-item">
-                    <span>處理訊息:</span>
-                    <span class="status-value">${unifiedState.discord.totalMessagesProcessed}</span>
-                </div>
-                <div class="status-item">
-                    <span>檢測次數:</span>
-                    <span class="status-value">${unifiedState.discord.lastDetections.length}</span>
-                </div>
-            </div>
-
-            <div class="status-card">
-                <div class="card-title">📞 通知統計</div>
-                <div class="status-item">
-                    <span>Discord訊息:</span>
-                    <span class="status-value">${unifiedState.notifications.discordMessages}</span>
-                </div>
-                <div class="status-item">
-                    <span>電話通知:</span>
-                    <span class="status-value">${unifiedState.notifications.phoneCallsMade}</span>
-                </div>
-                <div class="status-item">
-                    <span>最後通知:</span>
-                    <span class="status-value">${unifiedState.notifications.lastNotification || '無'}</span>
-                </div>
-            </div>
-        </div>
-
-        <div class="section">
-            <div class="section-title">📊 詳細統計</div>
-            <div class="stats-grid">
-                <div class="stat-box">
-                    <div class="stat-number">${unifiedState.instagram.totalRequests}</div>
-                    <div class="stat-label">Instagram 請求總數</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-number">${unifiedState.instagram.consecutiveErrors}</div>
-                    <div class="stat-label">連續錯誤次數</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-number">${Object.keys(config.CHANNEL_CONFIGS).length}</div>
-                    <div class="stat-label">Discord 頻道數</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-number">${Object.keys(unifiedState.discord.apiUsage).length}</div>
-                    <div class="stat-label">PushCall API 帳號</div>
-                </div>
-            </div>
-        </div>
-
-        <div class="section">
-            <div class="section-title">💬 Discord 命令</div>
-            <div class="commands">
-                <div class="command">!ig-start - 開始Instagram監控</div>
-                <div class="command">!ig-stop - 停止Instagram監控</div>
-                <div class="command">!ig-status - Instagram監控狀態</div>
-                <div class="command">!ig-check - 手動檢查Instagram</div>
-                <div class="command">!status - 完整系統狀態</div>
-                <div class="command">!help - 顯示幫助</div>
-            </div>
-        </div>
-
-        <div class="refresh-note">
-            頁面每30秒自動刷新 | 最後更新: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-        </div>
-    </div>
-</body>
-</html>`;
-    
-    res.send(html);
-});
-
-// API 端點
-app.get('/api/status', (req, res) => {
-    const uptime = Math.floor((Date.now() - unifiedState.startTime) / 1000);
-    
-    res.json({
-        system: {
-            uptime: uptime,
-            bot_ready: unifiedState.botReady,
-            start_time: unifiedState.startTime
-        },
-        instagram: {
-            target: config.TARGET_USERNAME,
-            is_live: unifiedState.instagram.isLiveNow,
-            is_monitoring: unifiedState.instagram.isMonitoring,
-            account_status: unifiedState.instagram.accountStatus,
-            total_requests: unifiedState.instagram.totalRequests,
-            successful_requests: unifiedState.instagram.successfulRequests,
-            success_rate: unifiedState.instagram.totalRequests > 0 ? 
-                Math.round((unifiedState.instagram.successfulRequests / unifiedState.instagram.totalRequests) * 100) : 0,
-            consecutive_errors: unifiedState.instagram.consecutiveErrors,
-            last_check: unifiedState.instagram.lastCheck,
-            user_id: unifiedState.instagram.targetUserId
-        },
-        discord: {
-            monitoring_channels: Object.keys(config.CHANNEL_CONFIGS).length,
-            total_messages_processed: unifiedState.discord.totalMessagesProcessed,
-            total_detections: unifiedState.discord.lastDetections.length,
-            channel_stats: unifiedState.discord.channelStats,
-            recent_detections: unifiedState.discord.lastDetections.slice(-10)
-        },
-        notifications: {
-            discord_messages: unifiedState.notifications.discordMessages,
-            phone_calls: unifiedState.notifications.phoneCallsMade,
-            last_notification: unifiedState.notifications.lastNotification
-        },
-        timestamp: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
-    });
-});
-
-// 健康檢查
-app.get('/health', (req, res) => {
-    res.json({
-        status: unifiedState.botReady ? 'healthy' : 'unhealthy',
-        bot: client.user?.tag || 'Not ready',
-        instagram_monitoring: unifiedState.instagram.isMonitoring,
-        discord_channels: Object.keys(config.CHANNEL_CONFIGS).length,
-        uptime: Math.floor((Date.now() - unifiedState.startTime) / 1000)
-    });
-});
 
 // 啟動Express服務器
 app.listen(PORT, () => {
