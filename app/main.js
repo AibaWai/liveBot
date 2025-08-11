@@ -532,7 +532,7 @@ async function callChannelSpecificAPI(channelId, channelConfig, keyword, origina
     }
 }
 
-// === Web 狀態面板整合 ===
+// === Web 狀態面板整合 === (替換原有的這個部分)
 function getInstagramMonitorInstance() {
     return instagramMonitor;
 }
@@ -541,12 +541,103 @@ function getInstagramMonitorInstance() {
 let webStatusPanel = null;
 
 function initializeWebStatusPanel() {
-    if (!webStatusPanel && instagramMonitor) {
-        const WebStatusPanel = require('./web_status_panel');
-        webStatusPanel = new WebStatusPanel(app, unifiedState, config, client, getInstagramMonitorInstance);
-        console.log('🌐 [Web面板] 狀態面板已初始化');
+    // 確保 instagramMonitor 已經初始化且具有 getStatus 方法
+    if (!webStatusPanel && instagramMonitor && typeof instagramMonitor.getStatus === 'function') {
+        try {
+            const WebStatusPanel = require('./web_status_panel');
+            webStatusPanel = new WebStatusPanel(
+                app, 
+                unifiedState, 
+                config, 
+                client, 
+                () => instagramMonitor  // 傳遞函數而不是直接引用
+            );
+            console.log('🌐 [Web面板] 狀態面板已初始化');
+        } catch (error) {
+            console.error('❌ [Web面板] 初始化失敗:', error.message);
+            // 延遲重試
+            setTimeout(() => {
+                console.log('🔄 [Web面板] 嘗試重新初始化...');
+                initializeWebStatusPanel();
+            }, 5000);
+        }
+    } else if (!instagramMonitor) {
+        console.log('⏳ [Web面板] 等待Instagram監控初始化...');
+        // 延遲重試
+        setTimeout(initializeWebStatusPanel, 3000);
+    } else if (typeof instagramMonitor.getStatus !== 'function') {
+        console.log('⏳ [Web面板] Instagram監控尚未完全初始化...');
+        // 延遲重試
+        setTimeout(initializeWebStatusPanel, 2000);
     }
 }
+
+// 修改 Discord ready 事件處理
+client.once('ready', () => {
+    unifiedState.botReady = true;
+    console.log(`✅ Discord Bot 已上線: ${client.user.tag}`);
+    console.log(`📺 Instagram監控目標: @${config.TARGET_USERNAME}`);
+    console.log(`📋 Discord頻道監控: ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道`);
+    
+    // 發送啟動通知
+    sendNotification(`🚀 **統一直播監控機器人已啟動**
+
+**Instagram監控:** @${config.TARGET_USERNAME}
+**Discord頻道監控:** ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道
+**電話通知:** ${config.PUSHCALL_API_KEY ? '✅ 已配置' : '❌ 未配置'}
+
+📋 **可用命令:**
+\`!ig-start\` - 開始Instagram監控
+\`!ig-stop\` - 停止Instagram監控
+\`!ig-status\` - Instagram監控狀態
+\`!ig-check\` - 手動檢查Instagram
+\`!status\` - 完整系統狀態
+\`!help\` - 顯示幫助
+
+🔄 準備開始監控...`, 'info', 'System');
+    
+    // 自動開始Instagram監控
+    startInstagramMonitoring().then(() => {
+        // Instagram監控啟動後，等待更長時間確保所有組件都已初始化
+        setTimeout(() => {
+            console.log('🔄 [Web面板] 開始初始化狀態面板...');
+            initializeWebStatusPanel();
+        }, 5000); // 增加到5秒
+    }).catch(error => {
+        console.error('❌ [Instagram] 監控啟動失敗:', error.message);
+        // 即使Instagram監控失敗，也要初始化Web面板
+        setTimeout(initializeWebStatusPanel, 3000);
+    });
+});
+
+// 修改 getInstagramStatus 函數（如果存在的話）
+function getInstagramStatus() {
+    if (instagramMonitor && typeof instagramMonitor.getStatus === 'function') {
+        try {
+            return instagramMonitor.getStatus();
+        } catch (error) {
+            console.error('❌ [狀態] 獲取Instagram狀態失敗:', error.message);
+        }
+    }
+    
+    // 返回默認狀態
+    return {
+        isMonitoring: false,
+        totalAccounts: 0,
+        availableAccounts: 0,
+        dailyRequests: 0,
+        maxDailyRequests: 0,
+        accountStatus: 'initializing',
+        successRate: 0,
+        totalRequests: 0,
+        successfulRequests: 0,
+        consecutiveErrors: 0,
+        isLiveNow: false,
+        lastCheck: null,
+        targetUserId: null,
+        accountDetails: []
+    };
+};
 
 
 

@@ -1,14 +1,44 @@
 const express = require('express');
 
 class WebStatusPanel {
-    constructor(app, unifiedState, config, client, instagramMonitor) {
+    constructor(app, unifiedState, config, client, getInstagramMonitorFn) {
         this.app = app;
         this.unifiedState = unifiedState;
         this.config = config;
         this.client = client;
-        this.instagramMonitor = instagramMonitor;
+        this.getInstagramMonitor = getInstagramMonitorFn; // 使用函數而不是直接引用
         
         this.setupRoutes();
+    }
+    
+    // 安全獲取Instagram監控狀態
+    getInstagramStatus() {
+        try {
+            const instagramMonitor = this.getInstagramMonitor();
+            if (instagramMonitor && typeof instagramMonitor.getStatus === 'function') {
+                return instagramMonitor.getStatus();
+            }
+        } catch (error) {
+            console.error('❌ [Web面板] 獲取Instagram狀態失敗:', error.message);
+        }
+        
+        // 返回默認狀態
+        return {
+            isMonitoring: false,
+            isLiveNow: false,
+            accountStatus: 'unknown',
+            totalRequests: 0,
+            successfulRequests: 0,
+            successRate: 0,
+            consecutiveErrors: 0,
+            lastCheck: null,
+            targetUserId: null,
+            totalAccounts: 0,
+            availableAccounts: 0,
+            dailyRequests: 0,
+            maxDailyRequests: 0,
+            accountDetails: []
+        };
     }
     
     setupRoutes() {
@@ -17,43 +47,72 @@ class WebStatusPanel {
         
         // 主狀態頁面
         this.app.get('/', (req, res) => {
-            const html = this.generateStatusHTML();
-            res.send(html);
+            try {
+                const html = this.generateStatusHTML();
+                res.send(html);
+            } catch (error) {
+                console.error('❌ [Web面板] 生成狀態頁面失敗:', error.message);
+                res.status(500).send(`
+                    <h1>監控系統載入中...</h1>
+                    <p>系統正在初始化，請稍後刷新頁面</p>
+                    <script>setTimeout(() => location.reload(), 5000);</script>
+                `);
+            }
         });
         
         // API 端點
         this.app.get('/api/status', (req, res) => {
-            const status = this.getSystemStatus();
-            res.json(status);
+            try {
+                const status = this.getSystemStatus();
+                res.json(status);
+            } catch (error) {
+                console.error('❌ [Web面板] 獲取系統狀態失敗:', error.message);
+                res.status(500).json({ error: 'System not ready', message: error.message });
+            }
         });
         
         // 健康檢查
         this.app.get('/health', (req, res) => {
-            res.json(this.getHealthStatus());
+            try {
+                res.json(this.getHealthStatus());
+            } catch (error) {
+                console.error('❌ [Web面板] 健康檢查失敗:', error.message);
+                res.status(200).json({ status: 'initializing' });
+            }
         });
         
         // API 使用統計端點
         this.app.get('/api-stats', (req, res) => {
-            const apiStatsDetailed = {};
-            for (const [apiKey, usage] of Object.entries(this.unifiedState.discord.apiUsage)) {
-                apiStatsDetailed[apiKey + '****'] = {
-                    ...usage,
-                    phoneNumbers: Array.from(usage.phoneNumbers)
-                };
+            try {
+                const apiStatsDetailed = {};
+                for (const [apiKey, usage] of Object.entries(this.unifiedState.discord.apiUsage)) {
+                    apiStatsDetailed[apiKey + '****'] = {
+                        ...usage,
+                        phoneNumbers: Array.from(usage.phoneNumbers)
+                    };
+                }
+                res.json(apiStatsDetailed);
+            } catch (error) {
+                console.error('❌ [Web面板] 獲取API統計失敗:', error.message);
+                res.status(500).json({ error: 'API stats not available' });
             }
-            res.json(apiStatsDetailed);
         });
         
         // Instagram 狀態詳細端點
         this.app.get('/instagram-status', (req, res) => {
-            const igStatus = this.instagramMonitor.getStatus();
-            res.json(igStatus);
+            try {
+                const igStatus = this.getInstagramStatus();
+                res.json(igStatus);
+            } catch (error) {
+                console.error('❌ [Web面板] 獲取Instagram詳細狀態失敗:', error.message);
+                res.status(500).json({ error: 'Instagram status not available' });
+            }
         });
     }
     
     generateStatusHTML() {
         const uptime = Math.floor((Date.now() - this.unifiedState.startTime) / 1000);
-        const igStatus = this.instagramMonitor.getStatus();
+        const igStatus = this.getInstagramStatus(); // 使用安全的方法
         
         return `
 <!DOCTYPE html>
@@ -222,6 +281,15 @@ class WebStatusPanel {
             margin: 5px 0;
             font-size: 0.9em;
         }
+        
+        .system-warning {
+            background: rgba(255, 152, 0, 0.2);
+            border: 1px solid #ff9800;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
     </style>
     <script>
         // Auto refresh every 30 seconds
@@ -234,6 +302,11 @@ class WebStatusPanel {
             <h1>🤖 統一直播監控機器人</h1>
             <p>Instagram監控 + Discord頻道監控 + 電話通知</p>
         </div>
+
+        ${!igStatus.isMonitoring ? `
+        <div class="system-warning">
+            ⚠️ Instagram監控系統正在初始化中，請稍等...
+        </div>` : ''}
 
         <div class="live-indicator ${igStatus.isLiveNow ? 'live-yes' : 'live-no'}">
             ${igStatus.isLiveNow ? '🔴 @' + this.config.TARGET_USERNAME + ' 正在直播!' : '⚫ @' + this.config.TARGET_USERNAME + ' 離線中'}
@@ -267,12 +340,12 @@ class WebStatusPanel {
                     <span class="status-value">${igStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}</span>
                 </div>
                 <div class="status-item">
-                    <span>帳號狀態:</span>
-                    <span class="status-value">${igStatus.accountStatus}</span>
+                    <span>可用帳號:</span>
+                    <span class="status-value">${igStatus.availableAccounts}/${igStatus.totalAccounts}</span>
                 </div>
                 <div class="status-item">
-                    <span>成功率:</span>
-                    <span class="status-value">${igStatus.successRate}%</span>
+                    <span>今日請求:</span>
+                    <span class="status-value">${igStatus.dailyRequests}/${igStatus.maxDailyRequests}</span>
                 </div>
             </div>
 
@@ -313,11 +386,11 @@ class WebStatusPanel {
             <div class="section-title">📊 詳細統計</div>
             <div class="stats-grid">
                 <div class="stat-box">
-                    <div class="stat-number">${igStatus.totalRequests}</div>
+                    <div class="stat-number">${igStatus.totalRequests || 0}</div>
                     <div class="stat-label">Instagram 請求總數</div>
                 </div>
                 <div class="stat-box">
-                    <div class="stat-number">${igStatus.consecutiveErrors}</div>
+                    <div class="stat-number">${igStatus.consecutiveErrors || 0}</div>
                     <div class="stat-label">連續錯誤次數</div>
                 </div>
                 <div class="stat-box">
@@ -336,7 +409,7 @@ class WebStatusPanel {
             <div class="section-title">📺 Discord 頻道監控詳情</div>
             <div class="channel-stats">
                 ${Object.entries(this.config.CHANNEL_CONFIGS).map(([channelId, config]) => {
-                    const stats = this.unifiedState.discord.channelStats[channelId];
+                    const stats = this.unifiedState.discord.channelStats[channelId] || {};
                     return `
                     <div class="channel-card">
                         <div class="channel-name">${config.name || `頻道 ${channelId}`}</div>
@@ -346,15 +419,15 @@ class WebStatusPanel {
                         </div>
                         <div class="channel-detail">
                             <span>處理訊息:</span>
-                            <span>${stats.messagesProcessed}</span>
+                            <span>${stats.messagesProcessed || 0}</span>
                         </div>
                         <div class="channel-detail">
                             <span>檢測次數:</span>
-                            <span>${stats.keywordsDetected}</span>
+                            <span>${stats.keywordsDetected || 0}</span>
                         </div>
                         <div class="channel-detail">
                             <span>通話次數:</span>
-                            <span>${stats.callsMade}</span>
+                            <span>${stats.callsMade || 0}</span>
                         </div>
                         <div class="channel-detail">
                             <span>最後檢測:</span>
@@ -387,7 +460,7 @@ class WebStatusPanel {
     
     getSystemStatus() {
         const uptime = Math.floor((Date.now() - this.unifiedState.startTime) / 1000);
-        const igStatus = this.instagramMonitor.getStatus();
+        const igStatus = this.getInstagramStatus(); // 使用安全的方法
         
         return {
             system: {
@@ -405,7 +478,11 @@ class WebStatusPanel {
                 success_rate: igStatus.successRate,
                 consecutive_errors: igStatus.consecutiveErrors,
                 last_check: igStatus.lastCheck,
-                user_id: igStatus.targetUserId
+                user_id: igStatus.targetUserId,
+                available_accounts: igStatus.availableAccounts,
+                total_accounts: igStatus.totalAccounts,
+                daily_requests: igStatus.dailyRequests,
+                max_daily_requests: igStatus.maxDailyRequests
             },
             discord: {
                 monitoring_channels: Object.keys(this.config.CHANNEL_CONFIGS).length,
@@ -424,7 +501,7 @@ class WebStatusPanel {
     }
     
     getHealthStatus() {
-        const igStatus = this.instagramMonitor.getStatus();
+        const igStatus = this.getInstagramStatus(); // 使用安全的方法
         
         return {
             status: this.unifiedState.botReady ? 'healthy' : 'unhealthy',
