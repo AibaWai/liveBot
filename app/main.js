@@ -14,11 +14,25 @@ console.log('📺 Instagram 監控 + Discord 頻道監控 + 電話通知');
 const requiredEnvVars = [
     'DISCORD_TOKEN', 
     'NOTIFICATION_CHANNEL_ID',
-    'TARGET_USERNAME',           // Instagram用戶
-    'IG_SESSION_ID', 
-    'IG_CSRF_TOKEN', 
-    'IG_DS_USER_ID'
+    'TARGET_USERNAME'
 ];
+
+// 檢查多帳號配置
+let hasMultiAccount = false;
+for (let i = 1; i <= 10; i++) {
+    if (process.env[`IG_ACCOUNT_${i}`]) {
+        hasMultiAccount = true;
+        console.log(`✅ 發現Instagram帳號 ${i}`);
+        break;
+    }
+}
+
+if (!hasMultiAccount) {
+    requiredEnvVars.push('IG_SESSION_ID', 'IG_CSRF_TOKEN', 'IG_DS_USER_ID');
+    console.log('📱 使用單帳號模式');
+} else {
+    console.log('🔄 使用多帳號輪換模式');
+}
 
 // Discord監控配置（可選）
 let discordChannelConfigs = {};
@@ -166,282 +180,67 @@ const client = new Client({
     ]
 });
 
-// === Instagram 監控模組 ===
-const USER_AGENTS = [
-    'Instagram 302.0.0.23.113 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 492113219)',
-    'Instagram 299.0.0.51.109 Android (32/12; 440dpi; 1080x2340; OnePlus; CPH2423; OP515FL1; qcom; en_US; 486741830)',
-    'Instagram 301.0.0.29.124 Android (33/13; 480dpi; 1080x2400; Xiaomi; 2201116SG; lisa; qcom; en_US; 491671575)',
-    'Instagram 300.1.0.23.111 Android (31/12; 420dpi; 1080x2400; google; Pixel 6; oriole; google; en_US; 489553847)'
-];
+// === 簡化Instagram監控系統 ===
+let instagramMonitor = null;
 
-function generateDeviceData() {
-    return {
-        deviceId: 'android-' + Array.from({ length: 16 }, () => Math.floor(Math.random() * 16).toString(16)).join(''),
-        uuid: 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-            const r = Math.random() * 16 | 0;
-            const v = c == 'x' ? r : (r & 0x3 | 0x8);
-            return v.toString(16);
-        }),
-        userAgent: USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]
-    };
-}
-
-let sessionData = {
-    ...generateDeviceData(),
-    cookies: `sessionid=${config.IG_SESSION_ID}; csrftoken=${config.IG_CSRF_TOKEN}; ds_user_id=${config.IG_DS_USER_ID}`,
-};
-
-function makeRequest(url, options = {}) {
-    return new Promise((resolve, reject) => {
-        unifiedState.instagram.totalRequests++;
-        
-        const req = https.request(url, options, (res) => {
-            let data = '';
-            res.on('data', (chunk) => { data += chunk; });
-            res.on('end', () => {
-                resolve({ 
-                    statusCode: res.statusCode, 
-                    data: data
-                });
-            });
-        });
-        
-        req.on('error', reject);
-        req.setTimeout(30000, () => {
-            req.destroy();
-            reject(new Error('Request timeout'));
-        });
-        
-        if (options.body) req.write(options.body);
-        req.end();
-    });
-}
-
-
-// 統一通知函數
-async function sendNotification(message, type = 'info', source = 'system') {
+async function startInstagramMonitoring() {
     try {
-        const channel = await client.channels.fetch(config.NOTIFICATION_CHANNEL_ID);
-        if (message.length > 1900) message = message.substring(0, 1900) + '...(truncated)';
-        
-        await channel.send(message);
-        unifiedState.notifications.discordMessages++;
-        unifiedState.notifications.lastNotification = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
-        
-        console.log(`📤 [${source}] Discord通知已發送: ${type}`);
-        
-        // 只有 Instagram 直播通知才調用統一電話通知
-        if (type === 'live_alert' && source === 'Instagram' && config.PUSHCALL_API_KEY) {
-            await makePhoneCall(`${config.TARGET_USERNAME} 開始直播了！`, source);
-        }
-    } catch (error) {
-        console.error('❌ Discord通知發送失敗:', error.message);
-    }
-}
-
-// 電話通知函數
-async function makePhoneCall(message, source = 'system') {
-    if (!config.PUSHCALL_API_KEY || !config.PUSHCALL_TO) {
-        console.log('📞 電話通知未配置，跳過');
-        return;
-    }
-    
-    try {
-        const apiUrl = new URL('https://pushcall.me/api/call');
-        apiUrl.searchParams.append('api_key', config.PUSHCALL_API_KEY);
-        apiUrl.searchParams.append('from', config.PUSHCALL_FROM || '1');
-        apiUrl.searchParams.append('to', config.PUSHCALL_TO.replace('+', ''));
-        
-        const response = await axios.get(apiUrl.toString(), { timeout: 30000 });
-        
-        if (response.status === 200) {
-            unifiedState.notifications.phoneCallsMade++;
-            console.log(`✅ [${source}] 電話通知撥打成功`);
-        }
-    } catch (error) {
-        console.error(`❌ [${source}] 電話通知失敗:`, error.message);
-    }
-}
-
-// Instagram 用戶ID獲取
-async function getUserId(username) {
-    if (unifiedState.instagram.targetUserId) return unifiedState.instagram.targetUserId;
-    
-    try {
-        await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
-        
-        const timestamp = Math.floor(Date.now() / 1000);
-        const response = await makeRequest(`https://i.instagram.com/api/v1/users/web_profile_info/?username=${username}`, {
-            method: 'GET',
-            headers: {
-                'User-Agent': sessionData.userAgent,
-                'Accept': 'application/json',
-                'Cookie': sessionData.cookies,
-                'X-IG-App-Locale': 'en_US',
-                'X-IG-Device-Locale': 'en_US',
-                'X-Pigeon-Session-Id': sessionData.uuid,
-                'X-Pigeon-Rawclienttime': timestamp,
-                'X-IG-Connection-Type': 'WIFI',
-                'X-IG-App-ID': '567067343352427',
-                'X-IG-Device-ID': sessionData.deviceId,
-                'Host': 'i.instagram.com'
-            }
-        });
-        
-        unifiedState.instagram.accountStatus = analyzeAccountStatus(response.statusCode, response.data);
-        
-        if (response.statusCode === 200) {
-            const data = JSON.parse(response.data);
-            if (data.data?.user?.id) {
-                unifiedState.instagram.targetUserId = data.data.user.id;
-                unifiedState.instagram.successfulRequests++;
-                unifiedState.instagram.lastSuccessTime = Date.now();
-                unifiedState.instagram.consecutiveErrors = 0;
-                console.log(`✅ [Instagram] 用戶ID: ${unifiedState.instagram.targetUserId}`);
-                return unifiedState.instagram.targetUserId;
-            }
+        if (instagramMonitor && instagramMonitor.isMonitoring) {
+            console.log('⚠️ [Instagram] 監控已在運行中');
+            return;
         }
         
-        console.log(`❌ [Instagram] 獲取用戶ID失敗: ${response.statusCode}`);
-        return null;
+        const SimplifiedInstagramMonitor = require('./simplified_instagram_monitor');
+        instagramMonitor = new SimplifiedInstagramMonitor();
         
-    } catch (error) {
-        console.error('❌ [Instagram] 獲取用戶ID錯誤:', error.message);
-        unifiedState.instagram.consecutiveErrors++;
-        return null;
-    }
-}
-
-function analyzeAccountStatus(statusCode, responseData) {
-    if (statusCode === 401) return 'invalid_credentials';
-    if (statusCode === 403) return 'suspended_or_blocked';
-    if (statusCode === 429) return 'rate_limited';
-    if (statusCode >= 500) return 'server_error';
-    if (statusCode === 200) {
-        try {
-            const data = JSON.parse(responseData);
-            if (data.message?.includes('challenge')) return 'challenge_required';
-            if (data.status === 'ok') return 'active';
-        } catch (e) {
-            return 'active';
-        }
-    }
-    return 'unknown';
-}
-
-// Instagram 直播檢查
-async function checkInstagramLive() {
-    try {
-        const userId = await getUserId(config.TARGET_USERNAME);
-        if (!userId) return false;
+        console.log('🚀 [Instagram] 啟動簡化監控系統');
         
-        await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1500));
-        
-        const timestamp = Math.floor(Date.now() / 1000);
-        const response = await makeRequest(`https://i.instagram.com/api/v1/feed/user/${userId}/story/`, {
-            method: 'GET',
-            headers: {
-                'User-Agent': sessionData.userAgent,
-                'Accept': 'application/json',
-                'Cookie': sessionData.cookies,
-                'X-IG-App-Locale': 'en_US',
-                'X-Pigeon-Session-Id': sessionData.uuid,
-                'X-Pigeon-Rawclienttime': timestamp,
-                'X-IG-App-ID': '567067343352427',
-                'X-IG-Device-ID': sessionData.deviceId,
-                'Host': 'i.instagram.com'
-            }
-        });
-        
-        unifiedState.instagram.accountStatus = analyzeAccountStatus(response.statusCode, response.data);
-        unifiedState.instagram.lastCheck = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
-        
-        if (response.statusCode === 200) {
-            const data = JSON.parse(response.data);
-            unifiedState.instagram.successfulRequests++;
-            unifiedState.instagram.lastSuccessTime = Date.now();
-            unifiedState.instagram.consecutiveErrors = 0;
-            
-            // 檢查直播
-            if (data.broadcast) {
-                console.log('🔴 [Instagram] 發現直播!');
-                return true;
-            }
-            
-            if (data.reel?.items) {
-                for (const item of data.reel.items) {
-                    if (item.media_type === 4) {
-                        console.log('🔴 [Instagram] Reel中發現直播!');
-                        return true;
-                    }
-                }
-            }
-            
-            return false;
-        }
-        
-        console.log(`❌ [Instagram] 檢查失敗: ${response.statusCode}`);
-        unifiedState.instagram.consecutiveErrors++;
-        return false;
-        
-    } catch (error) {
-        console.error('❌ [Instagram] 檢查錯誤:', error.message);
-        unifiedState.instagram.consecutiveErrors++;
-        return false;
-    }
-}
-
-// Instagram 監控循環
-function startInstagramMonitoring() {
-    if (unifiedState.instagram.isMonitoring) return;
-    
-    unifiedState.instagram.isMonitoring = true;
-    console.log('🚀 [Instagram] 開始監控...');
-    
-    async function monitorLoop() {
-        if (!unifiedState.instagram.isMonitoring) return;
-        
-        try {
-            const currentlyLive = await checkInstagramLive();
-            
-            if (currentlyLive && !unifiedState.instagram.isLiveNow) {
+        await instagramMonitor.startMonitoring(config.TARGET_USERNAME, async () => {
+            // 檢測到直播時的處理
+            if (!unifiedState.instagram.isLiveNow) {
                 unifiedState.instagram.isLiveNow = true;
-                console.log('🔴 [Instagram] 狀態變化: 開始直播!');
+                console.log('🔴 [Instagram] 檢測到直播開始!');
                 
                 await sendNotification(`🔴 **@${config.TARGET_USERNAME} Instagram直播開始!** 🎥
 
 📺 觀看: https://www.instagram.com/${config.TARGET_USERNAME}/
 ⏰ 檢測時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-🤖 持續監控中...`, 'live_alert', 'Instagram');
-                
-            } else if (!currentlyLive && unifiedState.instagram.isLiveNow) {
-                unifiedState.instagram.isLiveNow = false;
-                console.log('⚫ [Instagram] 狀態變化: 直播結束');
-                
-                await sendNotification(`⚫ @${config.TARGET_USERNAME} Instagram直播已結束
+🛡️ 3帳號輪換系統 + 時間段智能監控
+🌙 深夜模式: 自動降低檢查頻率
 
-⏰ 結束時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`, 'info', 'Instagram');
+🚀 快去看直播吧！`, 'live_alert', 'Instagram');
             }
-            
-            // 動態調整間隔
-            let nextInterval = unifiedState.instagram.currentInterval;
-            if (unifiedState.instagram.consecutiveErrors >= SAFETY_CONFIG.maxConsecutiveErrors) {
-                nextInterval = Math.min(nextInterval * 2, SAFETY_CONFIG.maxBackoffInterval);
-            } else if (unifiedState.instagram.consecutiveErrors === 0) {
-                nextInterval = Math.max(nextInterval * 0.8, SAFETY_CONFIG.minInterval);
-            }
-            nextInterval += Math.random() * 30 - 15; // 隨機化
-            
-            setTimeout(monitorLoop, Math.max(nextInterval, 60) * 1000);
-            
-        } catch (error) {
-            console.error('❌ [Instagram] 監控循環錯誤:', error.message);
-            setTimeout(monitorLoop, 120000); // 錯誤時等待2分鐘
-        }
+        });
+        
+    } catch (error) {
+        console.error('❌ [Instagram] 簡化監控啟動失敗:', error.message);
+        // 可以在這裡加入降級處理
     }
-    
-    monitorLoop();
 }
+
+// 停止Instagram監控
+function stopInstagramMonitoring() {
+    if (instagramMonitor) {
+        instagramMonitor.stopMonitoring();
+        unifiedState.instagram.isMonitoring = false;
+        console.log('⏹️ [Instagram] 監控已停止');
+    }
+}
+
+// 獲取Instagram監控狀態
+function getInstagramStatus() {
+    if (instagramMonitor) {
+        return instagramMonitor.getStatus();
+    }
+    return {
+        isMonitoring: false,
+        totalAccounts: 0,
+        availableAccounts: 0,
+        dailyRequests: 0,
+        maxDailyRequests: 0
+    };
+}
+
 
 // === Discord 事件處理 ===
 client.once('ready', () => {
@@ -548,39 +347,54 @@ async function handleDiscordCommands(message) {
     }
     
     else if (cmd === '!ig-stop') {
-        unifiedState.instagram.isMonitoring = false;
+        stopInstagramMonitoring();
         await message.reply('⏹️ Instagram監控已停止');
     }
     
     else if (cmd === '!ig-status') {
         const runtime = Math.round((Date.now() - unifiedState.startTime) / 60000);
-        const successRate = unifiedState.instagram.totalRequests > 0 ? 
-            Math.round((unifiedState.instagram.successfulRequests / unifiedState.instagram.totalRequests) * 100) : 0;
+        const igStatus = getInstagramStatus();
         
         const statusMsg = `📊 **Instagram監控狀態**
 
-**目標:** @${config.TARGET_USERNAME}
-**當前狀態:** ${unifiedState.instagram.isLiveNow ? '🔴 直播中' : '⚫ 離線'}
-**監控:** ${unifiedState.instagram.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
-**帳號狀態:** ${unifiedState.instagram.accountStatus}
+    **目標:** @${config.TARGET_USERNAME}
+    **當前狀態:** ${unifiedState.instagram.isLiveNow ? '🔴 直播中' : '⚫ 離線'}
+    **監控:** ${igStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
 
-**統計:**
-⏱️ 運行時間: ${runtime} 分鐘
-📡 總請求數: ${unifiedState.instagram.totalRequests}
-✅ 成功率: ${successRate}%
-⚠️ 連續錯誤: ${unifiedState.instagram.consecutiveErrors}
-🕐 最後檢查: ${unifiedState.instagram.lastCheck || '尚未檢查'}
+    **3帳號輪換系統:**
+    ⏱️ 運行時間: ${runtime} 分鐘
+    🔐 總帳號數: ${igStatus.totalAccounts}
+    ✅ 可用帳號: ${igStatus.availableAccounts}
+    📊 今日請求: ${igStatus.dailyRequests}/${igStatus.maxDailyRequests}
 
-**用戶ID:** ${unifiedState.instagram.targetUserId || '尚未獲取'}`;
+    **時間段智能監控:**
+    🌙 深夜 (02-06): 10分鐘間隔
+    🌅 早晨 (07-08): 3分鐘間隔  
+    ☀️ 活躍 (09-24): 90秒間隔
+    🌃 深夜前期 (00-02): 5分鐘間隔`;
 
         await message.reply(statusMsg);
     }
     
     else if (cmd === '!ig-check') {
         await message.reply('🔍 執行手動Instagram檢查...');
-        const isLive = await checkInstagramLive();
-        const status = isLive ? '🔴 發現直播' : '⚫ 無直播';
-        await message.reply(`📊 **手動檢查結果:** ${status}\n帳號狀態: ${unifiedState.instagram.accountStatus}`);
+        
+        if (instagramMonitor) {
+            try {
+                const isLive = await instagramMonitor.checkLive(config.TARGET_USERNAME);
+                const status = isLive ? '🔴 發現直播' : '⚫ 無直播';
+                const igStatus = getInstagramStatus();
+                
+                await message.reply(`📊 **手動檢查結果:** ${status}
+
+    🔐 可用帳號: ${igStatus.availableAccounts}/${igStatus.totalAccounts}
+    📊 今日請求: ${igStatus.dailyRequests}/${igStatus.maxDailyRequests}`);
+            } catch (error) {
+                await message.reply(`❌ 檢查失敗: ${error.message}`);
+            }
+        } else {
+            await message.reply('❌ 監控系統未初始化');
+        }
     }
     
     else if (cmd === '!status') {
