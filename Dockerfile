@@ -10,7 +10,6 @@ RUN npm install --only=production
 
 # Copy application files
 COPY app/main.js main.js
-COPY app/simplified_instagram_monitor.js simplified_instagram_monitor.js
 
 # Create necessary directories
 RUN mkdir -p /app/logs

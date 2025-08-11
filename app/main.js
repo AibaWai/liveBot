@@ -1,46 +1,33 @@
 const express = require('express');
 const { Client, GatewayIntentBits } = require('discord.js');
+const https = require('https');
 const axios = require('axios');
 
 // Express 設定
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-console.log('🚀 升級版直播監控機器人啟動中...');
-console.log('📺 Instagram 3帳號輪換監控 + Discord 頻道監控 + 電話通知');
+console.log('🚀 統一直播監控機器人啟動中...');
+console.log('📺 Instagram 監控 + Discord 頻道監控 + 電話通知');
 
 // === 環境變數檢查 ===
 const requiredEnvVars = [
     'DISCORD_TOKEN', 
     'NOTIFICATION_CHANNEL_ID',
-    'TARGET_USERNAME'
+    'TARGET_USERNAME',           // Instagram用戶
+    'IG_SESSION_ID', 
+    'IG_CSRF_TOKEN', 
+    'IG_DS_USER_ID'
 ];
 
-// 檢查多帳號配置
-let hasMultiAccount = false;
-for (let i = 1; i <= 10; i++) {
-    if (process.env[`IG_ACCOUNT_${i}`]) {
-        hasMultiAccount = true;
-        console.log(`✅ 發現Instagram帳號 ${i}`);
-        break;
-    }
-}
-
-if (!hasMultiAccount) {
-    requiredEnvVars.push('IG_SESSION_ID', 'IG_CSRF_TOKEN', 'IG_DS_USER_ID');
-    console.log('📱 使用單帳號模式');
-} else {
-    console.log('🔄 使用多帳號輪換模式');
-}
-
-// Discord監控配置（保持原邏輯）
+// Discord監控配置（可選）
 let discordChannelConfigs = {};
 if (process.env.CHANNEL_CONFIGS) {
     try {
         discordChannelConfigs = JSON.parse(process.env.CHANNEL_CONFIGS);
         console.log('📋 Discord頻道監控配置載入:', Object.keys(discordChannelConfigs).length, '個頻道');
         
-        // 驗證每個頻道配置（保持原邏輯）
+        // 驗證每個頻道配置
         for (const [channelId, channelConfig] of Object.entries(discordChannelConfigs)) {
             if (!channelConfig.keywords || !Array.isArray(channelConfig.keywords)) {
                 console.error(`❌ 頻道 ${channelId} 的 keywords 設定錯誤，必須是陣列`);
@@ -50,23 +37,20 @@ if (process.env.CHANNEL_CONFIGS) {
                 console.error(`❌ 頻道 ${channelId} 缺少 message 設定`);
                 process.exit(1);
             }
-            if (!channelConfig.api_key) {
-                console.error(`❌ 頻道 ${channelId} 缺少 api_key 設定`);
-                process.exit(1);
-            }
-            if (!channelConfig.phone_number) {
-                console.error(`❌ 頻道 ${channelId} 缺少 phone_number 設定`);
-                process.exit(1);
+            
+            // 檢查電話通知配置（可選）
+            if (channelConfig.api_key && channelConfig.phone_number) {
+                if (!channelConfig.caller_id) {
+                    console.warn(`⚠️ 頻道 ${channelId} 缺少 caller_id，將使用預設值 '1'`);
+                    channelConfig.caller_id = '1';
+                }
+                console.log(`📞 頻道 ${channelId} 電話配置:`);
+                console.log(`   API Key: ${channelConfig.api_key.substring(0, 8)}****`);
+                console.log(`   來電顯示ID: ${channelConfig.caller_id}`);
+                console.log(`   通知號碼: ${channelConfig.phone_number}`);
             }
             
-            // 確保有 caller_id
-            if (!channelConfig.caller_id) {
-                console.warn(`⚠️ 頻道 ${channelId} 缺少 caller_id，將使用預設值 '1'`);
-                channelConfig.caller_id = '1';
-            }
-            
-            console.log(`🔑 頻道 ${channelId} 使用 API Key: ${channelConfig.api_key.substring(0, 8)}****`);
-            console.log(`📱 頻道 ${channelId} 通知號碼: ${channelConfig.phone_number}`);
+            console.log(`✅ 頻道 ${channelId} (${channelConfig.name || '未命名'}) 配置有效`);
         }
     } catch (error) {
         console.warn('⚠️ Discord頻道配置解析失敗，將只監控Instagram');
@@ -77,10 +61,6 @@ if (process.env.CHANNEL_CONFIGS) {
 const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
 if (missingVars.length > 0) {
     console.error('❌ 缺少必要環境變數:', missingVars.join(', '));
-    console.error('\n📝 多帳號配置格式:');
-    console.error('IG_ACCOUNT_1=sessionid1|csrftoken1|ds_user_id1');
-    console.error('IG_ACCOUNT_2=sessionid2|csrftoken2|ds_user_id2');
-    console.error('IG_ACCOUNT_3=sessionid3|csrftoken3|ds_user_id3');
     process.exit(1);
 }
 
@@ -92,8 +72,11 @@ const config = {
     
     // Instagram 監控配置
     TARGET_USERNAME: process.env.TARGET_USERNAME,
+    IG_SESSION_ID: process.env.IG_SESSION_ID,
+    IG_CSRF_TOKEN: process.env.IG_CSRF_TOKEN,
+    IG_DS_USER_ID: process.env.IG_DS_USER_ID,
     
-    // Discord 頻道監控配置（保持原邏輯）
+    // Discord 頻道監控配置
     CHANNEL_CONFIGS: discordChannelConfigs,
     
     // PushCall 配置 (可選)
@@ -102,14 +85,76 @@ const config = {
     PUSHCALL_TO: process.env.PUSHCALL_TO
 };
 
-console.log('📋 監控設定摘要:');
-console.log(`📺 Instagram監控: @${config.TARGET_USERNAME} (${hasMultiAccount ? '多帳號輪換' : '單帳號'})`);
+// === Instagram 監控配置 ===
+const SAFETY_CONFIG = {
+    minInterval: 90,
+    maxInterval: 180,
+    maxConsecutiveErrors: 3,
+    backoffMultiplier: 2,
+    maxBackoffInterval: 600,
+    rateLimitCooldown: 900,
+};
+
+// === 統一狀態管理 ===
+let unifiedState = {
+    // Bot 基本狀態
+    startTime: Date.now(),
+    botReady: false,
+    
+    // Instagram 監控狀態
+    instagram: {
+        isLiveNow: false,
+        targetUserId: null,
+        isMonitoring: false,
+        consecutiveErrors: 0,
+        currentInterval: SAFETY_CONFIG.minInterval,
+        accountStatus: 'unknown',
+        totalRequests: 0,
+        successfulRequests: 0,
+        lastSuccessTime: Date.now(),
+        lastCheck: null
+    },
+    
+    // Discord 頻道監控狀態
+    discord: {
+        totalMessagesProcessed: 0,
+        channelStats: {},
+        lastDetections: [],
+        apiUsage: {}
+    },
+    
+    // 通知統計
+    notifications: {
+        discordMessages: 0,
+        phoneCallsMade: 0,
+        lastNotification: null
+    }
+};
+
+// 初始化Discord頻道統計
 for (const [channelId, channelConfig] of Object.entries(config.CHANNEL_CONFIGS)) {
-    console.log(`   📺 頻道 ${channelId} (${channelConfig.name || '未命名'}):`);
-    console.log(`      🔍 關鍵字: ${channelConfig.keywords.join(', ')}`);
-    console.log(`      💬 通知訊息: ${channelConfig.message}`);
-    console.log(`      🔑 API Key: ${channelConfig.api_key.substring(0, 8)}****`);
-    console.log(`      📞 電話: ${channelConfig.phone_number}`);
+    unifiedState.discord.channelStats[channelId] = {
+        messagesProcessed: 0,
+        keywordsDetected: 0,
+        callsMade: 0,
+        lastDetection: null,
+        lastCallSuccess: null,
+        lastCallError: null
+    };
+    
+    const apiKey = channelConfig.api_key ? channelConfig.api_key.substring(0, 8) : 'default';
+    if (!unifiedState.discord.apiUsage[apiKey]) {
+        unifiedState.discord.apiUsage[apiKey] = {
+            totalCalls: 0,
+            successCalls: 0,
+            failedCalls: 0,
+            lastUsed: null,
+            phoneNumbers: new Set()
+        };
+    }
+    if (channelConfig.phone_number) {
+        unifiedState.discord.apiUsage[apiKey].phoneNumbers.add(channelConfig.phone_number);
+    }
 }
 
 // === Discord Client 設定 ===
@@ -121,121 +166,87 @@ const client = new Client({
     ]
 });
 
-// === 統計資訊（保持原邏輯 + 新增Instagram統計） ===
-let stats = {
-    startTime: Date.now(),
-    totalMessagesProcessed: 0,
-    channelStats: {},
-    lastDetections: [],
-    apiUsage: {}, // Discord頻道API使用情況
-    
-    // 新增Instagram統計
-    instagram: {
-        isLiveNow: false,
-        isMonitoring: false,
-        totalRequests: 0,
-        successfulRequests: 0,
-        accountStatus: 'unknown',
-        lastCheck: null,
-        monitorStartTime: null
-    }
-};
+// === Instagram 監控模組 ===
+const USER_AGENTS = [
+    'Instagram 302.0.0.23.113 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 492113219)',
+    'Instagram 299.0.0.51.109 Android (32/12; 440dpi; 1080x2340; OnePlus; CPH2423; OP515FL1; qcom; en_US; 486741830)',
+    'Instagram 301.0.0.29.124 Android (33/13; 480dpi; 1080x2400; Xiaomi; 2201116SG; lisa; qcom; en_US; 491671575)',
+    'Instagram 300.1.0.23.111 Android (31/12; 420dpi; 1080x2400; google; Pixel 6; oriole; google; en_US; 489553847)'
+];
 
-// 初始化Discord頻道統計（保持原邏輯）
-for (const [channelId, channelConfig] of Object.entries(config.CHANNEL_CONFIGS)) {
-    stats.channelStats[channelId] = {
-        messagesProcessed: 0,
-        keywordsDetected: 0,
-        callsMade: 0,
-        lastDetection: null,
-        lastCallSuccess: null,
-        lastCallError: null
+function generateDeviceData() {
+    return {
+        deviceId: 'android-' + Array.from({ length: 16 }, () => Math.floor(Math.random() * 16).toString(16)).join(''),
+        uuid: 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            const v = c == 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+        }),
+        userAgent: USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]
     };
-    
-    // 初始化API使用統計
-    const apiKey = channelConfig.api_key.substring(0, 8);
-    if (!stats.apiUsage[apiKey]) {
-        stats.apiUsage[apiKey] = {
-            totalCalls: 0,
-            successCalls: 0,
-            failedCalls: 0,
-            lastUsed: null,
-            phoneNumbers: new Set()
-        };
-    }
-    stats.apiUsage[apiKey].phoneNumbers.add(channelConfig.phone_number);
 }
 
-// === Instagram 監控（使用新的簡化監控器） ===
-const SimplifiedInstagramMonitor = require('./simplified_instagram_monitor');
-let instagramMonitor = null;
+let sessionData = {
+    ...generateDeviceData(),
+    cookies: `sessionid=${config.IG_SESSION_ID}; csrftoken=${config.IG_CSRF_TOKEN}; ds_user_id=${config.IG_DS_USER_ID}`,
+};
 
-// 啟動Instagram監控 (包含Cookie監控)
-async function startInstagramMonitoring() {
-    if (stats.instagram.isMonitoring) {
-        console.log('⚠️ Instagram監控已在運行中');
+function makeRequest(url, options = {}) {
+    return new Promise((resolve, reject) => {
+        unifiedState.instagram.totalRequests++;
+        
+        const req = https.request(url, options, (res) => {
+            let data = '';
+            res.on('data', (chunk) => { data += chunk; });
+            res.on('end', () => {
+                resolve({ 
+                    statusCode: res.statusCode, 
+                    data: data
+                });
+            });
+        });
+        
+        req.on('error', reject);
+        req.setTimeout(30000, () => {
+            req.destroy();
+            reject(new Error('Request timeout'));
+        });
+        
+        if (options.body) req.write(options.body);
+        req.end();
+    });
+}
+
+
+// 統一通知函數
+async function sendNotification(message, type = 'info', source = 'system') {
+    try {
+        const channel = await client.channels.fetch(config.NOTIFICATION_CHANNEL_ID);
+        if (message.length > 1900) message = message.substring(0, 1900) + '...(truncated)';
+        
+        await channel.send(message);
+        unifiedState.notifications.discordMessages++;
+        unifiedState.notifications.lastNotification = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+        
+        console.log(`📤 [${source}] Discord通知已發送: ${type}`);
+        
+        // 只有 Instagram 直播通知才調用統一電話通知
+        if (type === 'live_alert' && source === 'Instagram' && config.PUSHCALL_API_KEY) {
+            await makePhoneCall(`${config.TARGET_USERNAME} 開始直播了！`, source);
+        }
+    } catch (error) {
+        console.error('❌ Discord通知發送失敗:', error.message);
+    }
+}
+
+// 電話通知函數
+async function makePhoneCall(message, source = 'system') {
+    if (!config.PUSHCALL_API_KEY || !config.PUSHCALL_TO) {
+        console.log('📞 電話通知未配置，跳過');
         return;
     }
     
     try {
-        console.log('🚀 [Instagram] 啟動3帳號輪換監控 + Cookie監控...');
-        
-        instagramMonitor = new SimplifiedInstagramMonitor();
-        
-        // 設置Cookie警告回調
-        instagramMonitor.setCookieAlertCallback(async (message, level, accountId) => {
-            await sendCookieAlert(message, level, accountId);
-        });
-        
-        stats.instagram.isMonitoring = true;
-        stats.instagram.monitorStartTime = Date.now();
-        
-        await instagramMonitor.startMonitoring(config.TARGET_USERNAME, async () => {
-            // 檢測到直播的回調
-            stats.instagram.isLiveNow = true;
-            console.log('🔴 [Instagram] 檢測到直播開始!');
-            
-            // 發送通知（結合原有Discord通知 + 新的電話通知）
-            await sendInstagramLiveNotification();
-        });
-        
-        console.log('✅ [Instagram] 監控啟動成功 (包含Cookie自動檢測)');
-        
-    } catch (error) {
-        console.error('❌ [Instagram] 監控啟動失敗:', error.message);
-        stats.instagram.isMonitoring = false;
-    }
-}
-
-// 發送Cookie警告
-async function sendCookieAlert(message, level, accountId) {
-    try {
-        const channel = await client.channels.fetch(config.NOTIFICATION_CHANNEL_ID);
-        
-        // 根據警告級別調整消息格式
-        let formattedMessage = message;
-        if (level === 'critical') {
-            formattedMessage = `🚨 **CRITICAL** ${message}
-
-@everyone **需要立即處理！**`;
-        }
-        
-        await channel.send(formattedMessage);
-        console.log(`🔔 [Cookie警告] ${level} 級別警告已發送: ${accountId}`);
-        
-        // 如果是關鍵警告，也發送電話通知
-        if (level === 'critical' && config.PUSHCALL_API_KEY && config.PUSHCALL_TO) {
-            await makeCookiePhoneCall(accountId);
-        }
-        
-    } catch (error) {
-        console.error('❌ [Cookie警告] 發送失敗:', error.message);
-    }
-}
-
-// Cookie過期電話通知
-async function makeCookiePhoneCall(accountId) {
-    try {
         const apiUrl = new URL('https://pushcall.me/api/call');
         apiUrl.searchParams.append('api_key', config.PUSHCALL_API_KEY);
         apiUrl.searchParams.append('from', config.PUSHCALL_FROM || '1');
@@ -244,89 +255,230 @@ async function makeCookiePhoneCall(accountId) {
         const response = await axios.get(apiUrl.toString(), { timeout: 30000 });
         
         if (response.status === 200) {
-            console.log(`📞 [Cookie警告] ${accountId} 過期電話通知已發送`);
+            unifiedState.notifications.phoneCallsMade++;
+            console.log(`✅ [${source}] 電話通知撥打成功`);
         }
     } catch (error) {
-        console.error(`❌ [Cookie警告] ${accountId} 電話通知失敗:`, error.message);
-    }
-}動失敗:', error.message);
-        stats.instagram.isMonitoring = false;
+        console.error(`❌ [${source}] 電話通知失敗:`, error.message);
     }
 }
 
-// Instagram直播通知
-async function sendInstagramLiveNotification() {
+// Instagram 用戶ID獲取
+async function getUserId(username) {
+    if (unifiedState.instagram.targetUserId) return unifiedState.instagram.targetUserId;
+    
     try {
-        // Discord通知
-        const channel = await client.channels.fetch(config.NOTIFICATION_CHANNEL_ID);
-        const message = `🔴 **@${config.TARGET_USERNAME} Instagram直播開始!** 🎥
+        await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
+        
+        const timestamp = Math.floor(Date.now() / 1000);
+        const response = await makeRequest(`https://i.instagram.com/api/v1/users/web_profile_info/?username=${username}`, {
+            method: 'GET',
+            headers: {
+                'User-Agent': sessionData.userAgent,
+                'Accept': 'application/json',
+                'Cookie': sessionData.cookies,
+                'X-IG-App-Locale': 'en_US',
+                'X-IG-Device-Locale': 'en_US',
+                'X-Pigeon-Session-Id': sessionData.uuid,
+                'X-Pigeon-Rawclienttime': timestamp,
+                'X-IG-Connection-Type': 'WIFI',
+                'X-IG-App-ID': '567067343352427',
+                'X-IG-Device-ID': sessionData.deviceId,
+                'Host': 'i.instagram.com'
+            }
+        });
+        
+        unifiedState.instagram.accountStatus = analyzeAccountStatus(response.statusCode, response.data);
+        
+        if (response.statusCode === 200) {
+            const data = JSON.parse(response.data);
+            if (data.data?.user?.id) {
+                unifiedState.instagram.targetUserId = data.data.user.id;
+                unifiedState.instagram.successfulRequests++;
+                unifiedState.instagram.lastSuccessTime = Date.now();
+                unifiedState.instagram.consecutiveErrors = 0;
+                console.log(`✅ [Instagram] 用戶ID: ${unifiedState.instagram.targetUserId}`);
+                return unifiedState.instagram.targetUserId;
+            }
+        }
+        
+        console.log(`❌ [Instagram] 獲取用戶ID失敗: ${response.statusCode}`);
+        return null;
+        
+    } catch (error) {
+        console.error('❌ [Instagram] 獲取用戶ID錯誤:', error.message);
+        unifiedState.instagram.consecutiveErrors++;
+        return null;
+    }
+}
+
+function analyzeAccountStatus(statusCode, responseData) {
+    if (statusCode === 401) return 'invalid_credentials';
+    if (statusCode === 403) return 'suspended_or_blocked';
+    if (statusCode === 429) return 'rate_limited';
+    if (statusCode >= 500) return 'server_error';
+    if (statusCode === 200) {
+        try {
+            const data = JSON.parse(responseData);
+            if (data.message?.includes('challenge')) return 'challenge_required';
+            if (data.status === 'ok') return 'active';
+        } catch (e) {
+            return 'active';
+        }
+    }
+    return 'unknown';
+}
+
+// Instagram 直播檢查
+async function checkInstagramLive() {
+    try {
+        const userId = await getUserId(config.TARGET_USERNAME);
+        if (!userId) return false;
+        
+        await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1500));
+        
+        const timestamp = Math.floor(Date.now() / 1000);
+        const response = await makeRequest(`https://i.instagram.com/api/v1/feed/user/${userId}/story/`, {
+            method: 'GET',
+            headers: {
+                'User-Agent': sessionData.userAgent,
+                'Accept': 'application/json',
+                'Cookie': sessionData.cookies,
+                'X-IG-App-Locale': 'en_US',
+                'X-Pigeon-Session-Id': sessionData.uuid,
+                'X-Pigeon-Rawclienttime': timestamp,
+                'X-IG-App-ID': '567067343352427',
+                'X-IG-Device-ID': sessionData.deviceId,
+                'Host': 'i.instagram.com'
+            }
+        });
+        
+        unifiedState.instagram.accountStatus = analyzeAccountStatus(response.statusCode, response.data);
+        unifiedState.instagram.lastCheck = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+        
+        if (response.statusCode === 200) {
+            const data = JSON.parse(response.data);
+            unifiedState.instagram.successfulRequests++;
+            unifiedState.instagram.lastSuccessTime = Date.now();
+            unifiedState.instagram.consecutiveErrors = 0;
+            
+            // 檢查直播
+            if (data.broadcast) {
+                console.log('🔴 [Instagram] 發現直播!');
+                return true;
+            }
+            
+            if (data.reel?.items) {
+                for (const item of data.reel.items) {
+                    if (item.media_type === 4) {
+                        console.log('🔴 [Instagram] Reel中發現直播!');
+                        return true;
+                    }
+                }
+            }
+            
+            return false;
+        }
+        
+        console.log(`❌ [Instagram] 檢查失敗: ${response.statusCode}`);
+        unifiedState.instagram.consecutiveErrors++;
+        return false;
+        
+    } catch (error) {
+        console.error('❌ [Instagram] 檢查錯誤:', error.message);
+        unifiedState.instagram.consecutiveErrors++;
+        return false;
+    }
+}
+
+// Instagram 監控循環
+function startInstagramMonitoring() {
+    if (unifiedState.instagram.isMonitoring) return;
+    
+    unifiedState.instagram.isMonitoring = true;
+    console.log('🚀 [Instagram] 開始監控...');
+    
+    async function monitorLoop() {
+        if (!unifiedState.instagram.isMonitoring) return;
+        
+        try {
+            const currentlyLive = await checkInstagramLive();
+            
+            if (currentlyLive && !unifiedState.instagram.isLiveNow) {
+                unifiedState.instagram.isLiveNow = true;
+                console.log('🔴 [Instagram] 狀態變化: 開始直播!');
+                
+                await sendNotification(`🔴 **@${config.TARGET_USERNAME} Instagram直播開始!** 🎥
 
 📺 觀看: https://www.instagram.com/${config.TARGET_USERNAME}/
 ⏰ 檢測時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-🛡️ 3帳號輪換系統 + 時間段智能監控
-⚡ 90秒-10分鐘動態間隔
+🤖 持續監控中...`, 'live_alert', 'Instagram');
+                
+            } else if (!currentlyLive && unifiedState.instagram.isLiveNow) {
+                unifiedState.instagram.isLiveNow = false;
+                console.log('⚫ [Instagram] 狀態變化: 直播結束');
+                
+                await sendNotification(`⚫ @${config.TARGET_USERNAME} Instagram直播已結束
 
-🚀 快去看直播吧！`;
-
-        await channel.send(message);
-        console.log('📤 [Instagram] Discord通知已發送');
-        
-        // 電話通知
-        if (config.PUSHCALL_API_KEY && config.PUSHCALL_TO) {
-            await makeInstagramPhoneCall();
+⏰ 結束時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`, 'info', 'Instagram');
+            }
+            
+            // 動態調整間隔
+            let nextInterval = unifiedState.instagram.currentInterval;
+            if (unifiedState.instagram.consecutiveErrors >= SAFETY_CONFIG.maxConsecutiveErrors) {
+                nextInterval = Math.min(nextInterval * 2, SAFETY_CONFIG.maxBackoffInterval);
+            } else if (unifiedState.instagram.consecutiveErrors === 0) {
+                nextInterval = Math.max(nextInterval * 0.8, SAFETY_CONFIG.minInterval);
+            }
+            nextInterval += Math.random() * 30 - 15; // 隨機化
+            
+            setTimeout(monitorLoop, Math.max(nextInterval, 60) * 1000);
+            
+        } catch (error) {
+            console.error('❌ [Instagram] 監控循環錯誤:', error.message);
+            setTimeout(monitorLoop, 120000); // 錯誤時等待2分鐘
         }
-        
-    } catch (error) {
-        console.error('❌ [Instagram] 通知發送失敗:', error.message);
     }
+    
+    monitorLoop();
 }
 
-// Instagram電話通知
-async function makeInstagramPhoneCall() {
-    try {
-        const apiUrl = new URL('https://pushcall.me/api/call');
-        apiUrl.searchParams.append('api_key', config.PUSHCALL_API_KEY);
-        apiUrl.searchParams.append('from', config.PUSHCALL_FROM || '1');
-        apiUrl.searchParams.append('to', config.PUSHCALL_TO.replace('+', ''));
-        
-        const response = await axios.get(apiUrl.toString(), { timeout: 30000 });
-        
-        if (response.status === 200) {
-            console.log('✅ [Instagram] 電話通知撥打成功');
-        }
-    } catch (error) {
-        console.error('❌ [Instagram] 電話通知失敗:', error.message);
-    }
-}
-
-// === Discord Bot 事件處理（保持原邏輯） ===
+// === Discord 事件處理 ===
 client.once('ready', () => {
+    unifiedState.botReady = true;
     console.log(`✅ Discord Bot 已上線: ${client.user.tag}`);
-    console.log(`🏠 已加入 ${client.guilds.cache.size} 個伺服器`);
     console.log(`📺 Instagram監控目標: @${config.TARGET_USERNAME}`);
     console.log(`📋 Discord頻道監控: ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道`);
-    console.log(`🔑 使用 ${Object.keys(stats.apiUsage).length} 個 PushCall API 帳號`);
     
-    // 設定 Bot 狀態
-    const totalChannels = Object.keys(config.CHANNEL_CONFIGS).length;
-    client.user.setActivity(`監聽 ${totalChannels} 個頻道 + Instagram`, { type: 'WATCHING' });
+    // 發送啟動通知
+    sendNotification(`🚀 **統一直播監控機器人已啟動**
+
+**Instagram監控:** @${config.TARGET_USERNAME}
+**Discord頻道監控:** ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道
+**電話通知:** ${config.PUSHCALL_API_KEY ? '✅ 已配置' : '❌ 未配置'}
+
+📋 **可用命令:**
+\`!ig-start\` - 開始Instagram監控
+\`!ig-stop\` - 停止Instagram監控
+\`!ig-status\` - Instagram監控狀態
+\`!ig-check\` - 手動檢查Instagram
+\`!status\` - 完整系統狀態
+\`!help\` - 顯示幫助
+
+🔄 準備開始監控...`, 'info', 'System');
     
     // 自動開始Instagram監控
     startInstagramMonitoring();
-    
-    console.log('⏰ 開始多功能監聽...');
 });
 
-// 監聽所有訊息（保持原邏輯）
+// Discord消息監聽 (Discord頻道監控)
 client.on('messageCreate', async (message) => {
     try {
-        // 統計總處理的訊息數
-        stats.totalMessagesProcessed++;
+        // 統計
+        unifiedState.discord.totalMessagesProcessed++;
         
-        // 忽略自己的訊息
-        if (message.author.bot && message.author.id === client.user.id) {
-            return;
-        }
+        // 忽略自己的消息
+        if (message.author.bot && message.author.id === client.user.id) return;
         
         // Discord命令處理
         if (message.content.startsWith('!')) {
@@ -334,21 +486,17 @@ client.on('messageCreate', async (message) => {
             return;
         }
         
-        // 檢查是否為我們監聽的頻道
+        // Discord頻道監控
         const channelId = message.channel.id;
-        if (!config.CHANNEL_CONFIGS[channelId]) {
-            return; // 不是我們監聽的頻道，忽略
-        }
-        
-        // 更新頻道統計
-        stats.channelStats[channelId].messagesProcessed++;
+        if (!config.CHANNEL_CONFIGS[channelId]) return;
         
         const channelConfig = config.CHANNEL_CONFIGS[channelId];
         const messageContent = message.content.toLowerCase();
         
-        console.log(`📨 [頻道 ${channelConfig.name || channelId}] 收到訊息: ${message.content.substring(0, 100)}...`);
+        // 更新統計
+        unifiedState.discord.channelStats[channelId].messagesProcessed++;
         
-        // 檢查是否包含任何關鍵字
+        // 檢查關鍵字
         let foundKeyword = null;
         for (const keyword of channelConfig.keywords) {
             if (messageContent.includes(keyword.toLowerCase())) {
@@ -358,444 +506,515 @@ client.on('messageCreate', async (message) => {
         }
         
         if (foundKeyword) {
-            // 更新統計
-            stats.channelStats[channelId].keywordsDetected++;
-            stats.channelStats[channelId].lastDetection = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+            unifiedState.discord.channelStats[channelId].keywordsDetected++;
+            unifiedState.discord.channelStats[channelId].lastDetection = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
             
-            // 記錄最近偵測
+            console.log(`🔔 [Discord頻道監控] 檢測到關鍵字: "${foundKeyword}"`);
+            
+            // 記錄檢測
             const detection = {
                 時間: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
                 頻道: channelConfig.name || channelId,
-                頻道ID: channelId,
                 關鍵字: foundKeyword,
                 訊息: message.content.substring(0, 150),
-                作者: message.author.username,
-                使用API: channelConfig.api_key.substring(0, 8) + '****',
-                通知號碼: channelConfig.phone_number
+                作者: message.author.username
             };
-            stats.lastDetections.push(detection);
+            unifiedState.discord.lastDetections.push(detection);
             
-            // 只保留最近50次記錄
-            if (stats.lastDetections.length > 50) {
-                stats.lastDetections = stats.lastDetections.slice(-50);
+            
+            
+            // 電話通知 (如果配置了專用API)
+            if (channelConfig.api_key && channelConfig.phone_number) {
+                await callChannelSpecificAPI(channelId, channelConfig, foundKeyword, message.content);
             }
-            
-            console.log(`🔔 [${channelConfig.name || channelId}] 偵測到關鍵字: "${foundKeyword}"`);
-            console.log(`📄 完整訊息: ${message.content}`);
-            console.log(`🔑 將使用 API: ${channelConfig.api_key.substring(0, 8)}****`);
-            console.log(`📞 通知號碼: ${channelConfig.phone_number}`);
-            
-            // 提取 YouTube 連結 (選用)
-            const youtubeMatch = message.content.match(/https:\/\/www\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]+)/);
-            const youtubeUrl = youtubeMatch ? youtubeMatch[0] : '';
-            
-            if (youtubeUrl) {
-                console.log(`🎬 YouTube 連結: ${youtubeUrl}`);
-            }
-            
-            // 呼叫對應的 PushCall API（保持原邏輯）
-            await callPushCall(channelId, channelConfig, foundKeyword, message.content, youtubeUrl);
         }
+        
     } catch (error) {
-        console.error('❌ 處理訊息時發生錯誤:', error.message);
+        console.error('❌ [Discord消息處理] 錯誤:', error.message);
     }
 });
 
-// Discord命令處理（新增Instagram命令）
+// Discord命令處理
 async function handleDiscordCommands(message) {
     const cmd = message.content.toLowerCase();
     
-    // Instagram監控命令
     if (cmd === '!ig-start') {
-        if (stats.instagram.isMonitoring) {
+        if (unifiedState.instagram.isMonitoring) {
             await message.reply('⚠️ Instagram監控已在運行中!');
         } else {
-            await message.reply('🚀 開始Instagram 3帳號輪換監控...');
-            await startInstagramMonitoring();
+            await message.reply('🚀 開始Instagram監控...');
+            startInstagramMonitoring();
         }
     }
+    
     else if (cmd === '!ig-stop') {
-        if (instagramMonitor) {
-            instagramMonitor.stopMonitoring();
-            stats.instagram.isMonitoring = false;
-            await message.reply('⏹️ Instagram監控已停止');
-        } else {
-            await message.reply('⚠️ Instagram監控未運行');
-        }
+        unifiedState.instagram.isMonitoring = false;
+        await message.reply('⏹️ Instagram監控已停止');
     }
+    
     else if (cmd === '!ig-status') {
-        if (instagramMonitor) {
-            const monitorStatus = instagramMonitor.getStatus();
-            const runtime = stats.instagram.monitorStartTime ? 
-                Math.round((Date.now() - stats.instagram.monitorStartTime) / 60000) : 0;
-            
-            const statusMsg = `📊 **Instagram監控狀態**
+        const runtime = Math.round((Date.now() - unifiedState.startTime) / 60000);
+        const successRate = unifiedState.instagram.totalRequests > 0 ? 
+            Math.round((unifiedState.instagram.successfulRequests / unifiedState.instagram.totalRequests) * 100) : 0;
+        
+        const statusMsg = `📊 **Instagram監控狀態**
 
 **目標:** @${config.TARGET_USERNAME}
-**當前狀態:** ${stats.instagram.isLiveNow ? '🔴 直播中' : '⚫ 離線'}
-**監控模式:** 3帳號輪換 + 時間段智能
-**運行狀態:** ${monitorStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
+**當前狀態:** ${unifiedState.instagram.isLiveNow ? '🔴 直播中' : '⚫ 離線'}
+**監控:** ${unifiedState.instagram.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
+**帳號狀態:** ${unifiedState.instagram.accountStatus}
 
-**帳號統計:**
-• 總帳號數: ${monitorStatus.totalAccounts}
-• 可用帳號: ${monitorStatus.availableAccounts}
-• 今日請求: ${monitorStatus.dailyRequests}/${monitorStatus.maxDailyRequests}
+**統計:**
+⏱️ 運行時間: ${runtime} 分鐘
+📡 總請求數: ${unifiedState.instagram.totalRequests}
+✅ 成功率: ${successRate}%
+⚠️ 連續錯誤: ${unifiedState.instagram.consecutiveErrors}
+🕐 最後檢查: ${unifiedState.instagram.lastCheck || '尚未檢查'}
 
-**運行時間:** ${runtime} 分鐘
-**最後檢查:** ${stats.instagram.lastCheck || '尚未檢查'}`;
+**用戶ID:** ${unifiedState.instagram.targetUserId || '尚未獲取'}`;
 
-            await message.reply(statusMsg);
-        } else {
-            await message.reply('❌ Instagram監控未初始化');
-        }
+        await message.reply(statusMsg);
     }
+    
     else if (cmd === '!ig-check') {
-        if (instagramMonitor) {
-            await message.reply('🔍 執行手動Instagram檢查...');
-            try {
-                const isLive = await instagramMonitor.checkLive(config.TARGET_USERNAME);
-                const status = isLive ? '🔴 發現直播' : '⚫ 無直播';
-                await message.reply(`📊 **手動檢查結果:** ${status}`);
-            } catch (error) {
-                await message.reply(`❌ **檢查失敗:** ${error.message}`);
-            }
-        } else {
-            await message.reply('❌ Instagram監控未運行');
-        }
+        await message.reply('🔍 執行手動Instagram檢查...');
+        const isLive = await checkInstagramLive();
+        const status = isLive ? '🔴 發現直播' : '⚫ 無直播';
+        await message.reply(`📊 **手動檢查結果:** ${status}\n帳號狀態: ${unifiedState.instagram.accountStatus}`);
     }
-    else if (cmd === '!cookie-status') {
-        if (instagramMonitor) {
-            const cookieStatus = instagramMonitor.getStatus().cookieStatus;
-            const statusMsg = `🍪 **Cookie狀態報告**
-
-**總帳號數:** ${cookieStatus.total}
-**健康帳號:** ${cookieStatus.active} ✅
-**警告帳號:** ${cookieStatus.warning} ⚠️
-**過期帳號:** ${cookieStatus.expired} ❌
-**未知狀態:** ${cookieStatus.unknown} ❓
-
-**整體狀態:** ${getCookieStatusEmoji(cookieStatus.overallStatus)} ${cookieStatus.overallStatus}
-
-${cookieStatus.overallStatus === 'some_expired' || cookieStatus.overallStatus === 'all_expired' ? 
-'🚨 **需要更新Cookie！**' : 
-cookieStatus.overallStatus === 'warning' ? 
-'⚠️ **建議檢查Cookie狀態**' : 
-'✅ **Cookie狀態正常**'}`;
-
-            await message.reply(statusMsg);
-        } else {
-            await message.reply('❌ Instagram監控未運行');
-        }
-    }
-    else if (cmd.startsWith('!cookie-check ')) {
-        if (instagramMonitor) {
-            const accountId = cmd.replace('!cookie-check ', '').trim();
-            await message.reply(`🔍 檢查帳號 ${accountId} 的Cookie狀態...`);
-            
-            try {
-                const result = await instagramMonitor.checkAccountCookie(accountId);
-                const emoji = result.status === 'active' ? '✅' : 
-                             result.status === 'expired' ? '❌' : 
-                             result.status === 'warning' ? '⚠️' : '❓';
-                
-                await message.reply(`${emoji} **${accountId} Cookie檢查結果**
-
-**狀態:** ${result.status}
-**訊息:** ${result.message}
-**檢查時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`);
-            } catch (error) {
-                await message.reply(`❌ **檢查失敗:** ${error.message}`);
-            }
-        } else {
-            await message.reply('❌ Instagram監控未運行');
-        }
-    }
+    
     else if (cmd === '!status') {
-        const runtime = Math.round((Date.now() - stats.startTime) / 60000);
-        const igRuntime = stats.instagram.monitorStartTime ? 
-            Math.round((Date.now() - stats.instagram.monitorStartTime) / 60000) : 0;
+        const runtime = Math.round((Date.now() - unifiedState.startTime) / 60000);
         
         const statusMsg = `📊 **統一監控系統狀態**
 
 **系統運行時間:** ${runtime} 分鐘
-**Bot狀態:** ✅ 在線
+**Bot狀態:** ${unifiedState.botReady ? '✅ 在線' : '❌ 離線'}
 
 **Instagram監控:**
 • 目標: @${config.TARGET_USERNAME}
-• 狀態: ${stats.instagram.isLiveNow ? '🔴 直播中' : '⚫ 離線'}
-• 監控: ${stats.instagram.isMonitoring ? `✅ 運行中 (${igRuntime}分鐘)` : '❌ 停止'}
-• 模式: 3帳號輪換 + 智能時間段
+• 狀態: ${unifiedState.instagram.isLiveNow ? '🔴 直播中' : '⚫ 離線'}
+• 監控: ${unifiedState.instagram.isMonitoring ? '✅ 運行中' : '❌ 停止'}
+• 成功率: ${unifiedState.instagram.totalRequests > 0 ? Math.round((unifiedState.instagram.successfulRequests / unifiedState.instagram.totalRequests) * 100) : 0}%
 
 **Discord頻道監控:**
 • 監控頻道數: ${Object.keys(config.CHANNEL_CONFIGS).length}
-• 處理訊息數: ${stats.totalMessagesProcessed}
-• 檢測次數: ${stats.lastDetections.length}
+• 處理訊息數: ${unifiedState.discord.totalMessagesProcessed}
+• 檢測次數: ${unifiedState.discord.lastDetections.length}
 
-**API統計:**
-• PushCall帳號: ${Object.keys(stats.apiUsage).length}`;
+**通知統計:**
+• Discord訊息: ${unifiedState.notifications.discordMessages}
+• 電話通知: ${unifiedState.notifications.phoneCallsMade}
+• 最後通知: ${unifiedState.notifications.lastNotification || '無'}`;
 
         await message.reply(statusMsg);
     }
+    
     else if (cmd === '!help') {
-        await message.reply(`🔍 **升級版直播監控機器人**
+        await message.reply(`🔍 **統一直播監控機器人**
 
 **Instagram監控命令:**
-\`!ig-start\` - 開始Instagram 3帳號輪換監控
+\`!ig-start\` - 開始Instagram監控
 \`!ig-stop\` - 停止Instagram監控
-\`!ig-status\` - Instagram監控詳細狀態
+\`!ig-status\` - Instagram監控狀態
 \`!ig-check\` - 手動檢查Instagram
-
-**Cookie管理命令:**
-\`!cookie-status\` - 查看所有帳號Cookie狀態
-\`!cookie-check [帳號ID]\` - 檢查特定帳號Cookie
-例如: \`!cookie-check account_1\`
 
 **系統命令:**
 \`!status\` - 完整系統狀態
 \`!help\` - 顯示此幫助
 
-**新功能:**
-🔄 3帳號智能輪換 (永不停止)
-🍪 自動Cookie狀態監控 + 提醒
-🕐 時間段優化 (深夜減少請求)
-🛡️ 防ban保護機制
-⚡ 90秒-10分鐘動態間隔
-📞 多API電話通知系統
-🚨 Cookie過期緊急通知`);
+**功能:**
+🔒 Instagram安全監控 (90-180s隨機間隔)
+📺 Discord頻道關鍵字監控
+📞 電話通知 (如果配置)
+🛡️ 自動錯誤處理與恢復`);
     }
 }
 
-// Cookie狀態表情符號
-function getCookieStatusEmoji(status) {
-    switch (status) {
-        case 'healthy': return '✅';
-        case 'warning': return '⚠️';
-        case 'some_expired': return '🔶';
-        case 'all_expired': return '🚨';
-        default: return '❓';
-    }
-}
-
-// 呼叫 PushCall API 函數（保持原邏輯）
-async function callPushCall(channelId, channelConfig, keyword, originalMessage, youtubeUrl = '') {
+// 頻道專用API呼叫
+// 頻道專用API呼叫
+async function callChannelSpecificAPI(channelId, channelConfig, keyword, originalMessage) {
+    if (!channelConfig.api_key || !channelConfig.phone_number) return;
+    
     const apiKeyShort = channelConfig.api_key.substring(0, 8);
     
     try {
-        console.log(`📞 [${channelConfig.name || channelId}] 準備撥打電話通知...`);
-        console.log(`🔑 使用 API Key: ${apiKeyShort}****`);
-        console.log(`📱 目標號碼: ${channelConfig.phone_number}`);
-        console.log(`💬 通知內容: ${channelConfig.message}`);
-        console.log(`🔍 觸發關鍵字: ${keyword}`);
-        
-        // PushCall API 使用 GET 請求
         const apiUrl = new URL('https://pushcall.me/api/call');
         apiUrl.searchParams.append('api_key', channelConfig.api_key);
-        apiUrl.searchParams.append('from', channelConfig.caller_id || '1');
+        apiUrl.searchParams.append('from', channelConfig.caller_id || '1'); // 修改這行
         apiUrl.searchParams.append('to', channelConfig.phone_number.replace('+', ''));
         
-        console.log(`🔗 [${channelConfig.name || channelId}] API URL: ${apiUrl.toString().replace(channelConfig.api_key, '****')}`);
+        unifiedState.discord.apiUsage[apiKeyShort].totalCalls++;
+        unifiedState.discord.apiUsage[apiKeyShort].lastUsed = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
         
-        // 更新API使用統計
-        stats.apiUsage[apiKeyShort].totalCalls++;
-        stats.apiUsage[apiKeyShort].lastUsed = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
-        
-        // 發送 GET 請求
-        const response = await axios.get(apiUrl.toString(), {
-            headers: {
-                'User-Agent': 'Discord-Live-Bot-Enhanced/2.0'
-            },
-            timeout: 30000 // 30秒超時
-        });
+        const response = await axios.get(apiUrl.toString(), { timeout: 30000 });
         
         if (response.status === 200) {
-            // 成功
-            stats.channelStats[channelId].callsMade++;
-            stats.channelStats[channelId].lastCallSuccess = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
-            stats.apiUsage[apiKeyShort].successCalls++;
+            unifiedState.discord.channelStats[channelId].callsMade++;
+            unifiedState.discord.channelStats[channelId].lastCallSuccess = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+            unifiedState.discord.apiUsage[apiKeyShort].successCalls++;
+            unifiedState.notifications.phoneCallsMade++;
             
-            console.log(`✅ [${channelConfig.name || channelId}] 電話通知撥打成功！`);
-            console.log(`📊 API 回應:`, JSON.stringify(response.data, null, 2));
-            console.log(`📈 API ${apiKeyShort}**** 使用統計: ${stats.apiUsage[apiKeyShort].successCalls}/${stats.apiUsage[apiKeyShort].totalCalls} 成功`);
-        } else {
-            // 異常狀態
-            stats.apiUsage[apiKeyShort].failedCalls++;
-            stats.channelStats[channelId].lastCallError = `狀態碼 ${response.status}: ${new Date().toLocaleString('ja-JP')}`;
-            
-            console.log(`⚠️ [${channelConfig.name || channelId}] API 回應狀態異常:`, response.status);
-            console.log('📋 回應內容:', response.data);
+            console.log(`✅ [頻道專用API] 電話通知成功: ${channelConfig.name || channelId}`);
         }
-        
     } catch (error) {
-        // 錯誤處理
-        stats.apiUsage[apiKeyShort].failedCalls++;
-        stats.channelStats[channelId].lastCallError = `${error.message}: ${new Date().toLocaleString('ja-JP')}`;
+        unifiedState.discord.apiUsage[apiKeyShort].failedCalls++;
+        unifiedState.discord.channelStats[channelId].lastCallError = `${error.message}: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`;
         
-        console.error(`❌ [${channelConfig.name || channelId}] PushCall API 呼叫失敗:`);
-        console.error(`🔑 API Key: ${apiKeyShort}****`);
-        console.error('🔍 錯誤訊息:', error.message);
-        
-        if (error.response) {
-            console.error('📋 API 錯誤回應:', error.response.status);
-            console.error('📄 錯誤詳情:', error.response.data);
-        } else if (error.request) {
-            console.error('🌐 網路請求失敗，請檢查網路連線');
-        }
+        console.error(`❌ [頻道專用API] 電話通知失敗: ${channelConfig.name || channelId}`);
+        console.error('錯誤:', error.message);
     }
 }
 
-// === 健康檢查端點（更新版） ===
+// === Web 狀態面板 ===
+app.use(express.json());
+
+// 主狀態頁面
 app.get('/', (req, res) => {
-    const uptime = Math.floor((Date.now() - stats.startTime) / 1000);
-    const channelStatsFormatted = {};
+    const uptime = Math.floor((Date.now() - unifiedState.startTime) / 1000);
+    const instagramSuccessRate = unifiedState.instagram.totalRequests > 0 ? 
+        Math.round((unifiedState.instagram.successfulRequests / unifiedState.instagram.totalRequests) * 100) : 0;
     
-    // 格式化頻道統計（保持原邏輯）
-    for (const [channelId, channelStat] of Object.entries(stats.channelStats)) {
-        const channelConfig = config.CHANNEL_CONFIGS[channelId];
-        channelStatsFormatted[channelId] = {
-            頻道資訊: {
-                名稱: channelConfig.name || '未命名',
-                關鍵字: channelConfig.keywords,
-                通知訊息: channelConfig.message,
-                API帳號: channelConfig.api_key.substring(0, 8) + '****',
-                通知號碼: channelConfig.phone_number
-            },
-            統計: {
-                訊息處理數: channelStat.messagesProcessed,
-                關鍵字偵測數: channelStat.keywordsDetected,
-                通話撥打數: channelStat.callsMade,
-                最後偵測時間: channelStat.lastDetection || '尚未偵測到',
-                最後成功通話: channelStat.lastCallSuccess || '尚未成功',
-                最後錯誤: channelStat.lastCallError || '無錯誤'
-            }
-        };
-    }
+    const html = `
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>統一直播監控機器人</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header {
+            text-align: center;
+            padding: 30px 0;
+            border-bottom: 2px solid #333;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            font-size: 2.5em;
+            background: linear-gradient(45deg, #4CAF50, #2196F3);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+        .header p { color: #888; font-size: 1.1em; }
+        
+        .main-status {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .status-card {
+            background: rgba(42, 42, 42, 0.8);
+            border-radius: 15px;
+            padding: 25px;
+            border-left: 5px solid #4CAF50;
+            backdrop-filter: blur(10px);
+            transition: transform 0.3s ease;
+        }
+        .status-card:hover { transform: translateY(-5px); }
+        .status-card.warning { border-left-color: #ff9800; }
+        .status-card.error { border-left-color: #f44336; }
+        .status-card.live { border-left-color: #e91e63; }
+        
+        .card-title {
+            font-size: 1.3em;
+            font-weight: bold;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .status-value {
+            font-weight: bold;
+            color: #4CAF50;
+        }
+        
+        .live-indicator {
+            text-align: center;
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            font-size: 1.8em;
+            font-weight: bold;
+        }
+        .live-yes {
+            background: linear-gradient(45deg, #e91e63, #f44336);
+            animation: pulse 2s infinite;
+        }
+        .live-no { background: rgba(66, 66, 66, 0.8); }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.8; transform: scale(1.05); }
+        }
+        
+        .section {
+            background: rgba(42, 42, 42, 0.6);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            backdrop-filter: blur(10px);
+        }
+        .section-title {
+            font-size: 1.5em;
+            font-weight: bold;
+            margin-bottom: 20px;
+            color: #4CAF50;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        .stat-box {
+            background: rgba(26, 26, 46, 0.8);
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .stat-number {
+            font-size: 2em;
+            font-weight: bold;
+            color: #2196F3;
+        }
+        .stat-label { color: #888; font-size: 0.9em; }
+        
+        .refresh-note {
+            text-align: center;
+            color: #666;
+            margin-top: 30px;
+            font-size: 0.9em;
+        }
+        
+        .commands {
+            background: rgba(26, 26, 46, 0.8);
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        .command {
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin: 8px 0;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+    </style>
+    <script>
+        // Auto refresh every 30 seconds
+        setTimeout(() => location.reload(), 30000);
+    </script>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 統一直播監控機器人</h1>
+            <p>Instagram監控 + Discord頻道監控 + 電話通知</p>
+        </div>
+
+        <div class="live-indicator ${unifiedState.instagram.isLiveNow ? 'live-yes' : 'live-no'}">
+            ${unifiedState.instagram.isLiveNow ? '🔴 @' + config.TARGET_USERNAME + ' 正在直播!' : '⚫ @' + config.TARGET_USERNAME + ' 離線中'}
+        </div>
+
+        <div class="main-status">
+            <div class="status-card ${unifiedState.botReady ? '' : 'error'}">
+                <div class="card-title">🤖 Bot狀態</div>
+                <div class="status-item">
+                    <span>連線狀態:</span>
+                    <span class="status-value">${unifiedState.botReady ? '✅ 在線' : '❌ 離線'}</span>
+                </div>
+                <div class="status-item">
+                    <span>運行時間:</span>
+                    <span class="status-value">${Math.floor(uptime / 3600)}h ${Math.floor((uptime % 3600) / 60)}m</span>
+                </div>
+                <div class="status-item">
+                    <span>伺服器數:</span>
+                    <span class="status-value">${client.guilds?.cache.size || 0}</span>
+                </div>
+            </div>
+
+            <div class="status-card ${unifiedState.instagram.isMonitoring ? '' : 'warning'}">
+                <div class="card-title">📺 Instagram監控</div>
+                <div class="status-item">
+                    <span>目標用戶:</span>
+                    <span class="status-value">@${config.TARGET_USERNAME}</span>
+                </div>
+                <div class="status-item">
+                    <span>監控狀態:</span>
+                    <span class="status-value">${unifiedState.instagram.isMonitoring ? '✅ 運行中' : '❌ 已停止'}</span>
+                </div>
+                <div class="status-item">
+                    <span>帳號狀態:</span>
+                    <span class="status-value">${unifiedState.instagram.accountStatus}</span>
+                </div>
+                <div class="status-item">
+                    <span>成功率:</span>
+                    <span class="status-value">${instagramSuccessRate}%</span>
+                </div>
+            </div>
+
+            <div class="status-card">
+                <div class="card-title">📋 Discord監控</div>
+                <div class="status-item">
+                    <span>監控頻道:</span>
+                    <span class="status-value">${Object.keys(config.CHANNEL_CONFIGS).length}</span>
+                </div>
+                <div class="status-item">
+                    <span>處理訊息:</span>
+                    <span class="status-value">${unifiedState.discord.totalMessagesProcessed}</span>
+                </div>
+                <div class="status-item">
+                    <span>檢測次數:</span>
+                    <span class="status-value">${unifiedState.discord.lastDetections.length}</span>
+                </div>
+            </div>
+
+            <div class="status-card">
+                <div class="card-title">📞 通知統計</div>
+                <div class="status-item">
+                    <span>Discord訊息:</span>
+                    <span class="status-value">${unifiedState.notifications.discordMessages}</span>
+                </div>
+                <div class="status-item">
+                    <span>電話通知:</span>
+                    <span class="status-value">${unifiedState.notifications.phoneCallsMade}</span>
+                </div>
+                <div class="status-item">
+                    <span>最後通知:</span>
+                    <span class="status-value">${unifiedState.notifications.lastNotification || '無'}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">📊 詳細統計</div>
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="stat-number">${unifiedState.instagram.totalRequests}</div>
+                    <div class="stat-label">Instagram 請求總數</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">${unifiedState.instagram.consecutiveErrors}</div>
+                    <div class="stat-label">連續錯誤次數</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">${Object.keys(config.CHANNEL_CONFIGS).length}</div>
+                    <div class="stat-label">Discord 頻道數</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">${Object.keys(unifiedState.discord.apiUsage).length}</div>
+                    <div class="stat-label">PushCall API 帳號</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">💬 Discord 命令</div>
+            <div class="commands">
+                <div class="command">!ig-start - 開始Instagram監控</div>
+                <div class="command">!ig-stop - 停止Instagram監控</div>
+                <div class="command">!ig-status - Instagram監控狀態</div>
+                <div class="command">!ig-check - 手動檢查Instagram</div>
+                <div class="command">!status - 完整系統狀態</div>
+                <div class="command">!help - 顯示幫助</div>
+            </div>
+        </div>
+
+        <div class="refresh-note">
+            頁面每30秒自動刷新 | 最後更新: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
+        </div>
+    </div>
+</body>
+</html>`;
     
-    // 格式化API使用統計（保持原邏輯）
-    const apiUsageFormatted = {};
-    for (const [apiKey, usage] of Object.entries(stats.apiUsage)) {
-        apiUsageFormatted[apiKey + '****'] = {
-            總通話數: usage.totalCalls,
-            成功數: usage.successCalls,
-            失敗數: usage.failedCalls,
-            成功率: usage.totalCalls > 0 ? `${Math.round(usage.successCalls / usage.totalCalls * 100)}%` : 'N/A',
-            最後使用: usage.lastUsed || '尚未使用',
-            關聯電話: Array.from(usage.phoneNumbers)
-        };
-    }
-    
-    // Instagram監控狀態
-    const instagramStatus = instagramMonitor ? instagramMonitor.getStatus() : {
-        isMonitoring: false,
-        totalAccounts: 0,
-        availableAccounts: 0,
-        dailyRequests: 0,
-        maxDailyRequests: 0
-    };
+    res.send(html);
+});
+
+// API 端點
+app.get('/api/status', (req, res) => {
+    const uptime = Math.floor((Date.now() - unifiedState.startTime) / 1000);
     
     res.json({
-        status: '升級版 Instagram + Discord Live Alert Bot 運行中 🤖📞📺',
-        uptime: `${Math.floor(uptime / 3600)}小時 ${Math.floor((uptime % 3600) / 60)}分鐘`,
-        bot_status: client.user ? `✅ ${client.user.tag}` : '❌ 未連線',
-        connected_guilds: client.guilds.cache.size,
-        
-        // Instagram監控狀態 (包含Cookie信息)
-        instagram_monitoring: {
-            target_username: config.TARGET_USERNAME,
-            is_live: stats.instagram.isLiveNow,
-            is_monitoring: stats.instagram.isMonitoring,
-            account_rotation: `${instagramStatus.availableAccounts}/${instagramStatus.totalAccounts} 帳號可用`,
-            daily_requests: `${instagramStatus.dailyRequests}/${instagramStatus.maxDailyRequests}`,
-            monitoring_mode: '3帳號輪換 + 時間段智能 + Cookie監控',
-            cookie_status: instagramStatus.cookieStatus,
-            last_check: stats.instagram.lastCheck
+        system: {
+            uptime: uptime,
+            bot_ready: unifiedState.botReady,
+            start_time: unifiedState.startTime
         },
-        
-        // Discord頻道監控（保持原邏輯）
-        discord_monitoring: {
+        instagram: {
+            target: config.TARGET_USERNAME,
+            is_live: unifiedState.instagram.isLiveNow,
+            is_monitoring: unifiedState.instagram.isMonitoring,
+            account_status: unifiedState.instagram.accountStatus,
+            total_requests: unifiedState.instagram.totalRequests,
+            successful_requests: unifiedState.instagram.successfulRequests,
+            success_rate: unifiedState.instagram.totalRequests > 0 ? 
+                Math.round((unifiedState.instagram.successfulRequests / unifiedState.instagram.totalRequests) * 100) : 0,
+            consecutive_errors: unifiedState.instagram.consecutiveErrors,
+            last_check: unifiedState.instagram.lastCheck,
+            user_id: unifiedState.instagram.targetUserId
+        },
+        discord: {
             monitoring_channels: Object.keys(config.CHANNEL_CONFIGS).length,
-            total_messages_processed: stats.totalMessagesProcessed,
-            api_accounts: Object.keys(stats.apiUsage).length,
-            channels: channelStatsFormatted,
-            api_usage: apiUsageFormatted,
-            recent_detections: stats.lastDetections.slice(-10)
+            total_messages_processed: unifiedState.discord.totalMessagesProcessed,
+            total_detections: unifiedState.discord.lastDetections.length,
+            channel_stats: unifiedState.discord.channelStats,
+            recent_detections: unifiedState.discord.lastDetections.slice(-10)
         },
-        
+        notifications: {
+            discord_messages: unifiedState.notifications.discordMessages,
+            phone_calls: unifiedState.notifications.phoneCallsMade,
+            last_notification: unifiedState.notifications.lastNotification
+        },
         timestamp: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
     });
 });
 
+// 健康檢查
 app.get('/health', (req, res) => {
-    const instagramStatus = instagramMonitor ? instagramMonitor.getStatus() : {};
-    
-    res.json({ 
-        status: client.user ? 'healthy' : 'unhealthy',
-        bot: client.user?.tag || 'Not ready',
-        instagram_monitoring: stats.instagram.isMonitoring,
-        instagram_accounts: instagramStatus.totalAccounts || 0,
-        discord_channels: Object.keys(config.CHANNEL_CONFIGS).length,
-        apis: Object.keys(stats.apiUsage).length,
-        uptime: Math.floor((Date.now() - stats.startTime) / 1000)
-    });
-});
-
-// API 使用統計端點（保持原邏輯）
-app.get('/api-stats', (req, res) => {
-    const apiStatsDetailed = {};
-    for (const [apiKey, usage] of Object.entries(stats.apiUsage)) {
-        apiStatsDetailed[apiKey + '****'] = {
-            ...usage,
-            phoneNumbers: Array.from(usage.phoneNumbers)
-        };
-    }
-    
-    // 新增Instagram監控統計
-    const instagramStats = instagramMonitor ? instagramMonitor.getStatus() : {};
-    
     res.json({
-        discord_apis: apiStatsDetailed,
-        instagram_monitoring: instagramStats,
-        system_stats: {
-            total_messages_processed: stats.totalMessagesProcessed,
-            instagram_is_live: stats.instagram.isLiveNow,
-            instagram_monitoring: stats.instagram.isMonitoring
-        }
+        status: unifiedState.botReady ? 'healthy' : 'unhealthy',
+        bot: client.user?.tag || 'Not ready',
+        instagram_monitoring: unifiedState.instagram.isMonitoring,
+        discord_channels: Object.keys(config.CHANNEL_CONFIGS).length,
+        uptime: Math.floor((Date.now() - unifiedState.startTime) / 1000)
     });
 });
 
-// Instagram監控統計端點（新增）
-app.get('/instagram-stats', (req, res) => {
-    if (instagramMonitor) {
-        res.json(instagramMonitor.getStatus());
-    } else {
-        res.json({ error: 'Instagram monitor not initialized' });
-    }
-});
-
-// 啟動 Express 伺服器
+// 啟動Express服務器
 app.listen(PORT, () => {
-    console.log(`🌐 HTTP 伺服器運行在 port ${PORT}`);
+    console.log(`🌐 HTTP伺服器運行在 port ${PORT}`);
 });
 
-// === Discord 客戶端錯誤處理（保持原邏輯） ===
+// === 錯誤處理 ===
 client.on('error', (error) => {
-    console.error('❌ Discord 客戶端錯誤:', error.message);
+    console.error('❌ Discord客戶端錯誤:', error.message);
 });
 
 client.on('warn', (warning) => {
-    console.warn('⚠️ Discord 警告:', warning);
+    console.warn('⚠️ Discord警告:', warning);
 });
 
-client.on('disconnect', () => {
-    console.log('🔌 Discord 連線中斷，嘗試重新連線...');
-});
-
-client.on('reconnecting', () => {
-    console.log('🔄 正在重新連線到 Discord...');
-});
-
-// 程序錯誤處理（保持原邏輯）
 process.on('unhandledRejection', (error) => {
-    console.error('❌ 未處理的 Promise 錯誤:', error);
+    console.error('❌ 未處理的Promise錯誤:', error);
 });
 
 process.on('uncaughtException', (error) => {
@@ -803,35 +1022,32 @@ process.on('uncaughtException', (error) => {
     process.exit(1);
 });
 
-// 優雅關閉處理（更新版）
-process.on('SIGINT', () => {
+// 優雅關閉
+process.on('SIGINT', async () => {
     console.log('🛑 收到終止信號，正在安全關閉...');
+    unifiedState.instagram.isMonitoring = false;
     
-    // 停止Instagram監控
-    if (instagramMonitor) {
-        instagramMonitor.stopMonitoring();
+    if (unifiedState.botReady) {
+        await sendNotification('📴 統一監控機器人正在關閉...', 'info', 'System');
     }
     
     client.destroy();
     process.exit(0);
 });
 
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
     console.log('🛑 收到終止信號，正在安全關閉...');
-    
-    // 停止Instagram監控
-    if (instagramMonitor) {
-        instagramMonitor.stopMonitoring();
-    }
-    
+    unifiedState.instagram.isMonitoring = false;
     client.destroy();
     process.exit(0);
 });
 
-// 啟動 Discord Bot
-console.log('🔐 正在登入 Discord...');
+
+
+// === 啟動 Discord Bot ===
+console.log('🔐 正在登入Discord...');
 client.login(config.DISCORD_TOKEN).catch(error => {
-    console.error('❌ Discord Bot 登入失敗:', error.message);
-    console.error('🔑 請檢查 DISCORD_TOKEN 是否正確');
+    console.error('❌ Discord Bot登入失敗:', error.message);
+    console.error('🔑 請檢查DISCORD_TOKEN是否正確');
     process.exit(1);
 });
