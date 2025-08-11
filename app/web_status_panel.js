@@ -193,6 +193,30 @@ class WebStatusPanel {
     generateStatusHTML() {
         const uptime = Math.floor((Date.now() - this.unifiedState.startTime) / 1000);
         const igStatus = this.getInstagramStatus(); // 使用安全的方法
+
+        <div class="status-card ${igStatus.isMonitoring ? '' : 'warning'}">
+                <div class="card-title">📺 Instagram監控</div>
+                <div class="status-item">
+                    <span>目標用戶:</span>
+                    <span class="status-value">@${this.config.TARGET_USERNAME}</span>
+                </div>
+                <div class="status-item">
+                    <span>監控狀態:</span>
+                    <span class="status-value">${igStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}</span>
+                </div>
+                <div class="status-item">
+                    <span>可用帳號:</span>
+                    <span class="status-value">${igStatus.availableAccounts}/${igStatus.totalAccounts}</span>
+                </div>
+                <div class="status-item">
+                    <span>已停用帳號:</span>
+                    <span class="status-value ${(igStatus.disabledAccounts || 0) > 0 ? 'error' : ''}">${igStatus.disabledAccounts || 0}</span>
+                </div>
+                <div class="status-item">
+                    <span>今日請求:</span>
+                    <span class="status-value">${igStatus.dailyRequests}/${igStatus.maxDailyRequests}</span>
+                </div>
+            </div>
         
         return `
 <!DOCTYPE html>
@@ -371,27 +395,28 @@ class WebStatusPanel {
             text-align: center;
         }
 
-        .cookie-summary {
-            margin-bottom: 20px;
-        }
-        
-        .cookie-accounts {
+        .account-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
             gap: 15px;
             margin-top: 20px;
         }
         
-        .cookie-account {
+        .account-card {
             background: rgba(26, 26, 46, 0.8);
             border-radius: 10px;
             padding: 15px;
             border-left: 3px solid #4CAF50;
         }
         
-        .cookie-account.invalid {
+        .account-card.disabled {
             border-left-color: #f44336;
             background: rgba(46, 26, 26, 0.8);
+        }
+        
+        .account-card.cooldown {
+            border-left-color: #ff9800;
+            background: rgba(46, 39, 26, 0.8);
         }
         
         .account-header {
@@ -408,44 +433,24 @@ class WebStatusPanel {
             color: #2196F3;
         }
         
-        .account-status.valid {
-            color: #4CAF50;
+        .account-status {
+            font-size: 0.9em;
         }
         
-        .account-status.invalid {
-            color: #f44336;
-        }
-        
-        .account-details {
+        .account-stats {
             display: flex;
             flex-direction: column;
             gap: 5px;
         }
         
-        .detail-item {
+        .stat-item {
             display: flex;
             justify-content: space-between;
             font-size: 0.9em;
-            padding: 3px 0;
+            padding: 2px 0;
         }
         
-        .detail-item.warning {
-            color: #ff9800;
-        }
-        
-        .detail-item.error {
-            color: #f44336;
-        }
-        
-        .session-id {
-            font-family: 'Courier New', monospace;
-            font-size: 0.8em;
-            background: rgba(0,0,0,0.3);
-            padding: 2px 6px;
-            border-radius: 4px;
-        }
-        
-        .cookie-warning {
+        .account-warning {
             background: rgba(255, 152, 0, 0.2);
             border: 1px solid #ff9800;
             border-radius: 10px;
@@ -454,28 +459,11 @@ class WebStatusPanel {
             color: #ffb74d;
         }
         
-        .cookie-unavailable {
-            text-align: center;
-            color: #888;
-            font-style: italic;
-            padding: 20px;
-        }
-        
-        .stat-box.warning {
-            border-left: 3px solid #ff9800;
-        }
-        
-        .stat-box.error {
-            border-left: 3px solid #f44336;
-        }
-        
-        .stat-box.warning .stat-number {
-            color: #ff9800;
-        }
-        
-        .stat-box.error .stat-number {
+        .status-value.error {
             color: #f44336;
         }
+
+        
     </style>
     <script>
         // Auto refresh every 30 seconds
@@ -584,6 +572,10 @@ class WebStatusPanel {
                     <div class="stat-number">${igStatus.consecutiveErrors || 0}</div>
                     <div class="stat-label">連續錯誤次數</div>
                 </div>
+                <div class="stat-box ${(igStatus.disabledAccounts || 0) > 0 ? 'error' : ''}">
+                    <div class="stat-number">${igStatus.disabledAccounts || 0}</div>
+                    <div class="stat-label">已停用帳號</div>
+                </div>
                 <div class="stat-box">
                     <div class="stat-number">${Object.keys(this.config.CHANNEL_CONFIGS).length}</div>
                     <div class="stat-label">Discord 頻道數</div>
@@ -594,6 +586,47 @@ class WebStatusPanel {
                 </div>
             </div>
         </div>
+
+        ${igStatus.totalAccounts > 0 ? `
+        <div class="section">
+            <div class="section-title">🔐 Instagram 帳號狀態</div>
+            <div class="account-grid">
+                ${igStatus.accountDetails.map(account => {
+                    const successRate = account.successCount + account.errorCount > 0 ? 
+                        Math.round(account.successCount / (account.successCount + account.errorCount) * 100) : 0;
+                    const statusClass = account.isDisabled ? 'disabled' : (account.inCooldown ? 'cooldown' : 'active');
+                    const statusText = account.isDisabled ? '🚫 已停用' : (account.inCooldown ? '❄️ 冷卻中' : '✅ 可用');
+                    
+                    return `
+                    <div class="account-card ${statusClass}">
+                        <div class="account-header">
+                            <span class="account-name">${account.id}</span>
+                            <span class="account-status">${statusText}</span>
+                        </div>
+                        <div class="account-stats">
+                            <div class="stat-item">
+                                <span>成功率:</span>
+                                <span>${successRate}%</span>
+                            </div>
+                            <div class="stat-item">
+                                <span>今日請求:</span>
+                                <span>${account.dailyRequests}</span>
+                            </div>
+                            <div class="stat-item">
+                                <span>最後使用:</span>
+                                <span>${account.lastUsed}</span>
+                            </div>
+                        </div>
+                    </div>`;
+                }).join('')}
+            </div>
+            ${(igStatus.disabledAccounts || 0) > 0 ? `
+            <div class="account-warning">
+                ⚠️ <strong>注意:</strong> 有 ${igStatus.disabledAccounts} 個帳號已被停用，可能是cookies失效。
+                請檢查Discord通知獲取詳細修復指引。
+            </div>
+            ` : ''}
+        </div>` : ''}
 
         ${Object.keys(this.config.CHANNEL_CONFIGS).length > 0 ? `
         <div class="section">
