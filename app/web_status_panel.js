@@ -75,12 +75,15 @@ class WebStatusPanel {
         };
     }
 
+
     // 安全獲取博客監控狀態
     getBlogStatus() {
         try {
-            // 這裡需要從 main.js 傳入 blogMonitor 實例
-            if (this.blogMonitor && typeof this.blogMonitor.getStatus === 'function') {
-                return this.blogMonitor.getStatus();
+            if (this.getBlogMonitor && typeof this.getBlogMonitor === 'function') {
+                const blogMonitor = this.getBlogMonitor();
+                if (blogMonitor && typeof blogMonitor.getStatus === 'function') {
+                    return blogMonitor.getStatus();
+                }
             }
         } catch (error) {
             console.error('❌ [Web面板] 獲取博客狀態失敗:', error.message);

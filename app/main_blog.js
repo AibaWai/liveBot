@@ -195,6 +195,7 @@ const client = new Client({
 // === 簡化Instagram監控系統 === （修復版）
 let instagramMonitor = null;
 
+
 async function startInstagramMonitoring() {
     try {
         if (instagramMonitor && instagramMonitor.isMonitoring) {
