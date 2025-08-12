@@ -90,7 +90,98 @@ class BlogMonitor {
         }
     }
 
-    // 新增：嘗試使用不同方法獲取動態內容
+    // 新增：詳細調試HTML內容
+    async debugHtmlContent() {
+        try {
+            console.log('🔍 [Blog調試] 開始詳細分析HTML內容...');
+            
+            const response = await this.makeRequest(this.blogUrl);
+            
+            if (response.statusCode !== 200) {
+                console.error(`❌ [Blog調試] HTTP錯誤: ${response.statusCode}`);
+                return null;
+            }
+
+            const html = response.data;
+            console.log(`📊 [Blog調試] HTML長度: ${html.length} 字元`);
+            
+            // 檢查是否包含JavaScript動態載入的跡象
+            const hasJavaScript = html.includes('<script');
+            const hasJQuery = html.includes('jquery') || html.includes('jQuery');
+            const hasAjax = html.includes('ajax') || html.includes('AJAX');
+            const hasReact = html.includes('react') || html.includes('React');
+            
+            console.log(`🔧 [Blog調試] JavaScript檢測:`);
+            console.log(`   - 包含script標籤: ${hasJavaScript ? '✅' : '❌'}`);
+            console.log(`   - 使用jQuery: ${hasJQuery ? '✅' : '❌'}`);
+            console.log(`   - 使用Ajax: ${hasAjax ? '✅' : '❌'}`);
+            console.log(`   - 使用React: ${hasReact ? '✅' : '❌'}`);
+            
+            // 尋找可能的動態載入容器
+            const containers = [
+                'js-blog-container',
+                'entry-list',
+                'blog-container',
+                'article-list',
+                'content-container'
+            ];
+            
+            console.log(`🔍 [Blog調試] 檢查容器元素:`);
+            for (const containerId of containers) {
+                const hasContainer = html.includes(containerId);
+                console.log(`   - ${containerId}: ${hasContainer ? '✅ 找到' : '❌ 未找到'}`);
+                
+                if (hasContainer) {
+                    // 提取容器周圍的HTML
+                    const containerRegex = new RegExp(`<[^>]*${containerId}[^>]*>`, 'i');
+                    const match = html.match(containerRegex);
+                    if (match) {
+                        console.log(`   - 容器HTML: ${match[0]}`);
+                    }
+                }
+            }
+            
+            // 檢查是否有API端點或數據載入的跡象
+            console.log(`🔍 [Blog調試] 尋找API端點線索:`);
+            const apiPatterns = [
+                /\/api\/[^"'\s]+/g,
+                /diarkiji_list/g,
+                /blog.*api/gi,
+                /ajax.*url/gi
+            ];
+            
+            for (const pattern of apiPatterns) {
+                const matches = [...html.matchAll(pattern)];
+                if (matches.length > 0) {
+                    console.log(`   - 模式 ${pattern.source}: 找到 ${matches.length} 個匹配`);
+                    matches.slice(0, 3).forEach((match, index) => {
+                        console.log(`     ${index + 1}. ${match[0]}`);
+                    });
+                }
+            }
+            
+            // 輸出HTML片段進行分析
+            console.log(`📄 [Blog調試] HTML開頭片段 (前2000字元):`);
+            console.log(html.substring(0, 2000));
+            
+            console.log(`📄 [Blog調試] HTML結尾片段 (後1000字元):`);
+            console.log(html.substring(Math.max(0, html.length - 1000)));
+            
+            return {
+                htmlLength: html.length,
+                hasJavaScript,
+                hasJQuery,
+                hasAjax,
+                hasReact,
+                containersFound: containers.filter(id => html.includes(id)),
+                fullHtml: html
+            };
+            
+        } catch (error) {
+            console.error('❌ [Blog調試] 調試失敗:', error.message);
+            return null;
+        }
+    }
     async getDynamicContent() {
         try {
             console.log('🔄 [Blog動態] 嘗試獲取動態載入內容...');
@@ -708,9 +799,9 @@ class BlogMonitor {
         };
     }
 
-    // 暴露makeRequest方法供調試使用
-    async makeRequestPublic(url) {
-        return await this.makeRequest(url);
+    // 暴露調試方法供外部使用
+    async debugHtmlContentPublic() {
+        return await this.debugHtmlContent();
     }
 }
 
