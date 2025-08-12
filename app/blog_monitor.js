@@ -60,19 +60,15 @@ class BlogMonitor {
             const response = await this.makeRequest(this.blogUrl);
             const html = response.data;
             
-            // 尋找可能的API端點或數據載入腳本
+            // 尋找可能的API端點
             const scriptMatches = html.match(/<script[^>]*>[\s\S]*?<\/script>/gi) || [];
             const apiPatterns = [
                 /\/api\/[^"'\s]+/g,
-                /\/diary\/[^"'\s]+\/api/g,
-                /ajax[^"'\s]*/g,
-                /fetch\(['"]([^'"]+)['"]\)/g,
-                /xhr\.open\(['"]GET['"],\s*['"]([^'"]+)['"]\)/g
+                /diarkiji_list[^"'\s]*/g
             ];
             
             const potentialEndpoints = [];
             
-            // 檢查script標籤中的API端點
             scriptMatches.forEach(script => {
                 apiPatterns.forEach(pattern => {
                     const matches = [...script.matchAll(pattern)];
@@ -86,60 +82,11 @@ class BlogMonitor {
                 });
             });
             
-            // 尋找常見的AJAX或API端點模式
-            const commonEndpoints = [
-                '/s/jwb/diary/F2017/api',
-                '/s/jwb/diary/F2017/entries',
-                '/s/jwb/diary/F2017/list',
-                '/api/diary/F2017',
-                '/diary/F2017/entries.json'
-            ];
-            
-            console.log(`🔍 [Blog API] 找到 ${potentialEndpoints.length} 個潛在端點`);
-            console.log(`🔍 [Blog API] 將測試 ${commonEndpoints.length} 個常見端點`);
-            
-            // 測試找到的端點
-            const allEndpoints = [...new Set([...potentialEndpoints, ...commonEndpoints])];
-            
-            for (const endpoint of allEndpoints.slice(0, 10)) { // 限制測試數量
-                try {
-                    let testUrl = endpoint;
-                    if (!endpoint.startsWith('http')) {
-                        testUrl = `https://web.familyclub.jp${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
-                    }
-                    
-                    console.log(`🧪 [Blog API] 測試端點: ${testUrl}`);
-                    
-                    const testResponse = await this.makeRequest(testUrl);
-                    
-                    if (testResponse.statusCode === 200) {
-                        const contentType = testResponse.headers['content-type'] || '';
-                        
-                        if (contentType.includes('json')) {
-                            console.log(`✅ [Blog API] 找到JSON端點: ${testUrl}`);
-                            
-                            try {
-                                const jsonData = JSON.parse(testResponse.data);
-                                console.log(`📊 [Blog API] JSON數據結構:`, Object.keys(jsonData));
-                                return { url: testUrl, data: jsonData, type: 'json' };
-                            } catch (parseError) {
-                                console.log(`⚠️ [Blog API] JSON解析失敗: ${testUrl}`);
-                            }
-                        } else if (testResponse.data.includes('<time')) {
-                            console.log(`✅ [Blog API] 找到HTML端點包含time標籤: ${testUrl}`);
-                            return { url: testUrl, data: testResponse.data, type: 'html' };
-                        }
-                    }
-                } catch (testError) {
-                    // 忽略測試錯誤，繼續下一個
-                }
-            }
-            
-            return null;
+            return potentialEndpoints;
             
         } catch (error) {
             console.error('❌ [Blog API] API搜尋失敗:', error.message);
-            return null;
+            return [];
         }
     }
 
@@ -148,42 +95,95 @@ class BlogMonitor {
         try {
             console.log('🔄 [Blog動態] 嘗試獲取動態載入內容...');
             
-            // 方法1: 尋找API端點
-            const apiResult = await this.findApiEndpoint();
-            if (apiResult) {
-                return apiResult;
-            }
-            
-            // 方法2: 嘗試添加查詢參數強制載入內容
-            const urlVariations = [
-                this.blogUrl + '&_=' + Date.now(),
-                this.blogUrl + '&loaded=true',
-                this.blogUrl + '&format=full',
-                this.blogUrl.replace('?ima=2317', '') + '?ajax=1',
-                this.blogUrl.replace('?ima=2317', '') + '/entries'
+            // 測試最有希望的API端點
+            const targetEndpoints = [
+                'https://web.familyclub.jp/api/list/diarkiji_list?code=F2017&so=JW5',
+                'https://web.familyclub.jp/api/list/diarkiji_list?code=F2017'
             ];
             
-            for (const url of urlVariations) {
+            for (const url of targetEndpoints) {
                 try {
-                    console.log(`🧪 [Blog動態] 測試URL變化: ${url}`);
+                    console.log(`🧪 [Blog動態] 測試API端點: ${url}`);
                     
-                    const response = await this.makeRequest(url);
+                    const response = await this.makeRequest(url, {
+                        headers: {
+                            'Accept': 'application/json, text/plain, */*',
+                            'Referer': this.blogUrl,
+                            'X-Requested-With': 'XMLHttpRequest'
+                        }
+                    });
                     
-                    if (response.statusCode === 200 && response.data.includes('<time')) {
-                        console.log(`✅ [Blog動態] 找到包含time標籤的變化URL: ${url}`);
-                        return { url: url, data: response.data, type: 'html' };
+                    if (response.statusCode === 200) {
+                        try {
+                            const jsonData = JSON.parse(response.data);
+                            console.log(`✅ [Blog動態] 找到JSON API: ${url}`);
+                            return { url: url, data: jsonData, type: 'json' };
+                        } catch (parseError) {
+                            if (response.data.includes('<time')) {
+                                return { url: url, data: response.data, type: 'html' };
+                            }
+                        }
                     }
                 } catch (error) {
-                    // 繼續嘗試下一個
+                    console.log(`❌ [Blog動態] 端點測試失敗: ${url}`);
                 }
             }
             
-            console.log('⚠️ [Blog動態] 未找到動態內容載入方法');
             return null;
             
         } catch (error) {
             console.error('❌ [Blog動態] 動態內容獲取失敗:', error.message);
             return null;
+        }
+    }
+
+    // 新增：解析JSON格式的文章數據
+    parseArticlesFromJson(jsonData) {
+        const articles = [];
+        
+        try {
+            console.log('🔍 [Blog JSON] 解析JSON文章數據...');
+            
+            const possibleArrays = [jsonData, jsonData.data, jsonData.articles, jsonData.entries, jsonData.items, jsonData.list];
+            
+            for (const arrayData of possibleArrays) {
+                if (Array.isArray(arrayData)) {
+                    console.log(`📊 [Blog JSON] 找到陣列數據，長度: ${arrayData.length}`);
+                    
+                    arrayData.forEach((item, index) => {
+                        if (typeof item === 'object' && item !== null) {
+                            const dateFields = ['datetime', 'date', 'published', 'created', 'posted'];
+                            
+                            for (const field of dateFields) {
+                                if (item[field]) {
+                                    const dateStr = item[field].toString();
+                                    const dateMatch = dateStr.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+                                    
+                                    if (dateMatch) {
+                                        const foundDate = new Date(parseInt(dateMatch[1]), parseInt(dateMatch[2]) - 1, parseInt(dateMatch[3]), parseInt(dateMatch[4]), parseInt(dateMatch[5]));
+                                        
+                                        articles.push({
+                                            date: foundDate,
+                                            dateString: `${foundDate.getFullYear()}年${foundDate.getMonth() + 1}月${foundDate.getDate()}日`,
+                                            fullDateTime: `${foundDate.getFullYear()}年${foundDate.getMonth() + 1}月${foundDate.getDate()}日 ${foundDate.getHours().toString().padStart(2, '0')}:${foundDate.getMinutes().toString().padStart(2, '0')}`,
+                                            original: dateStr,
+                                            source: 'json'
+                                        });
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    });
+                    break;
+                }
+            }
+            
+            return articles;
+            
+        } catch (error) {
+            console.error('❌ [Blog JSON] JSON解析失敗:', error.message);
+            return [];
         }
     }
 
@@ -463,99 +463,20 @@ class BlogMonitor {
             this.totalChecks++;
             this.lastCheckTime = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
 
-            const response = await this.makeRequest(this.blogUrl);
+            // 首先嘗試獲取動態內容
+            const dynamicContent = await this.getDynamicContent();
             
-            if (response.statusCode !== 200) {
-                console.log(`❌ [Blog] HTTP錯誤: ${response.statusCode}`);
-                return null;
-            }
-
-            const html = response.data;
+            let dates = [];
             
-            // 專門針對familyclub.jp的time標籤解析
-            const timeTagPattern = /<time[^>]*datetime="([^"]+)"[^>]*class="entry__posted"[^>]*>([^<]+)<\/time>/g;
-            const dates = [];
-            let match;
-            
-            // 優先使用time標籤解析
-            while ((match = timeTagPattern.exec(html)) !== null) {
-                const datetimeAttr = match[1]; // datetime="2025-07-14T19:00"
-                const displayText = match[2].trim(); // "2025.07.14 19:00"
-                
-                // 解析 datetime 屬性 (ISO格式: 2025-07-14T19:00)
-                const dateMatch = datetimeAttr.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-                if (dateMatch) {
-                    const year = parseInt(dateMatch[1]);
-                    const month = parseInt(dateMatch[2]);
-                    const day = parseInt(dateMatch[3]);
-                    const hour = parseInt(dateMatch[4]);
-                    const minute = parseInt(dateMatch[5]);
-                    
-                    const articleDate = new Date(year, month - 1, day, hour, minute);
-                    const now = new Date();
-                    const diffDays = (now - articleDate) / (1000 * 60 * 60 * 24);
-                    
-                    // 只考慮7天內的文章（正常模式）或30天內（測試模式）
-                    const dayLimit = testMode ? 30 : 7;
-                    
-                    if (diffDays >= 0 && diffDays <= dayLimit) {
-                        dates.push({
-                            date: articleDate,
-                            dateString: `${year}年${month}月${day}日`,
-                            fullDateTime: `${year}年${month}月${day}日 ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
-                            original: displayText,
-                            datetime: datetimeAttr
-                        });
-                    }
+            if (dynamicContent && dynamicContent.type === 'json') {
+                dates = this.parseArticlesFromJson(dynamicContent.data);
+            } else {
+                const response = await this.makeRequest(this.blogUrl);
+                if (response.statusCode !== 200) {
+                    console.log(`❌ [Blog] HTTP錯誤: ${response.statusCode}`);
+                    return null;
                 }
-            }
-
-            // 如果沒找到time標籤，回退到通用日期解析
-            if (dates.length === 0) {
-                console.log('🔍 [Blog] 未找到time標籤，使用通用日期模式...');
-                
-                const datePatterns = [
-                    // 2025.07.14 格式
-                    /(\d{4})\.(\d{1,2})\.(\d{1,2})/g,
-                    // 2025/07/14 格式
-                    /(\d{4})\/(\d{1,2})\/(\d{1,2})/g,
-                    // 2025-07-14 格式
-                    /(\d{4})-(\d{1,2})-(\d{1,2})/g,
-                    // 2025年7月14日 格式
-                    /(\d{4})[年](\d{1,2})[月](\d{1,2})[日]/g
-                ];
-                
-                const currentYear = new Date().getFullYear();
-                
-                datePatterns.forEach((pattern) => {
-                    pattern.lastIndex = 0;
-                    let patternMatch;
-                    
-                    while ((patternMatch = pattern.exec(html)) !== null) {
-                        const year = parseInt(patternMatch[1]);
-                        const month = parseInt(patternMatch[2]);
-                        const day = parseInt(patternMatch[3]);
-                        
-                        if (year >= 2020 && year <= currentYear + 1 && 
-                            month >= 1 && month <= 12 && 
-                            day >= 1 && day <= 31) {
-                            
-                            const articleDate = new Date(year, month - 1, day);
-                            const now = new Date();
-                            const diffDays = (now - articleDate) / (1000 * 60 * 60 * 24);
-                            
-                            const dayLimit = testMode ? 30 : 7;
-                            
-                            if (diffDays >= 0 && diffDays <= dayLimit) {
-                                dates.push({
-                                    date: articleDate,
-                                    dateString: `${year}年${month}月${day}日`,
-                                    original: patternMatch[0]
-                                });
-                            }
-                        }
-                    }
-                });
+                dates = this.parseArticlesFromHtml(response.data, testMode);
             }
 
             // 去重複並排序
@@ -566,25 +487,19 @@ class BlogMonitor {
             uniqueDates.sort((a, b) => b.date - a.date);
 
             if (uniqueDates.length > 0) {
-                // 取最新的日期
                 const latestArticle = uniqueDates[0];
 
-                // 在測試模式下，總是顯示找到的文章
                 if (testMode) {
                     const timeInfo = latestArticle.fullDateTime || latestArticle.dateString;
-                    const sourceInfo = latestArticle.datetime ? `time標籤: ${latestArticle.original}` : `通用模式: ${latestArticle.original}`;
-                    console.log(`📝 [Blog測試] 找到最新文章: ${timeInfo} (${sourceInfo})`);
+                    console.log(`📝 [Blog測試] 找到最新文章: ${timeInfo}`);
                     this.lastFoundArticles = uniqueDates.slice(0, 5);
                     return latestArticle;
                 }
 
-                // 檢查是否為新文章
                 if (!this.lastArticleDate || latestArticle.date > this.lastArticleDate) {
                     this.lastArticleDate = latestArticle.date;
                     this.articlesFound++;
-                    
-                    const timeInfo = latestArticle.fullDateTime || latestArticle.dateString;
-                    console.log(`📝 [Blog] 發現新文章: ${timeInfo}`);
+                    console.log(`📝 [Blog] 發現新文章: ${latestArticle.fullDateTime || latestArticle.dateString}`);
                     return latestArticle;
                 }
             }
@@ -596,6 +511,46 @@ class BlogMonitor {
             console.error('❌ [Blog] 檢查失敗:', error.message);
             return null;
         }
+    }
+
+    // 從HTML解析文章（分離出來的函數）
+    parseArticlesFromHtml(html, testMode = false) {
+        const dates = [];
+        
+        const timeTagPattern = /<time[^>]*datetime="([^"]+)"[^>]*class="entry__posted"[^>]*>([^<]+)<\/time>/g;
+        let match;
+        
+        while ((match = timeTagPattern.exec(html)) !== null) {
+            const datetimeAttr = match[1];
+            const displayText = match[2].trim();
+            
+            const dateMatch = datetimeAttr.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+            if (dateMatch) {
+                const year = parseInt(dateMatch[1]);
+                const month = parseInt(dateMatch[2]);
+                const day = parseInt(dateMatch[3]);
+                const hour = parseInt(dateMatch[4]);
+                const minute = parseInt(dateMatch[5]);
+                
+                const articleDate = new Date(year, month - 1, day, hour, minute);
+                const now = new Date();
+                const diffDays = (now - articleDate) / (1000 * 60 * 60 * 24);
+                const dayLimit = testMode ? 30 : 7;
+                
+                if (diffDays >= 0 && diffDays <= dayLimit) {
+                    dates.push({
+                        date: articleDate,
+                        dateString: `${year}年${month}月${day}日`,
+                        fullDateTime: `${year}年${month}月${day}日 ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
+                        original: displayText,
+                        datetime: datetimeAttr,
+                        source: 'html'
+                    });
+                }
+            }
+        }
+        
+        return dates;
     }
 
     // 發送新文章通知
@@ -692,6 +647,7 @@ class BlogMonitor {
         
         console.log('⏹️ [Blog] 博客監控已停止');
     }
+
 
     // 獲取狀態（增強版）
     getStatus() {
