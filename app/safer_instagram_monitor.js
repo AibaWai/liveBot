@@ -19,6 +19,14 @@ class SaferInstagramMonitor {
         console.log('🔧 [Debug] 開始初始化SaferInstagramMonitor...');
         
         try {
+            // 首先定義 User-Agent池 (必須在其他初始化之前)
+            this.userAgents = [
+                'Instagram 302.0.0.23.113 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 492113219)',
+                'Instagram 299.0.0.51.109 Android (32/12; 440dpi; 1080x2340; OnePlus; CPH2423; OP515FL1; qcom; en_US; 486741830)',
+                'Instagram 301.0.0.29.124 Android (33/13; 480dpi; 1080x2400; Xiaomi; 2201116SG; lisa; qcom; en_US; 491671575)',
+                'Instagram 300.1.0.23.111 Android (31/12; 420dpi; 1080x2400; google; Pixel 6; oriole; google; en_US; 489553847)'
+            ];
+            
             this.accounts = this.loadAccounts();
             this.currentAccountIndex = 0;
             this.dailyRequestCount = 0;
@@ -39,14 +47,6 @@ class SaferInstagramMonitor {
             
             this.initializeStats();
             this.initializeAccountSessions();
-            
-            // 使用old_main.js的User-Agent池
-            this.userAgents = [
-                'Instagram 302.0.0.23.113 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 492113219)',
-                'Instagram 299.0.0.51.109 Android (32/12; 440dpi; 1080x2340; OnePlus; CPH2423; OP515FL1; qcom; en_US; 486741830)',
-                'Instagram 301.0.0.29.124 Android (33/13; 480dpi; 1080x2400; Xiaomi; 2201116SG; lisa; qcom; en_US; 491671575)',
-                'Instagram 300.1.0.23.111 Android (31/12; 420dpi; 1080x2400; google; Pixel 6; oriole; google; en_US; 489553847)'
-            ];
             
             console.log('✅ [Debug] SaferInstagramMonitor初始化完成');
         } catch (error) {
