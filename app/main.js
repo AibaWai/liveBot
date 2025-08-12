@@ -190,10 +190,10 @@ async function startInstagramMonitoring() {
             return;
         }
         
-        const FixedInstagramMonitor = require('./simplified_instagram_monitor');
+        const SimplifiedInstagramMonitor = require('./simplified_instagram_monitor');
         
         // 創建監控實例時傳入Discord通知回調函數
-        instagramMonitor = new FixedInstagramMonitor(sendNotification);
+        instagramMonitor = new SimplifiedInstagramMonitor(sendNotification);
         
         console.log('🚀 [Instagram] 啟動簡化監控系統');
         

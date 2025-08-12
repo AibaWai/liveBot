@@ -1,56 +1,40 @@
-// 修復版Instagram監控 - 適配2025年8月API變化
+// 簡化版Instagram監控 - 3帳號輪換 + 90秒間隔 + Cookie失效提醒 + 日本時間
 const https = require('https');
 const crypto = require('crypto');
 
-// 安全配置 (針對新的API限制進行調整)
+// 安全配置 (確保充足的請求額度)
 const SAFE_CONFIG = {
-    minInterval: 120,         // 增加到120秒最小間隔
-    maxInterval: 300,         // 5分鐘最大間隔
-    maxRequestsPerAccount: 200,   // 減少到每個帳號每天200次
-    accountCooldownMinutes: 30,   // 增加基礎冷卻到30分鐘
-    maxDailyRequests: 500,        // 減少全系統每天500次
+    minInterval: 90,         // 90秒最小間隔 (活躍時段)
+    maxInterval: 180,        // 3分鐘最大間隔
+    maxRequestsPerAccount: 300,  // 每個帳號每天300次
+    accountCooldownMinutes: 20,  // 基礎冷卻20分鐘 (會動態調整)
+    maxDailyRequests: 750,       // 全系統每天750次 (充足緩衝)
     cookieAlertCooldown: 3600000, // Cookie失效提醒冷卻 (1小時)
-    rotationThreshold: 5,         // 減少到每個帳號使用5次後強制輪換
-    rotationCooldown: 45,         // 增加輪換後的冷卻時間(分鐘)
-    retryDelay: 5000,            // 失敗後重試延遲
-    maxRetries: 2,               // 最大重試次數
 };
 
-class FixedInstagramMonitor {
+class SimplifiedInstagramMonitor {
     constructor(notificationCallback = null) {
         this.accounts = this.loadAccounts();
         this.currentAccountIndex = 0;
         this.dailyRequestCount = 0;
-        this.dailyDate = this.getJapanDateString();
+        this.dailyDate = this.getJapanDateString();  // 使用日本時間
         this.accountStats = new Map();
         this.cooldownAccounts = new Map();
         this.isMonitoring = false;
-        this.notificationCallback = notificationCallback;
+        this.notificationCallback = notificationCallback; // Discord通知回調函數
         
         // Cookie失效追蹤
         this.cookieFailureStats = new Map();
-        this.lastCookieAlert = new Map();
-        
-        // 輪換策略追蹤
-        this.rotationStats = new Map();
-        this.lastUsedAccount = null;
+        this.lastCookieAlert = new Map(); // 追蹤每個帳號的最後提醒時間
         
         this.initializeStats();
         
-        // 更新的User-Agent池 (模擬更真實的瀏覽器)
+        // 豐富的User-Agent池 (使用old_main.js的方式)
         this.userAgents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0'
-        ];
-        
-        // Instagram App ID (從網頁版實際抓取)
-        this.appIds = [
-            '936619743392459',  // 主要App ID
-            '1217981644879628', // 備用App ID
-            '567067343352427'   // 舊版App ID
+            'Instagram 302.0.0.23.113 Android (33/13; 420dpi; 1080x2400; samsung; SM-G991B; o1s; exynos2100; en_US; 492113219)',
+            'Instagram 299.0.0.51.109 Android (32/12; 440dpi; 1080x2340; OnePlus; CPH2423; OP515FL1; qcom; en_US; 486741830)',
+            'Instagram 301.0.0.29.124 Android (33/13; 480dpi; 1080x2400; Xiaomi; 2201116SG; lisa; qcom; en_US; 491671575)',
+            'Instagram 300.1.0.23.111 Android (31/12; 420dpi; 1080x2400; google; Pixel 6; oriole; google; en_US; 489553847)'
         ];
     }
     
@@ -103,7 +87,7 @@ class FixedInstagramMonitor {
             });
         }
         
-        console.log(`🔐 [修復監控] 載入 ${accounts.length} 個Instagram帳號`);
+        console.log(`🔐 [簡化監控] 載入 ${accounts.length} 個Instagram帳號`);
         return accounts;
     }
     
@@ -117,440 +101,41 @@ class FixedInstagramMonitor {
                 lastUsed: 0
             });
             
+            // 初始化Cookie失效統計
             this.cookieFailureStats.set(account.id, {
                 consecutiveFailures: 0,
                 lastFailureTime: 0,
                 isCurrentlyInvalid: false,
                 invalidSince: null
             });
-            
-            this.rotationStats.set(account.id, {
-                consecutiveUses: 0,
-                lastRotationTime: 0
-            });
         });
     }
     
-    // 生成真實的設備指紋
-    generateDeviceFingerprint() {
-        const timestamp = Date.now();
-        return {
-            deviceId: crypto.randomBytes(16).toString('hex'),
-            uuid: crypto.randomUUID(),
-            sessionId: crypto.randomBytes(16).toString('hex'),
-            timestamp: timestamp,
-            // 模擬瀏覽器指紋
-            screenResolution: ['1920x1080', '1366x768', '1536x864', '1440x900'][Math.floor(Math.random() * 4)],
-            timezone: 'Asia/Tokyo',
-            language: 'ja-JP,ja;q=0.9,en;q=0.8'
-        };
-    }
-    
-    // 改進的HTTP請求函數
-    makeSecureRequest(url, options, retries = 0) {
-        return new Promise((resolve, reject) => {
-            const req = https.request(url, options, (res) => {
-                let data = '';
-                res.on('data', (chunk) => { data += chunk; });
-                res.on('end', () => {
-                    console.log(`📊 [HTTP] ${options.method} ${url} -> ${res.statusCode}`);
-                    resolve({ 
-                        statusCode: res.statusCode, 
-                        data: data,
-                        headers: res.headers
-                    });
-                });
-            });
-            
-            req.on('error', (error) => {
-                if (retries < SAFE_CONFIG.maxRetries) {
-                    console.log(`🔄 [重試] ${retries + 1}/${SAFE_CONFIG.maxRetries}: ${error.message}`);
-                    setTimeout(() => {
-                        this.makeSecureRequest(url, options, retries + 1)
-                            .then(resolve)
-                            .catch(reject);
-                    }, SAFE_CONFIG.retryDelay * (retries + 1));
-                } else {
-                    reject(error);
-                }
-            });
-            
-            req.setTimeout(30000, () => {
-                req.destroy();
-                reject(new Error('Request timeout after 30s'));
-            });
-            
-            if (options.body) req.write(options.body);
-            req.end();
-        });
-    }
-    
-    // 新的獲取用戶ID方法 (使用修復後的端點)
-    async getUserIdFixed(username, account) {
-        const deviceData = this.generateDeviceFingerprint();
-        const userAgent = this.userAgents[Math.floor(Math.random() * this.userAgents.length)];
-        const appId = this.appIds[Math.floor(Math.random() * this.appIds.length)];
-        
-        try {
-            // 增加更長的延遲
-            await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 5000));
-            
-            // 構建更完整的cookies字符串
-            const cookies = [
-                `sessionid=${account.sessionId}`,
-                `csrftoken=${account.csrfToken}`,
-                `ds_user_id=${account.dsUserId}`,
-                `rur="CLN\\05471878062223\\0541756364068:01f7a2e3bf8fa1b4c1b7c8b79b5e4c3e9e8d7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0"`,
-                `mid=${deviceData.deviceId.substring(0, 27)}`,
-                'ig_did=C9A8B7F6-E5D4-4C3B-A291-8F7E6D5C4B3A'
-            ].join('; ');
-            
-            // 嘗試新的端點方法
-            const endpoints = [
-                // 方法1: 使用X-IG-App-ID header
-                {
-                    url: `https://i.instagram.com/api/v1/users/web_profile_info/?username=${username}`,
-                    headers: {
-                        'User-Agent': userAgent,
-                        'Accept': '*/*',
-                        'Accept-Language': 'ja-JP,ja;q=0.9,en;q=0.8',
-                        'Accept-Encoding': 'gzip, deflate, br',
-                        'Cookie': cookies,
-                        'X-IG-App-ID': appId,
-                        'X-IG-WWW-Claim': '0',
-                        'X-Requested-With': 'XMLHttpRequest',
-                        'Sec-Fetch-Dest': 'empty',
-                        'Sec-Fetch-Mode': 'cors',
-                        'Sec-Fetch-Site': 'same-origin',
-                        'Referer': `https://www.instagram.com/${username}/`,
-                        'Origin': 'https://www.instagram.com',
-                        'Host': 'i.instagram.com',
-                        'Connection': 'keep-alive',
-                        'Cache-Control': 'no-cache',
-                        'Pragma': 'no-cache'
-                    }
-                },
-                // 方法2: 使用圖形API風格
-                {
-                    url: `https://www.instagram.com/api/v1/users/web_profile_info/?username=${username}`,
-                    headers: {
-                        'User-Agent': userAgent,
-                        'Accept': 'application/json, text/plain, */*',
-                        'Accept-Language': 'ja-JP,ja;q=0.9,en;q=0.8',
-                        'Cookie': cookies,
-                        'X-CSRFToken': account.csrfToken,
-                        'X-IG-App-ID': appId,
-                        'X-IG-WWW-Claim': '0',
-                        'X-Requested-With': 'XMLHttpRequest',
-                        'Referer': `https://www.instagram.com/${username}/`,
-                        'Origin': 'https://www.instagram.com',
-                        'Host': 'www.instagram.com'
-                    }
-                }
-            ];
-            
-            for (const endpoint of endpoints) {
-                try {
-                    console.log(`🔍 [嘗試] ${endpoint.url.includes('i.instagram') ? 'i.instagram' : 'www.instagram'} 端點`);
-                    
-                    const response = await this.makeSecureRequest(endpoint.url, {
-                        method: 'GET',
-                        headers: endpoint.headers
-                    });
-                    
-                    if (response.statusCode === 200) {
-                        const data = JSON.parse(response.data);
-                        if (data.data?.user?.id) {
-                            console.log(`✅ [成功] 用戶ID: ${data.data.user.id}`);
-                            return data.data.user.id;
-                        } else if (data.user?.id) {
-                            console.log(`✅ [成功] 用戶ID: ${data.user.id}`);
-                            return data.user.id;
-                        }
-                    } else if (response.statusCode === 429) {
-                        console.log(`⚠️ [限制] 端點被限制: ${response.statusCode}`);
-                        // 如果被限制，等待更長時間
-                        await new Promise(resolve => setTimeout(resolve, 10000));
-                        continue;
-                    } else {
-                        console.log(`❌ [失敗] 端點回應: ${response.statusCode}`);
-                    }
-                    
-                    // 在嘗試之間添加延遲
-                    await new Promise(resolve => setTimeout(resolve, 2000));
-                    
-                } catch (error) {
-                    console.log(`❌ [端點錯誤] ${error.message}`);
-                    continue;
-                }
-            }
-            
-            console.log(`❌ [失敗] 所有端點都無法獲取用戶ID`);
-            return null;
-            
-        } catch (error) {
-            console.error('❌ [獲取用戶ID] 錯誤:', error.message);
-            return null;
-        }
-    }
-    
-    // 改進的直播檢查方法
-    async checkLiveFixed(username, userId, account) {
-        const deviceData = this.generateDeviceFingerprint();
-        const userAgent = this.userAgents[Math.floor(Math.random() * this.userAgents.length)];
-        const appId = this.appIds[Math.floor(Math.random() * this.appIds.length)];
-        
-        try {
-            // 增加延遲
-            await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 3000));
-            
-            const cookies = [
-                `sessionid=${account.sessionId}`,
-                `csrftoken=${account.csrfToken}`,
-                `ds_user_id=${account.dsUserId}`,
-                `rur="CLN\\05471878062223\\0541756364068:01f7a2e3bf8fa1b4c1b7c8b79b5e4c3e9e8d7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d0"`,
-                `mid=${deviceData.deviceId.substring(0, 27)}`
-            ].join('; ');
-            
-            // 使用多個檢查端點
-            const checkEndpoints = [
-                // Story端點 (主要)
-                {
-                    url: `https://i.instagram.com/api/v1/feed/user/${userId}/story/`,
-                    type: 'story'
-                },
-                // Reel端點 (備用)
-                {
-                    url: `https://i.instagram.com/api/v1/feed/user/${userId}/`,
-                    type: 'feed'
-                }
-            ];
-            
-            for (const endpoint of checkEndpoints) {
-                try {
-                    console.log(`🔍 [檢查] ${endpoint.type} 端點`);
-                    
-                    const response = await this.makeSecureRequest(endpoint.url, {
-                        method: 'GET',
-                        headers: {
-                            'User-Agent': userAgent,
-                            'Accept': 'application/json',
-                            'Accept-Language': 'ja-JP,ja;q=0.9,en;q=0.8',
-                            'Cookie': cookies,
-                            'X-IG-App-ID': appId,
-                            'X-IG-WWW-Claim': '0',
-                            'X-CSRFToken': account.csrfToken,
-                            'X-Requested-With': 'XMLHttpRequest',
-                            'Referer': `https://www.instagram.com/${username}/`,
-                            'Origin': 'https://www.instagram.com',
-                            'Host': 'i.instagram.com',
-                            'Sec-Fetch-Dest': 'empty',
-                            'Sec-Fetch-Mode': 'cors',
-                            'Sec-Fetch-Site': 'same-origin'
-                        }
-                    });
-                    
-                    if (response.statusCode === 200) {
-                        const data = JSON.parse(response.data);
-                        
-                        // 檢查直播
-                        if (endpoint.type === 'story') {
-                            // Story端點檢查
-                            if (data.broadcast) {
-                                console.log('🔴 [直播] Story端點發現直播!');
-                                return true;
-                            }
-                            
-                            if (data.reel?.items) {
-                                for (const item of data.reel.items) {
-                                    if (item.media_type === 4) {
-                                        console.log('🔴 [直播] Story項目中發現直播!');
-                                        return true;
-                                    }
-                                }
-                            }
-                        } else if (endpoint.type === 'feed') {
-                            // Feed端點檢查
-                            if (data.items) {
-                                for (const item of data.items) {
-                                    if (item.media_type === 4 || item.product_type === 'igtv') {
-                                        console.log('🔴 [直播] Feed中發現直播!');
-                                        return true;
-                                    }
-                                }
-                            }
-                        }
-                        
-                        console.log(`⚫ [${endpoint.type}] 無直播`);
-                        return false;
-                        
-                    } else if (response.statusCode === 429) {
-                        console.log(`⚠️ [限制] ${endpoint.type}端點被限制`);
-                        continue;
-                    } else {
-                        console.log(`❌ [${endpoint.type}] 端點失敗: ${response.statusCode}`);
-                        continue;
-                    }
-                    
-                } catch (error) {
-                    console.log(`❌ [${endpoint.type}] 檢查錯誤: ${error.message}`);
-                    continue;
-                }
-            }
-            
-            return false;
-            
-        } catch (error) {
-            console.error('❌ [直播檢查] 錯誤:', error.message);
-            return false;
-        }
-    }
-    
-    // 選擇最佳帳號 (與原版相同的輪換邏輯)
-    selectBestAccount() {
-        const now = Date.now();
-        
-        const availableAccounts = this.accounts.filter(account => {
-            const stats = this.accountStats.get(account.id);
-            const cooldownEnd = this.cooldownAccounts.get(account.id) || 0;
-            const cookieStats = this.cookieFailureStats.get(account.id);
-            
-            return stats.dailyRequests < SAFE_CONFIG.maxRequestsPerAccount && 
-                   now >= cooldownEnd &&
-                   !cookieStats.isCurrentlyInvalid;
-        });
-        
-        if (availableAccounts.length === 0) {
-            return null;
-        }
-        
-        // 檢查輪換
-        if (this.lastUsedAccount) {
-            const rotationStats = this.rotationStats.get(this.lastUsedAccount);
-            const shouldRotate = rotationStats.consecutiveUses >= SAFE_CONFIG.rotationThreshold;
-            
-            if (shouldRotate) {
-                console.log(`🔄 [強制輪換] ${this.lastUsedAccount} 已使用${rotationStats.consecutiveUses}次`);
-                this.setCooldown(this.lastUsedAccount, SAFE_CONFIG.rotationCooldown);
-                rotationStats.consecutiveUses = 0;
-                rotationStats.lastRotationTime = now;
-                
-                const otherAccounts = availableAccounts.filter(acc => acc.id !== this.lastUsedAccount);
-                if (otherAccounts.length > 0) {
-                    const nextAccount = otherAccounts.reduce((best, current) => {
-                        const bestStats = this.accountStats.get(best.id);
-                        const currentStats = this.accountStats.get(current.id);
-                        return currentStats.dailyRequests < bestStats.dailyRequests ? current : best;
-                    });
-                    
-                    console.log(`🔄 [輪換] ${this.lastUsedAccount} -> ${nextAccount.id}`);
-                    return nextAccount;
-                }
-            }
-        }
-        
-        const bestAccount = availableAccounts.reduce((best, current) => {
-            const bestStats = this.accountStats.get(best.id);
-            const currentStats = this.accountStats.get(current.id);
-            return currentStats.dailyRequests < bestStats.dailyRequests ? current : best;
-        });
-        
-        if (this.lastUsedAccount && this.lastUsedAccount !== bestAccount.id) {
-            console.log(`🔄 [切換] ${this.lastUsedAccount} -> ${bestAccount.id}`);
-        }
-        
-        return bestAccount;
-    }
-    
-    // 記錄請求結果
-    recordRequest(accountId, success, errorType = null) {
-        const stats = this.accountStats.get(accountId);
-        if (!stats) return;
-        
-        stats.lastUsed = Date.now();
-        stats.dailyRequests++;
-        this.dailyRequestCount++;
-        
-        const rotationStats = this.rotationStats.get(accountId);
-        if (this.lastUsedAccount === accountId) {
-            rotationStats.consecutiveUses++;
-        } else {
-            if (this.lastUsedAccount) {
-                const lastRotationStats = this.rotationStats.get(this.lastUsedAccount);
-                lastRotationStats.consecutiveUses = 0;
-            }
-            rotationStats.consecutiveUses = 1;
-        }
-        this.lastUsedAccount = accountId;
-        
-        if (success) {
-            stats.successCount++;
-            this.resetCookieStatus(accountId);
-            
-            if (this.cooldownAccounts.has(accountId)) {
-                const currentCooldown = this.cooldownAccounts.get(accountId);
-                const reducedCooldown = Math.max(Date.now(), currentCooldown - 300000);
-                this.cooldownAccounts.set(accountId, reducedCooldown);
-            }
-        } else {
-            stats.errorCount++;
-            this.checkAndSendCookieAlert(accountId, errorType);
-            
-            let cooldownMinutes = SAFE_CONFIG.accountCooldownMinutes;
-            
-            if (errorType === 'rate_limit' || errorType === 'too_many_requests') {
-                cooldownMinutes = Math.min(cooldownMinutes * 2, 60);
-            } else if (errorType === 'forbidden' || errorType === 'unauthorized') {
-                cooldownMinutes = Math.min(cooldownMinutes * 3, 120);
-            }
-            
-            this.setCooldown(accountId, cooldownMinutes);
-        }
-        
-        const successRate = stats.successCount + stats.errorCount > 0 ? 
-            Math.round(stats.successCount / (stats.successCount + stats.errorCount) * 100) : 0;
-            
-        console.log(`📊 [統計] ${accountId}: 今日${stats.dailyRequests}次, 成功率${successRate}%, 連續${rotationStats.consecutiveUses}/${SAFE_CONFIG.rotationThreshold}次`);
-    }
-    
-    // 設置帳號冷卻
-    setCooldown(accountId, minutes) {
-        const cooldownEnd = Date.now() + (minutes * 60 * 1000);
-        this.cooldownAccounts.set(accountId, cooldownEnd);
-        console.log(`❄️ [冷卻] ${accountId} 冷卻 ${minutes} 分鐘`);
-    }
-    
-    // 重置Cookie狀態
-    resetCookieStatus(accountId) {
-        const cookieStats = this.cookieFailureStats.get(accountId);
-        if (cookieStats && cookieStats.consecutiveFailures > 0) {
-            console.log(`✅ [Cookie恢復] ${accountId} 認證已恢復`);
-            cookieStats.consecutiveFailures = 0;
-            cookieStats.isCurrentlyInvalid = false;
-            cookieStats.invalidSince = null;
-        }
-    }
-    
-    // Cookie失效檢查
+    // 檢查並發送Cookie失效提醒
     async checkAndSendCookieAlert(accountId, errorType) {
         if (errorType !== 'unauthorized' && errorType !== 'forbidden') return;
         
         const cookieStats = this.cookieFailureStats.get(accountId);
         const now = Date.now();
         
+        // 更新Cookie失效統計
         cookieStats.consecutiveFailures++;
         cookieStats.lastFailureTime = now;
         
+        // 如果連續失敗3次且之前沒有標記為失效，標記為失效
         if (cookieStats.consecutiveFailures >= 3 && !cookieStats.isCurrentlyInvalid) {
             cookieStats.isCurrentlyInvalid = true;
             cookieStats.invalidSince = now;
             
+            // 檢查是否需要發送提醒（避免重複提醒）
             const lastAlert = this.lastCookieAlert.get(accountId) || 0;
             if (now - lastAlert > SAFE_CONFIG.cookieAlertCooldown) {
                 await this.sendCookieInvalidAlert(accountId);
                 this.lastCookieAlert.set(accountId, now);
             }
         }
+        
+        console.log(`🔑 [Cookie檢查] ${accountId}: 連續失敗 ${cookieStats.consecutiveFailures} 次`);
     }
     
     // 發送Cookie失效提醒
@@ -560,24 +145,31 @@ class FixedInstagramMonitor {
         const account = this.accounts.find(acc => acc.id === accountId);
         const cookieStats = this.cookieFailureStats.get(accountId);
         
-        const alertMessage = `🚨 **Instagram帳號認證失效警告** (API更新影響)
+        const alertMessage = `🚨 **Instagram帳號認證失效警告** 🚨
 
 **失效帳號:** ${accountId}
 **SessionID:** ${account?.sessionId?.substring(0, 12)}****
 **失效時間:** ${new Date(cookieStats.invalidSince).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
+**連續失敗:** ${cookieStats.consecutiveFailures} 次
 
-⚠️ **可能原因:**
-• Instagram於2025年8月更新了API安全檢查
-• 需要更新cookies或使用不同的獲取方式
-• 帳號可能被暫時限制
+⚠️ **需要立即處理:**
+1. 重新登入Instagram獲取新的cookies
+2. 更新環境變數中的認證資訊
+3. 重新部署應用程式
+
+📋 **影響範圍:**
+• 該帳號無法繼續監控Instagram
+• 系統將自動切換到其他可用帳號
+• 如果所有帳號都失效，監控將完全停止
 
 🔧 **修復步驟:**
-1. 清除瀏覽器緩存和cookies
-2. 重新登入Instagram網頁版
-3. 從開發者工具獲取新的cookies
-4. 更新環境變數並重新部署
+1. 瀏覽器登入 Instagram
+2. 開發者工具 → Application → Cookies
+3. 複製 sessionid, csrftoken, ds_user_id
+4. 更新對應的環境變數
+5. 重新啟動應用
 
-📊 **系統已自動切換到其他可用帳號**`;
+⏰ 下次提醒將在1小時後（如果問題未解決）`;
 
         try {
             await this.notificationCallback(alertMessage, 'cookie_alert', 'Instagram');
@@ -587,8 +179,133 @@ class FixedInstagramMonitor {
         }
     }
     
+    // 重置Cookie狀態（成功時調用）
+    resetCookieStatus(accountId) {
+        const cookieStats = this.cookieFailureStats.get(accountId);
+        if (cookieStats && cookieStats.consecutiveFailures > 0) {
+            console.log(`✅ [Cookie恢復] ${accountId} 認證已恢復正常`);
+            
+            // 如果之前標記為失效，發送恢復通知
+            if (cookieStats.isCurrentlyInvalid && this.notificationCallback) {
+                const recoveryMessage = `✅ **Instagram帳號認證已恢復** 
+
+**帳號:** ${accountId}
+**恢復時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
+**停機時長:** ${Math.round((Date.now() - cookieStats.invalidSince) / 60000)} 分鐘
+
+🎉 該帳號已重新開始正常工作！`;
+                
+                this.notificationCallback(recoveryMessage, 'cookie_recovery', 'Instagram').catch(console.error);
+            }
+            
+            // 重置統計
+            cookieStats.consecutiveFailures = 0;
+            cookieStats.isCurrentlyInvalid = false;
+            cookieStats.invalidSince = null;
+        }
+    }
+    
+    // 選擇最佳帳號
+    selectBestAccount() {
+        const now = Date.now();
+        
+        // 過濾可用帳號（排除Cookie失效的帳號）
+        const availableAccounts = this.accounts.filter(account => {
+            const stats = this.accountStats.get(account.id);
+            const cooldownEnd = this.cooldownAccounts.get(account.id) || 0;
+            const cookieStats = this.cookieFailureStats.get(account.id);
+            
+            return stats.dailyRequests < SAFE_CONFIG.maxRequestsPerAccount && 
+                   now >= cooldownEnd &&
+                   !cookieStats.isCurrentlyInvalid; // 排除Cookie失效的帳號
+        });
+        
+        if (availableAccounts.length === 0) {
+            return null;
+        }
+        
+        // 選擇使用次數最少的帳號
+        const bestAccount = availableAccounts.reduce((best, current) => {
+            const bestStats = this.accountStats.get(best.id);
+            const currentStats = this.accountStats.get(current.id);
+            return currentStats.dailyRequests < bestStats.dailyRequests ? current : best;
+        });
+        
+        console.log(`🔄 [帳號輪換] 使用: ${bestAccount.id}`);
+        return bestAccount;
+    }
+    
+    // 記錄請求結果 (智能冷卻 + Cookie檢查)
+    recordRequest(accountId, success, errorType = null) {
+        const stats = this.accountStats.get(accountId);
+        if (!stats) return;
+        
+        stats.lastUsed = Date.now();
+        stats.dailyRequests++;
+        this.dailyRequestCount++;
+        
+        if (success) {
+            stats.successCount++;
+            
+            // 重置Cookie失效狀態
+            this.resetCookieStatus(accountId);
+            
+            // 成功時減少現有的冷卻時間
+            if (this.cooldownAccounts.has(accountId)) {
+                const currentCooldown = this.cooldownAccounts.get(accountId);
+                const reducedCooldown = Math.max(Date.now(), currentCooldown - 300000); // 減少5分鐘
+                this.cooldownAccounts.set(accountId, reducedCooldown);
+            }
+        } else {
+            stats.errorCount++;
+            
+            // 檢查Cookie失效並發送提醒
+            this.checkAndSendCookieAlert(accountId, errorType);
+            
+            // 根據錯誤類型和可用帳號數量智能調整冷卻
+            const availableAccountsCount = this.accounts.filter(account => {
+                const accountStats = this.accountStats.get(account.id);
+                const cooldownEnd = this.cooldownAccounts.get(account.id) || 0;
+                const cookieStats = this.cookieFailureStats.get(account.id);
+                return accountStats.dailyRequests < SAFE_CONFIG.maxRequestsPerAccount && 
+                       Date.now() >= cooldownEnd &&
+                       !cookieStats.isCurrentlyInvalid;
+            }).length;
+            
+            let cooldownMinutes = SAFE_CONFIG.accountCooldownMinutes;
+            
+            // 如果只剩1個可用帳號，減少冷卻時間
+            if (availableAccountsCount <= 1) {
+                cooldownMinutes = Math.max(5, cooldownMinutes / 2); // 最少5分鐘
+                console.log(`⚠️ [智能調整] 只剩${availableAccountsCount}個可用帳號，縮短冷卻至${cooldownMinutes}分鐘`);
+            }
+            
+            // 根據錯誤類型調整
+            if (errorType === 'rate_limit') {
+                cooldownMinutes = Math.min(cooldownMinutes * 1.5, 45); // 最多45分鐘
+            } else if (errorType === 'forbidden' || errorType === 'unauthorized') {
+                cooldownMinutes = Math.min(cooldownMinutes * 3, 120); // Cookie問題更長冷卻
+            }
+            
+            this.setCooldown(accountId, cooldownMinutes);
+        }
+        
+        const successRate = stats.successCount + stats.errorCount > 0 ? 
+            Math.round(stats.successCount / (stats.successCount + stats.errorCount) * 100) : 0;
+            
+        console.log(`📊 [統計] ${accountId}: 今日${stats.dailyRequests}次, 成功率${successRate}%`);
+    }
+    
+    // 設置帳號冷卻
+    setCooldown(accountId, minutes) {
+        const cooldownEnd = Date.now() + (minutes * 60 * 1000);
+        this.cooldownAccounts.set(accountId, cooldownEnd);
+        console.log(`❄️ [冷卻] ${accountId} 冷卻 ${minutes} 分鐘`);
+    }
+    
     // 檢查是否可以運行
     canOperate() {
+        // 檢查每日限制 (使用日本時間)
         const todayJapan = this.getJapanDateString();
         if (this.dailyDate !== todayJapan) {
             this.resetDailyCounters();
@@ -599,6 +316,7 @@ class FixedInstagramMonitor {
             return false;
         }
         
+        // 檢查可用帳號
         const availableAccount = this.selectBestAccount();
         return availableAccount !== null;
     }
@@ -610,14 +328,94 @@ class FixedInstagramMonitor {
         this.accountStats.forEach(stats => {
             stats.dailyRequests = 0;
         });
-        this.rotationStats.forEach(rotationStats => {
-            rotationStats.consecutiveUses = 0;
-        });
-        this.lastUsedAccount = null;
         console.log('🌅 [重置] 每日計數器已重置 (日本時間)');
     }
     
-    // 主要的直播檢查函數
+    // 生成設備數據 (使用old_main.js的方法)
+    generateDeviceData() {
+        return {
+            deviceId: 'android-' + Array.from({ length: 16 }, () => Math.floor(Math.random() * 16).toString(16)).join(''),
+            uuid: 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                const r = Math.random() * 16 | 0;
+                const v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            })
+        };
+    }
+    
+    // 安全HTTP請求 (使用old_main.js的方法)
+    makeRequest(url, options) {
+        return new Promise((resolve, reject) => {
+            const req = https.request(url, options, (res) => {
+                let data = '';
+                res.on('data', (chunk) => { data += chunk; });
+                res.on('end', () => {
+                    resolve({ 
+                        statusCode: res.statusCode, 
+                        data: data
+                    });
+                });
+            });
+            
+            req.on('error', reject);
+            req.setTimeout(30000, () => {
+                req.destroy();
+                reject(new Error('Request timeout'));
+            });
+            
+            if (options.body) req.write(options.body);
+            req.end();
+        });
+    }
+    
+    // 獲取用戶ID (使用old_main.js的成功方法)
+    async getUserId(username, account) {
+        const deviceData = this.generateDeviceData();
+        const sessionData = {
+            ...deviceData,
+            userAgent: this.userAgents[Math.floor(Math.random() * this.userAgents.length)],
+            cookies: `sessionid=${account.sessionId}; csrftoken=${account.csrfToken}; ds_user_id=${account.dsUserId}`
+        };
+        
+        try {
+            await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
+            
+            const timestamp = Math.floor(Date.now() / 1000);
+            const response = await this.makeRequest(`https://i.instagram.com/api/v1/users/web_profile_info/?username=${username}`, {
+                method: 'GET',
+                headers: {
+                    'User-Agent': sessionData.userAgent,
+                    'Accept': 'application/json',
+                    'Cookie': sessionData.cookies,
+                    'X-IG-App-Locale': 'en_US',
+                    'X-IG-Device-Locale': 'en_US',
+                    'X-Pigeon-Session-Id': sessionData.uuid,
+                    'X-Pigeon-Rawclienttime': timestamp,
+                    'X-IG-Connection-Type': 'WIFI',
+                    'X-IG-App-ID': '567067343352427',
+                    'X-IG-Device-ID': sessionData.deviceId,
+                    'Host': 'i.instagram.com'
+                }
+            });
+            
+            if (response.statusCode === 200) {
+                const data = JSON.parse(response.data);
+                if (data.data?.user?.id) {
+                    console.log(`✅ [Instagram] 用戶ID: ${data.data.user.id}`);
+                    return data.data.user.id;
+                }
+            }
+            
+            console.log(`❌ [Instagram] 獲取用戶ID失敗: ${response.statusCode}`);
+            return null;
+            
+        } catch (error) {
+            console.error('❌ [Instagram] 獲取用戶ID錯誤:', error.message);
+            return null;
+        }
+    }
+    
+    // 檢查Instagram直播 (使用old_main.js的成功方法)
     async checkLive(username) {
         if (!this.canOperate()) {
             console.log('⏸️ [檢查] 系統限制，跳過檢查');
@@ -627,57 +425,156 @@ class FixedInstagramMonitor {
         const account = this.selectBestAccount();
         if (!account) {
             console.log('😴 [檢查] 沒有可用帳號');
+            
+            // 檢查是否所有帳號都因Cookie失效而不可用
+            const allAccountsInvalid = this.accounts.every(acc => {
+                const cookieStats = this.cookieFailureStats.get(acc.id);
+                return cookieStats.isCurrentlyInvalid;
+            });
+            
+            if (allAccountsInvalid && this.notificationCallback) {
+                const criticalMessage = `🆘 **嚴重警告：所有Instagram帳號認證失效** 
+
+⛔ **監控已完全停止**
+🕐 **停止時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
+
+🔧 **緊急處理:**
+所有帳號的cookies都已失效，需要立即更新認證資訊！
+
+📋 **失效帳號列表:**
+${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****`).join('\n')}
+
+⚡ **立即行動:** 請更新所有帳號的cookies並重新部署！`;
+                
+                try {
+                    await this.notificationCallback(criticalMessage, 'critical_alert', 'Instagram');
+                } catch (error) {
+                    console.error('❌ [緊急提醒] 發送失敗:', error.message);
+                }
+            }
+            
             return false;
         }
         
         try {
-            console.log(`🔍 [修復檢查] 使用 ${account.id} 檢查 @${username}`);
+            console.log(`🔍 [檢查] 使用 ${account.id} 檢查 @${username}`);
             
-            // 更長的智能延遲
-            await new Promise(resolve => setTimeout(resolve, 5000 + Math.random() * 5000));
+            // 智能延遲
+            await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 3000));
             
-            // 步驟1: 獲取用戶ID (使用修復後的方法)
-            const userId = await this.getUserIdFixed(username, account);
+            // 首先獲取用戶ID
+            const userId = await this.getUserId(username, account);
             if (!userId) {
                 this.recordRequest(account.id, false, 'user_id_failed');
                 return false;
             }
             
-            // 步驟2: 檢查直播 (使用修復後的方法)
-            await new Promise(resolve => setTimeout(resolve, 3000 + Math.random() * 2000));
+            // 檢查story端點 (old_main.js的成功方法)
+            await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1500));
             
-            const isLive = await this.checkLiveFixed(username, userId, account);
+            const deviceData = this.generateDeviceData();
+            const sessionData = {
+                ...deviceData,
+                userAgent: this.userAgents[Math.floor(Math.random() * this.userAgents.length)],
+                cookies: `sessionid=${account.sessionId}; csrftoken=${account.csrfToken}; ds_user_id=${account.dsUserId}`
+            };
             
-            if (isLive !== null) {
+            const timestamp = Math.floor(Date.now() / 1000);
+            const response = await this.makeRequest(`https://i.instagram.com/api/v1/feed/user/${userId}/story/`, {
+                method: 'GET',
+                headers: {
+                    'User-Agent': sessionData.userAgent,
+                    'Accept': 'application/json',
+                    'Cookie': sessionData.cookies,
+                    'X-IG-App-Locale': 'en_US',
+                    'X-Pigeon-Session-Id': sessionData.uuid,
+                    'X-Pigeon-Rawclienttime': timestamp,
+                    'X-IG-App-ID': '567067343352427',
+                    'X-IG-Device-ID': sessionData.deviceId,
+                    'Host': 'i.instagram.com'
+                }
+            });
+            
+            console.log(`📊 [檢查] Story端點回應: HTTP ${response.statusCode}`);
+            
+            if (response.statusCode === 200) {
+                const data = JSON.parse(response.data);
                 this.recordRequest(account.id, true);
-                return isLive;
+                
+                // 檢查直播 (old_main.js的邏輯)
+                if (data.broadcast) {
+                    console.log('🔴 [Instagram] 發現直播!');
+                    return true;
+                }
+                
+                if (data.reel?.items) {
+                    for (const item of data.reel.items) {
+                        if (item.media_type === 4) {
+                            console.log('🔴 [Instagram] Reel中發現直播!');
+                            return true;
+                        }
+                    }
+                }
+                
+                console.log('⚫ [檢查] 目前無直播');
+                return false;
+                
             } else {
-                this.recordRequest(account.id, false, 'check_failed');
+                // 分析錯誤類型
+                let errorType = 'network_error';
+                if (response.statusCode === 401) {
+                    errorType = 'unauthorized';
+                } else if (response.statusCode === 403) {
+                    errorType = 'forbidden';
+                } else if (response.statusCode === 429) {
+                    errorType = 'rate_limit';
+                }
+                
+                console.log(`❌ [檢查] Story端點失敗: HTTP ${response.statusCode}`);
+                this.recordRequest(account.id, false, errorType);
                 return false;
             }
             
         } catch (error) {
-            console.error(`❌ [修復檢查] ${account.id} 失敗: ${error.message}`);
+            console.error(`❌ [檢查] ${account.id} 失敗: ${error.message}`);
             
+            // 分析錯誤類型並設置適當的冷卻
             let errorType = 'network_error';
+            
             if (error.message.includes('401')) {
                 errorType = 'unauthorized';
             } else if (error.message.includes('403')) {
                 errorType = 'forbidden';
             } else if (error.message.includes('429')) {
                 errorType = 'rate_limit';
-            } else if (error.message.includes('400')) {
-                errorType = 'bad_request';
             }
             
             this.recordRequest(account.id, false, errorType);
+            
+            // 如果所有帳號都連續失敗，暫停監控一段時間
+            const allAccountsFailing = this.accounts.every(acc => {
+                const stats = this.accountStats.get(acc.id);
+                const cookieStats = this.cookieFailureStats.get(acc.id);
+                return (stats.errorCount > stats.successCount && stats.errorCount >= 3) ||
+                       cookieStats.isCurrentlyInvalid;
+            });
+            
+            if (allAccountsFailing) {
+                console.log('⚠️ [監控] 所有帳號連續失敗，暫停監控30分鐘');
+                this.stopMonitoring();
+                setTimeout(() => {
+                    console.log('🔄 [監控] 嘗試重新啟動監控');
+                    this.startMonitoring(username);
+                }, 30 * 60 * 1000); // 30分鐘後重試
+            }
+            
             return false;
         }
     }
     
-    // 計算下次檢查間隔 (增加間隔以適應新的限制)
+    // 計算下次檢查間隔 (根據日本時間調整)
     calculateNextInterval() {
-        const hour = parseInt(this.getJapanHour());
+        const hour = parseInt(this.getJapanHour()); // 日本時間的小時
         const availableAccounts = this.accounts.filter(account => {
             const stats = this.accountStats.get(account.id);
             const cooldownEnd = this.cooldownAccounts.get(account.id) || 0;
@@ -689,23 +586,23 @@ class FixedInstagramMonitor {
         
         let interval = SAFE_CONFIG.minInterval;
         
-        // 根據日本時間調整間隔 (增加所有間隔)
+        // 根據日本時間調整間隔
         if (hour >= 2 && hour <= 6) {
-            // 深夜時段 - 15~20分鐘間隔
-            interval = 900 + Math.random() * 300; // 15-20分鐘
-            console.log('🌙 [深夜模式] 使用15-20分鐘間隔');
+            // 深夜時段 (2am-6am) - 10~15分鐘間隔
+            interval = 600 + Math.random() * 300; // 10-15分鐘
+            console.log('🌙 [深夜模式] 使用10-15分鐘間隔');
         } else if (hour >= 0 && hour <= 1) {
-            // 深夜前期 - 8~12分鐘間隔
-            interval = 480 + Math.random() * 240; // 8-12分鐘
-            console.log('🌃 [深夜前期] 使用8-12分鐘間隔');
+            // 深夜前期 (12am-2am) - 3~5分鐘間隔
+            interval = 180 + Math.random() * 120; // 3-5分鐘
+            console.log('🌃 [深夜前期] 使用3-5分鐘間隔');
         } else if (hour >= 7 && hour <= 8) {
-            // 早晨時段 - 5~8分鐘間隔
-            interval = 300 + Math.random() * 180; // 5-8分鐘
-            console.log('🌅 [早晨時段] 使用5-8分鐘間隔');
+            // 早晨時段 (7am-8am) - 3~5分鐘間隔
+            interval = 180 + Math.random() * 120; // 3-5分鐘
+            console.log('🌅 [早晨時段] 使用3-5分鐘間隔');
         } else if (hour >= 9 && hour <= 23) {
-            // 白天活躍時段 - 2~5分鐘間隔
+            // 白天活躍時段 (9am-11pm) - 90~180秒間隔
             interval = SAFE_CONFIG.minInterval + Math.random() * (SAFE_CONFIG.maxInterval - SAFE_CONFIG.minInterval);
-            console.log('☀️ [活躍時段] 使用2-5分鐘間隔');
+            console.log('☀️ [活躍時段] 使用90-180秒間隔');
         }
         
         // 根據可用帳號調整
@@ -729,12 +626,10 @@ class FixedInstagramMonitor {
         this.isMonitoring = true;
         let isLiveNow = false;
         
-        console.log('🚀 [修復監控] 開始Instagram監控 (適配2025年8月API變化)');
-        console.log(`📊 [新配置] 間隔: ${SAFE_CONFIG.minInterval}-${SAFE_CONFIG.maxInterval}秒`);
+        console.log('🚀 [簡化監控] 開始Instagram監控 (日本時間)');
+        console.log(`📊 [配置] 間隔: ${SAFE_CONFIG.minInterval}-${SAFE_CONFIG.maxInterval}秒`);
         console.log(`🔐 [帳號] 總數: ${this.accounts.length}`);
-        console.log(`🔄 [輪換策略] 每${SAFE_CONFIG.rotationThreshold}次請求強制輪換，冷卻${SAFE_CONFIG.rotationCooldown}分鐘`);
         console.log(`🕐 [時間] 當前日本時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`);
-        console.log(`🛡️ [安全措施] 更長延遲、多端點嘗試、User-Agent輪換`);
         
         const monitorLoop = async () => {
             if (!this.isMonitoring) return;
@@ -776,13 +671,12 @@ class FixedInstagramMonitor {
                 
             } catch (error) {
                 console.error('❌ [監控] 循環錯誤:', error.message);
-                // 發生錯誤時使用更長的間隔
-                setTimeout(monitorLoop, SAFE_CONFIG.maxInterval * 2000);
+                setTimeout(monitorLoop, SAFE_CONFIG.maxInterval * 1000);
             }
         };
         
-        // 初始延遲 (更長)
-        const initialDelay = 60 + Math.random() * 120; // 1-3分鐘
+        // 初始延遲
+        const initialDelay = 30 + Math.random() * 60;
         console.log(`⏳ [監控] ${Math.round(initialDelay)}秒後開始首次檢查`);
         setTimeout(monitorLoop, initialDelay * 1000);
     }
@@ -804,11 +698,13 @@ class FixedInstagramMonitor {
                    !cookieStats.isCurrentlyInvalid;
         }).length;
         
+        // 計算Cookie失效的帳號數量
         const invalidCookieCount = this.accounts.filter(account => {
             const cookieStats = this.cookieFailureStats.get(account.id);
             return cookieStats.isCurrentlyInvalid;
         }).length;
         
+        // 計算成功率
         let totalRequests = 0;
         let totalSuccessful = 0;
         this.accountStats.forEach(stats => {
@@ -819,10 +715,10 @@ class FixedInstagramMonitor {
         
         return {
             isMonitoring: this.isMonitoring,
-            isLiveNow: false, // 會在main.js中更新
+            isLiveNow: false, // 這個值會在main.js中更新
             totalAccounts: this.accounts.length,
             availableAccounts: availableCount,
-            disabledAccounts: invalidCookieCount,
+            disabledAccounts: invalidCookieCount, // 重命名以保持向後兼容
             invalidCookieAccounts: invalidCookieCount,
             dailyRequests: this.dailyRequestCount,
             maxDailyRequests: SAFE_CONFIG.maxDailyRequests,
@@ -830,7 +726,7 @@ class FixedInstagramMonitor {
             totalRequests: totalRequests,
             successfulRequests: totalSuccessful,
             successRate: successRate,
-            consecutiveErrors: 0,
+            consecutiveErrors: 0, // 這個可以根據需要計算
             lastCheck: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
             targetUserId: null,
             japanTime: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
@@ -844,13 +740,10 @@ class FixedInstagramMonitor {
                     errorCount: stats.errorCount,
                     lastUsed: stats.lastUsed ? new Date(stats.lastUsed).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : 'Never',
                     inCooldown: this.cooldownAccounts.has(id) && this.cooldownAccounts.get(id) > Date.now(),
-                    isDisabled: cookieStats.isCurrentlyInvalid,
+                    isDisabled: cookieStats.isCurrentlyInvalid, // 向後兼容
                     cookieStatus: cookieStats.isCurrentlyInvalid ? 'Invalid' : 'Valid',
                     consecutiveFailures: cookieStats.consecutiveFailures,
-                    invalidSince: cookieStats.invalidSince ? new Date(cookieStats.invalidSince).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null,
-                    consecutiveUses: this.rotationStats.get(id)?.consecutiveUses || 0,
-                    rotationThreshold: SAFE_CONFIG.rotationThreshold,
-                    isCurrentlyUsed: this.lastUsedAccount === id
+                    invalidSince: cookieStats.invalidSince ? new Date(cookieStats.invalidSince).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null
                 };
             })
         };
@@ -895,4 +788,4 @@ class FixedInstagramMonitor {
     }
 }
 
-module.exports = FixedInstagramMonitor;
+module.exports = SimplifiedInstagramMonitor;
