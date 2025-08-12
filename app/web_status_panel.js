@@ -754,7 +754,6 @@ class WebStatusPanel {
                 </div>
             </div>
 
-            // 在現有的 4 個狀態卡片後添加第 5 個
             ${this.config.BLOG_NOTIFICATION_CHANNEL_ID ? `
             <div class="status-card">
                 <div class="card-title">📝 博客監控</div>
