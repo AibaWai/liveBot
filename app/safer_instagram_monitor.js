@@ -754,15 +754,18 @@ ${this.accounts.map(acc => {
         return finalInterval;
     }
     
-    // 啟動監控（模擬old_main.js的啟動邏輯）
+    // 啟動監控（修復重複循環問題）
     async startMonitoring(username, onLiveDetected) {
+        console.log(`🔧 [Debug] startMonitoring被調用, 當前監控狀態: ${this.isMonitoring}`);
+        
         if (this.isMonitoring) {
-            console.log('⚠️ [監控] 已在運行中');
+            console.log('⚠️ [監控] 已在運行中，跳過重複啟動');
             return;
         }
         
         // 清除之前的監控循環
         if (this.monitoringTimeout) {
+            console.log('🔧 [Debug] 清除舊的monitoring timeout');
             clearTimeout(this.monitoringTimeout);
             this.monitoringTimeout = null;
         }
@@ -781,6 +784,8 @@ ${this.accounts.map(acc => {
                 return;
             }
             
+            console.log(`🔄 [監控循環] 開始新的檢查循環 - ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}`);
+            
             try {
                 const currentlyLive = await this.checkLive(username);
                 
@@ -789,17 +794,22 @@ ${this.accounts.map(acc => {
                     isLiveNow = true;
                     console.log('🔴 [監控] 檢測到直播開始!');
                     if (onLiveDetected) {
-                        await onLiveDetected();
+                        try {
+                            await onLiveDetected();
+                        } catch (error) {
+                            console.error('❌ [直播通知] 發送失敗:', error.message);
+                        }
                     }
                 } else if (!currentlyLive && isLiveNow) {
                     isLiveNow = false;
                     console.log('⚫ [監控] 直播已結束');
                 }
                 
-                // 計算下次檢查間隔（使用動態調整）
+                // 計算下次檢查間隔（使用修復的計算）
                 const nextInterval = this.calculateNextInterval();
                 const nextCheckTime = new Date(Date.now() + nextInterval * 1000).toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' });
-                console.log(`⏰ [監控] 下次檢查: ${Math.round(nextInterval/60)}分${Math.round(nextInterval%60)}秒後 (${nextCheckTime})`);
+                console.log(`⏰ [監控] 下次檢查: ${Math.round(nextInterval/60)}分${nextInterval%60}秒後 (${nextCheckTime})`);
+                console.log(`🔧 [Debug] 實際等待毫秒數: ${nextInterval * 1000}`);
                 
                 // 顯示狀態
                 const availableCount = this.accounts.filter(account => {
@@ -814,8 +824,12 @@ ${this.accounts.map(acc => {
                 console.log(`📊 [狀態] 可用帳號: ${availableCount}/${this.accounts.length}, 今日請求: ${this.dailyRequestCount}/${SAFE_CONFIG.maxDailyRequests}`);
                 console.log(`🕐 [日本時間] ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}`);
                 
-                // 使用動態間隔設置下次檢查
-                this.monitoringTimeout = setTimeout(monitorLoop, nextInterval * 1000);
+                // 確保使用正確的間隔設置下次檢查
+                console.log(`🔧 [Debug] 準備設置timeout: ${nextInterval}秒 = ${nextInterval * 1000}毫秒`);
+                this.monitoringTimeout = setTimeout(() => {
+                    console.log(`⏰ [監控] 間隔時間到，開始下次檢查 (實際等待了${nextInterval}秒)`);
+                    monitorLoop();
+                }, nextInterval * 1000);
                 
             } catch (error) {
                 console.error('❌ [監控] 循環錯誤:', error.message);

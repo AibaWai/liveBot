@@ -180,7 +180,7 @@ const client = new Client({
     ]
 });
 
-// === 簡化Instagram監控系統 ===
+// === 簡化Instagram監控系統 === （修復版）
 let instagramMonitor = null;
 
 async function startInstagramMonitoring() {
@@ -195,7 +195,7 @@ async function startInstagramMonitoring() {
         // 創建監控實例時傳入Discord通知回調函數
         instagramMonitor = new SaferInstagramMonitor(sendNotification);
         
-        console.log('🚀 [Instagram] 啟動簡化監控系統');
+        console.log('🚀 [Instagram] 啟動安全監控系統');
         
         await instagramMonitor.startMonitoring(config.TARGET_USERNAME, async () => {
             // 檢測到直播時的處理
@@ -206,8 +206,8 @@ async function startInstagramMonitoring() {
                 await sendNotification(`🔴 **@${config.TARGET_USERNAME} Instagram直播開始!** 🎥
 
 📺 觀看: https://www.instagram.com/${config.TARGET_USERNAME}/
-⏰ 檢測時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-🛡️ 3帳號輪換系統 + 時間段智能監控
+⏰ 檢測時間: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}
+🛡️ 安全監控系統 + 智能間隔調整
 🕐 日本時間調整: 深夜降頻，活躍時段密集監控
 
 🚀 快去看直播吧！`, 'live_alert', 'Instagram');
@@ -217,38 +217,14 @@ async function startInstagramMonitoring() {
         // 更新狀態
         unifiedState.instagram.isMonitoring = true;
         
-        // 啟動直播狀態檢查循環
-        startLiveStatusCheck();
+        // 移除舊的 startLiveStatusCheck()，因為 SaferInstagramMonitor 已經內建狀態檢查
         
     } catch (error) {
-        console.error('❌ [Instagram] 簡化監控啟動失敗:', error.message);
+        console.error('❌ [Instagram] 安全監控啟動失敗:', error.message);
     }
 }
 
-// 添加直播狀態檢查循環
-function startLiveStatusCheck() {
-    setInterval(async () => {
-        if (!instagramMonitor || !unifiedState.instagram.isMonitoring) return;
-        
-        try {
-            const currentlyLive = await instagramMonitor.checkLive(config.TARGET_USERNAME);
-            
-            // 檢查直播結束
-            if (!currentlyLive && unifiedState.instagram.isLiveNow) {
-                unifiedState.instagram.isLiveNow = false;
-                console.log('⚫ [Instagram] 直播已結束');
-                
-                await sendNotification(`⚫ @${config.TARGET_USERNAME} Instagram直播已結束
-
-⏰ 結束時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-📊 監控系統持續運行中...`, 'info', 'Instagram');
-            }
-        } catch (error) {
-            console.error('❌ [直播狀態檢查] 錯誤:', error.message);
-        }
-    }, 60000); // 每分鐘檢查一次狀態
-}
-
+// 停止Instagram監控
 // 停止Instagram監控
 function stopInstagramMonitoring() {
     if (instagramMonitor) {
@@ -264,7 +240,7 @@ function getInstagramStatus() {
     if (instagramMonitor && typeof instagramMonitor.getStatus === 'function') {
         try {
             const igStatus = instagramMonitor.getStatus();
-            // 確保直播狀態正確
+            // 確保直播狀態正確同步
             igStatus.isLiveNow = unifiedState.instagram.isLiveNow;
             return igStatus;
         } catch (error) {
@@ -288,7 +264,7 @@ function getInstagramStatus() {
         isLiveNow: unifiedState.instagram.isLiveNow,  // 使用統一狀態
         lastCheck: null,
         targetUserId: null,
-        japanTime: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
+        japanTime: new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' }),
         accountDetails: []
     };
 }
