@@ -683,11 +683,7 @@ class WebStatusPanel {
             </div>
         </div>
 
-        <div class="section">
-            <div class="section-title">🔑 帳號Cookie狀態</div>
-            ${this.generateCookieStatusHTML()}
-        </div>
-
+    
         <div class="section">
             <div class="section-title">📊 詳細統計</div>
             <div class="stats-grid">
@@ -716,9 +712,38 @@ class WebStatusPanel {
 
         ${igStatus.totalAccounts > 0 ? `
         <div class="section">
-            <div class="section-title">🔐 Instagram 帳號狀態</div>
+            <div class="section-title">🔐 Instagram 帳號狀態 & Cookie監控</div>
+            
+            <!-- 添加總覽統計 -->
+            <div class="stats-grid" style="margin-bottom: 20px;">
+                <div class="stat-box ${igStatus.availableAccounts === igStatus.totalAccounts ? '' : 'warning'}">
+                    <div class="stat-number">${igStatus.availableAccounts}</div>
+                    <div class="stat-label">可用帳號</div>
+                </div>
+                <div class="stat-box ${(igStatus.invalidCookieAccounts || 0) > 0 ? 'error' : ''}">
+                    <div class="stat-number">${igStatus.invalidCookieAccounts || 0}</div>
+                    <div class="stat-label">Cookie失效</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">${igStatus.dailyRequests}</div>
+                    <div class="stat-label">今日請求</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">${this.getTimeSlotDescription().split(' ')[0]}</div>
+                    <div class="stat-label">當前時段</div>
+                </div>
+            </div>
+
+            <!-- 時間信息 -->
+            <div class="time-display" style="margin-bottom: 20px;">
+                <div class="japan-time">🕐 當前日本時間: ${igStatus.japanTime}</div>
+                <div class="time-slot">${this.getTimeSlotDescription()}</div>
+            </div>
+            
+            <!-- 原有的帳號詳細卡片 -->
             <div class="account-grid">
                 ${igStatus.accountDetails.map(account => {
+                    // 原有的帳號卡片代碼，但增加Cookie狀態信息
                     const successRate = account.successCount + account.errorCount > 0 ? 
                         Math.round(account.successCount / (account.successCount + account.errorCount) * 100) : 0;
                     const cookieStatus = account.cookieStatus || 'Valid';
@@ -732,6 +757,11 @@ class WebStatusPanel {
                             <span class="account-status">${statusText}</span>
                         </div>
                         <div class="account-stats">
+                            <!-- 添加Cookie詳細信息 -->
+                            <div class="stat-item">
+                                <span>Session ID:</span>
+                                <span class="session-id">${account.deviceId}</span>
+                            </div>
                             <div class="stat-item">
                                 <span>成功率:</span>
                                 <span>${successRate}%</span>
@@ -750,14 +780,24 @@ class WebStatusPanel {
                                 <span>${account.consecutiveFailures}</span>
                             </div>
                             ` : ''}
+                            ${account.invalidSince ? `
+                            <div class="stat-item" style="color: #f44336;">
+                                <span>失效時間:</span>
+                                <span>${account.invalidSince}</span>
+                            </div>
+                            ` : ''}
                         </div>
                     </div>`;
                 }).join('')}
             </div>
+            
+            <!-- 保持原有的警告信息 -->
             ${(igStatus.invalidCookieAccounts || 0) > 0 ? `
             <div class="account-warning">
-                ⚠️ <strong>注意:</strong> 有 ${igStatus.invalidCookieAccounts} 個帳號已被停用，可能是cookies失效。
-                請檢查Discord通知獲取詳細修復指引。
+                ⚠️ <strong>注意:</strong> 有 ${igStatus.invalidCookieAccounts} 個帳號的cookies已失效，需要立即更新！
+                <br>
+                📋 <strong>修復步驟:</strong> 
+                1. 重新登入Instagram → 2. 複製新的cookies → 3. 更新環境變數 → 4. 重新部署
             </div>
             ` : ''}
         </div>` : ''}
