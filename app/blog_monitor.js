@@ -126,57 +126,133 @@ class BlogMonitor {
 
             const html = response.data;
             
-            // 尋找所有日期模式
-            const datePattern = /(\d{4})[年\/\-](\d{1,2})[月\/\-](\d{1,2})[日號]/g;
-            const allDates = [];
-            let match;
+            // 多種日期格式模式
+            const datePatterns = [
+                // 2025.07.14 格式
+                /(\d{4})\.(\d{1,2})\.(\d{1,2})/g,
+                // 2025/07/14 格式
+                /(\d{4})\/(\d{1,2})\/(\d{1,2})/g,
+                // 2025-07-14 格式
+                /(\d{4})-(\d{1,2})-(\d{1,2})/g,
+                // 2025年7月14日 格式
+                /(\d{4})[年](\d{1,2})[月](\d{1,2})[日]/g,
+                // 07/14 格式 (當年)
+                /(\d{1,2})\/(\d{1,2})/g,
+                // 7月14日 格式 (當年)
+                /(\d{1,2})[月](\d{1,2})[日]/g
+            ];
             
-            while ((match = datePattern.exec(html)) !== null) {
-                const year = parseInt(match[1]);
-                const month = parseInt(match[2]);
-                const day = parseInt(match[3]);
+            const allDates = [];
+            const currentYear = new Date().getFullYear();
+            
+            // 測試每種模式
+            datePatterns.forEach((pattern, patternIndex) => {
+                pattern.lastIndex = 0; // 重置正則表達式
+                let match;
+                let matchCount = 0;
                 
-                const articleDate = new Date(year, month - 1, day);
-                const now = new Date();
-                const diffDays = (now - articleDate) / (1000 * 60 * 60 * 24);
+                while ((match = pattern.exec(html)) !== null && matchCount < 50) {
+                    matchCount++;
+                    let year, month, day;
+                    
+                    if (patternIndex <= 3) {
+                        // 包含年份的格式
+                        year = parseInt(match[1]);
+                        month = parseInt(match[2]);
+                        day = parseInt(match[3]);
+                    } else {
+                        // 不包含年份的格式，使用當年
+                        year = currentYear;
+                        month = parseInt(match[1]);
+                        day = parseInt(match[2]);
+                    }
+                    
+                    // 驗證日期有效性
+                    if (year >= 2020 && year <= currentYear + 1 && 
+                        month >= 1 && month <= 12 && 
+                        day >= 1 && day <= 31) {
+                        
+                        const articleDate = new Date(year, month - 1, day);
+                        const now = new Date();
+                        const diffDays = (now - articleDate) / (1000 * 60 * 60 * 24);
+                        
+                        allDates.push({
+                            original: match[0],
+                            pattern: patternIndex,
+                            date: articleDate,
+                            dateString: `${year}年${month}月${day}日`,
+                            daysAgo: Math.floor(diffDays),
+                            isRecent: diffDays >= 0 && diffDays <= 30 // 30天內
+                        });
+                    }
+                }
                 
-                allDates.push({
-                    original: match[0],
-                    date: articleDate,
-                    dateString: `${year}年${month}月${day}日`,
-                    daysAgo: Math.floor(diffDays),
-                    isRecent: diffDays >= 0 && diffDays <= 30 // 30天內
-                });
-            }
+                if (matchCount > 0) {
+                    console.log(`📊 [Blog分析] 模式 ${patternIndex + 1} 找到 ${matchCount} 個匹配`);
+                }
+            });
 
-            // 按日期排序，最新的在前
-            allDates.sort((a, b) => b.date - a.date);
+            // 去重複並按日期排序
+            const uniqueDates = allDates.filter((date, index, self) => 
+                index === self.findIndex(d => d.date.getTime() === date.date.getTime())
+            );
+            
+            uniqueDates.sort((a, b) => b.date - a.date);
 
             // 過濾最近的文章
-            const recentArticles = allDates.filter(article => article.isRecent);
+            const recentArticles = uniqueDates.filter(article => article.isRecent);
             
-            console.log(`📊 [Blog分析] 總共找到 ${allDates.length} 個日期`);
+            console.log(`📊 [Blog分析] 總共找到 ${uniqueDates.length} 個唯一日期`);
             console.log(`📊 [Blog分析] 最近30天內的文章: ${recentArticles.length} 個`);
 
-            if (allDates.length > 0) {
-                const latest = allDates[0];
+            if (uniqueDates.length > 0) {
+                const latest = uniqueDates[0];
                 console.log(`📅 [Blog分析] 最新文章: ${latest.dateString} (${latest.daysAgo}天前)`);
                 
                 if (showDetails && recentArticles.length > 0) {
                     console.log('📋 [Blog分析] 最近文章列表:');
                     recentArticles.slice(0, 10).forEach((article, index) => {
-                        console.log(`   ${index + 1}. ${article.dateString} (${article.daysAgo}天前)`);
+                        console.log(`   ${index + 1}. ${article.dateString} (${article.daysAgo}天前) [模式${article.pattern + 1}: ${article.original}]`);
                     });
                 }
             }
 
+            // 如果還是找不到，提供調試信息
+            if (uniqueDates.length === 0) {
+                console.log('🔍 [Blog調試] 未找到日期，提供HTML片段分析...');
+                
+                // 提取可能包含日期的HTML片段
+                const htmlSample = html.substring(0, 2000);
+                const lines = htmlSample.split('\n').slice(0, 20);
+                console.log('📄 [Blog調試] HTML前20行:');
+                lines.forEach((line, index) => {
+                    if (line.trim()) {
+                        console.log(`   ${index + 1}: ${line.trim().substring(0, 100)}`);
+                    }
+                });
+            }
+
             return {
                 success: true,
-                totalDates: allDates.length,
+                totalDates: uniqueDates.length,
                 recentArticles: recentArticles.length,
-                latestArticle: allDates.length > 0 ? allDates[0] : null,
+                latestArticle: uniqueDates.length > 0 ? uniqueDates[0] : null,
                 allRecentArticles: recentArticles,
-                analysisTime: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
+                analysisTime: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
+                htmlLength: html.length,
+                debugInfo: uniqueDates.length === 0 ? {
+                    htmlSample: html.substring(0, 1000),
+                    patternResults: datePatterns.map((pattern, index) => {
+                        pattern.lastIndex = 0;
+                        const matches = [...html.matchAll(pattern)];
+                        return {
+                            pattern: index + 1,
+                            description: ['YYYY.MM.DD', 'YYYY/MM/DD', 'YYYY-MM-DD', 'YYYY年MM月DD日', 'MM/DD', 'MM月DD日'][index],
+                            matches: matches.length,
+                            samples: matches.slice(0, 3).map(m => m[0])
+                        };
+                    })
+                } : null
             };
 
         } catch (error) {
@@ -202,42 +278,71 @@ class BlogMonitor {
                 return null;
             }
 
-            // 簡單的HTML解析尋找文章日期模式
             const html = response.data;
             
-            // 尋找最新文章的日期模式
-            const datePattern = /(\d{4})[年\/\-](\d{1,2})[月\/\-](\d{1,2})[日號]/g;
-            const dates = [];
-            let match;
+            // 多種日期格式模式
+            const datePatterns = [
+                // 2025.07.14 格式
+                /(\d{4})\.(\d{1,2})\.(\d{1,2})/g,
+                // 2025/07/14 格式
+                /(\d{4})\/(\d{1,2})\/(\d{1,2})/g,
+                // 2025-07-14 格式
+                /(\d{4})-(\d{1,2})-(\d{1,2})/g,
+                // 2025年7月14日 格式
+                /(\d{4})[年](\d{1,2})[月](\d{1,2})[日]/g
+            ];
             
-            while ((match = datePattern.exec(html)) !== null) {
-                const year = parseInt(match[1]);
-                const month = parseInt(match[2]);
-                const day = parseInt(match[3]);
+            const dates = [];
+            const currentYear = new Date().getFullYear();
+            
+            // 測試每種模式
+            datePatterns.forEach((pattern) => {
+                pattern.lastIndex = 0; // 重置正則表達式
+                let match;
                 
-                // 只考慮近期的日期
-                const articleDate = new Date(year, month - 1, day);
-                const now = new Date();
-                const diffDays = (now - articleDate) / (1000 * 60 * 60 * 24);
-                
-                if (diffDays >= 0 && diffDays <= 7) { // 只檢查7天內的文章
-                    dates.push({
-                        date: articleDate,
-                        dateString: `${year}年${month}月${day}日`
-                    });
+                while ((match = pattern.exec(html)) !== null) {
+                    const year = parseInt(match[1]);
+                    const month = parseInt(match[2]);
+                    const day = parseInt(match[3]);
+                    
+                    // 驗證日期有效性
+                    if (year >= 2020 && year <= currentYear + 1 && 
+                        month >= 1 && month <= 12 && 
+                        day >= 1 && day <= 31) {
+                        
+                        const articleDate = new Date(year, month - 1, day);
+                        const now = new Date();
+                        const diffDays = (now - articleDate) / (1000 * 60 * 60 * 24);
+                        
+                        // 只考慮7天內的文章（正常模式）或30天內（測試模式）
+                        const dayLimit = testMode ? 30 : 7;
+                        
+                        if (diffDays >= 0 && diffDays <= dayLimit) {
+                            dates.push({
+                                date: articleDate,
+                                dateString: `${year}年${month}月${day}日`,
+                                original: match[0]
+                            });
+                        }
+                    }
                 }
-            }
+            });
 
-            if (dates.length > 0) {
+            // 去重複並排序
+            const uniqueDates = dates.filter((date, index, self) => 
+                index === self.findIndex(d => d.date.getTime() === date.date.getTime())
+            );
+            
+            uniqueDates.sort((a, b) => b.date - a.date);
+
+            if (uniqueDates.length > 0) {
                 // 取最新的日期
-                const latestArticle = dates.reduce((latest, current) => 
-                    current.date > latest.date ? current : latest
-                );
+                const latestArticle = uniqueDates[0];
 
                 // 在測試模式下，總是顯示找到的文章
                 if (testMode) {
-                    console.log(`📝 [Blog測試] 找到最新文章: ${latestArticle.dateString}`);
-                    this.lastFoundArticles = dates.slice(0, 5); // 保存最近5篇
+                    console.log(`📝 [Blog測試] 找到最新文章: ${latestArticle.dateString} (原始格式: ${latestArticle.original})`);
+                    this.lastFoundArticles = uniqueDates.slice(0, 5); // 保存最近5篇
                     return latestArticle;
                 }
 

@@ -621,6 +621,7 @@ async function handleDiscordCommands(message) {
 \`!blog-test\` - 測試網站連接
 \`!blog-analyze\` - 分析網站內容
 \`!blog-latest\` - 檢查最新文章
+\`!blog-debug\` - 調試分析
 
 **系統命令:**
 \`!status\` - 完整系統狀態
@@ -749,6 +750,46 @@ else if (cmd === '!blog-latest') {
             }
         } catch (error) {
             await message.reply(`❌ 檢查失敗: ${error.message}`);
+        }
+    } else {
+        await message.reply('❌ 博客監控未啟用');
+    }
+}
+
+// 在 handleDiscordCommands 函數中添加調試命令
+else if (cmd === '!blog-debug') {
+    if (blogMonitor) {
+        await message.reply('🔍 執行博客調試分析...');
+        try {
+            const analysis = await blogMonitor.analyzeCurrentContent(true);
+            if (analysis.success) {
+                let debugMsg = `🔍 **博客調試分析結果**
+
+📊 **基本信息:**
+- 總日期數: ${analysis.totalDates}
+- HTML長度: ${analysis.htmlLength} 字元
+- 分析時間: ${analysis.analysisTime}
+
+📅 **最新文章:** ${analysis.latestArticle ? `${analysis.latestArticle.dateString} (${analysis.latestArticle.daysAgo}天前)` : '無'}`;
+
+                if (analysis.debugInfo) {
+                    debugMsg += `\n\n🔧 **調試信息:**\n`;
+                    analysis.debugInfo.patternResults.forEach(result => {
+                        debugMsg += `• ${result.description}: ${result.matches} 個匹配\n`;
+                        if (result.samples.length > 0) {
+                            debugMsg += `  範例: ${result.samples.join(', ')}\n`;
+                        }
+                    });
+                    
+                    debugMsg += `\n📄 **HTML片段:** \n\`\`\`\n${analysis.debugInfo.htmlSample.substring(0, 500)}...\n\`\`\``;
+                }
+
+                await message.reply(debugMsg);
+            } else {
+                await message.reply(`❌ **調試分析失敗**\n\n錯誤: ${analysis.error}`);
+            }
+        } catch (error) {
+            await message.reply(`❌ 調試執行失敗: ${error.message}`);
         }
     } else {
         await message.reply('❌ 博客監控未啟用');
