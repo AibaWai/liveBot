@@ -630,278 +630,204 @@ async function handleDiscordCommands(message) {
 \`!help\` - 顯示此幫助`);
 }
 
-    // 在 handleDiscordCommands 函數中添加
-else if (cmd === '!blog-status') {
-    if (blogMonitor) {
-        const blogStatus = blogMonitor.getStatus();
-        const statusMsg = `📝 **博客監控狀態**
+    // 在 handleDiscordCommands 函數中添加/修改博客監控命令
+    else if (cmd === '!blog-status' || cmd === '!twitter-status') {
+        if (blogMonitor) {
+            const blogStatus = blogMonitor.getStatus();
+            const statusMsg = `🐦 **Twitter監控狀態**
 
 **監控狀態:** ${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
-**博客網址:** ${blogStatus.blogUrl}
+**目標帳號:** @${blogStatus.targetAccount}
+**監控關鍵字:** ${blogStatus.keywords.join(', ')}
+**Twitter網址:** ${blogStatus.twitterUrl}
 **總檢查次數:** ${blogStatus.totalChecks}
-**發現文章數:** ${blogStatus.articlesFound}
+**發現推文數:** ${blogStatus.articlesFound}
 **最後檢查:** ${blogStatus.lastCheckTime || '尚未檢查'}
-**最新文章:** ${blogStatus.lastArticleDate || '無'}
+**最新推文:** ${blogStatus.lastArticleDate || '無'}
 **下次檢查:** ${blogStatus.nextCheckTime || '未安排'}
 
 ⏰ 每小時00分自動檢查`;
 
-        await message.reply(statusMsg);
-    } else {
-        await message.reply('❌ 博客監控未啟用');
+            await message.reply(statusMsg);
+        } else {
+            await message.reply('❌ Twitter監控未啟用');
+        }
     }
-}
 
-    else if (cmd === '!blog-check') {
+    else if (cmd === '!blog-check' || cmd === '!twitter-check') {
         if (blogMonitor) {
-            await message.reply('🔍 執行手動博客檢查...');
+            await message.reply('🔍 執行手動Twitter檢查...');
             try {
-                const newArticle = await blogMonitor.checkForNewArticles();
-                if (newArticle) {
-                    await message.reply(`📝 發現新文章: ${newArticle.dateString}`);
+                const newTweet = await blogMonitor.checkForNewArticles(true); // 測試模式
+                if (newTweet) {
+                    await message.reply(`🐦 **發現相關推文!**
+
+🗓️ **時間:** ${newTweet.fullDateTime}
+🔍 **關鍵字:** ${newTweet.keyword}
+📝 **內容:** ${newTweet.content.substring(0, 300)}${newTweet.content.length > 300 ? '...' : ''}
+🔗 **查看:** https://x.com/${blogMonitor.targetAccount}`);
                 } else {
-                    await message.reply('📋 目前無新文章');
+                    await message.reply('📋 目前無包含關鍵字的新推文');
                 }
             } catch (error) {
                 await message.reply(`❌ 檢查失敗: ${error.message}`);
             }
         } else {
-            await message.reply('❌ 博客監控未啟用');
+            await message.reply('❌ Twitter監控未啟用');
         }
     }
 
-    // 新增測試命令
-else if (cmd === '!blog-test') {
-    if (blogMonitor) {
-        await message.reply('🔍 執行博客網站測試...');
-        try {
-            const testResult = await blogMonitor.testWebsiteAccess();
-            if (testResult.success) {
-                const testMsg = `✅ **博客網站測試成功**
+    else if (cmd === '!blog-test' || cmd === '!twitter-test') {
+        if (blogMonitor) {
+            await message.reply('🔍 執行Twitter連接測試...');
+            try {
+                const testResult = await blogMonitor.testWebsiteAccess();
+                if (testResult.success) {
+                    const testMsg = `✅ **Twitter連接測試成功**
 
 📊 **連接狀態:** HTTP ${testResult.statusCode}
 📄 **內容長度:** ${testResult.contentLength} 字元
-🏗️ **HTML結構:** ${testResult.hasHtmlStructure ? '✅ 正常' : '❌ 異常'}
-📝 **內容充足:** ${testResult.hasContent ? '✅ 是' : '❌ 否'}
-📅 **找到日期:** ${testResult.dateMatchesCount} 個
+🏗️ **推文結構:** ${testResult.hasValidContent ? '✅ 正常' : '❌ 異常'}
+🔍 **包含關鍵字:** ${testResult.hasKeywords ? '✅ 是' : '❌ 否'}
+📝 **監控關鍵字:** ${testResult.keywords.join(', ')}
 
-**範例日期:** ${testResult.sampleDates.join(', ') || '無'}
-
-✅ 網站可正常訪問並解析！`;
-                
-                await message.reply(testMsg);
-            } else {
-                await message.reply(`❌ **博客網站測試失敗**\n\n錯誤: ${testResult.error}`);
+✅ Twitter頁面可正常訪問並解析！`;
+                    
+                    await message.reply(testMsg);
+                } else {
+                    await message.reply(`❌ **Twitter連接測試失敗**\n\n錯誤: ${testResult.error}`);
+                }
+            } catch (error) {
+                await message.reply(`❌ 測試執行失敗: ${error.message}`);
             }
-        } catch (error) {
-            await message.reply(`❌ 測試執行失敗: ${error.message}`);
+        } else {
+            await message.reply('❌ Twitter監控未啟用');
         }
-    } else {
-        await message.reply('❌ 博客監控未啟用');
     }
-}
 
-else if (cmd === '!blog-analyze') {
-    if (blogMonitor) {
-        await message.reply('🔍 分析博客當前內容...');
-        try {
-            const analysis = await blogMonitor.analyzeCurrentContent(true);
-            if (analysis.success) {
-                const analysisMsg = `📊 **博客內容分析結果**
+    else if (cmd === '!blog-analyze' || cmd === '!twitter-analyze') {
+        if (blogMonitor) {
+            await message.reply('🔍 分析Twitter當前內容...');
+            try {
+                const analysis = await blogMonitor.analyzeCurrentContent(true);
+                if (analysis.success) {
+                    const analysisMsg = `📊 **Twitter內容分析結果**
 
-📅 **總日期數:** ${analysis.totalDates}
-📝 **最近文章:** ${analysis.recentArticles} 篇 (30天內)
-🗓️ **最新文章:** ${analysis.latestArticle ? 
-    (analysis.latestArticle.fullDateTime || analysis.latestArticle.dateString) + ` (${analysis.latestArticle.daysAgo}天前)` : 
+🔍 **監控關鍵字:** ${analysis.keywords.join(', ')}
+📊 **總相關推文:** ${analysis.totalTweets}
+📝 **最近推文:** ${analysis.recentTweets} 篇 (7天內)
+🗓️ **最新推文:** ${analysis.latestTweet ? 
+    `${analysis.latestTweet.fullDateTime} (關鍵字: ${analysis.latestTweet.keyword})` : 
     '無'}
 ⏰ **分析時間:** ${analysis.analysisTime}
-🔧 **解析方式:** ${analysis.useTimeTag ? '✅ Time標籤解析' : '⚠️ 通用模式'}
 
-${analysis.recentArticles > 0 ? 
-`📋 **最近文章列表:**
-${analysis.allRecentArticles.slice(0, 5).map((article, index) => {
-    const timeInfo = article.fullDateTime || article.dateString;
-    return `${index + 1}. ${timeInfo} (${article.daysAgo}天前)`;
+${analysis.recentTweets > 0 ? 
+`📋 **最近推文列表:**
+${analysis.allRecentTweets.slice(0, 3).map((tweet, index) => {
+    return `${index + 1}. ${tweet.fullDateTime} - ${tweet.keyword}\n   ${tweet.content.substring(0, 100)}...`;
 }).join('\n')}` : 
-'📭 最近30天內無文章'}
+'📭 最近7天內無包含關鍵字的推文'}
 
-✅ 分析完成，監控系統能正確解析文章！`;
-                
-                await message.reply(analysisMsg);
-            } else {
-                await message.reply(`❌ **內容分析失敗**\n\n錯誤: ${analysis.error}`);
-            }
-        } catch (error) {
-            await message.reply(`❌ 分析執行失敗: ${error.message}`);
-        }
-    } else {
-        await message.reply('❌ 博客監控未啟用');
-    }
-}
-
-else if (cmd === '!blog-raw') {
-    if (blogMonitor) {
-        await message.reply('🔍 獲取博客原始HTML內容...');
-        try {
-            const response = await blogMonitor.makeRequest(blogMonitor.blogUrl);
-            if (response.statusCode === 200) {
-                const html = response.data;
-                
-                // 尋找包含 "entry" 或 "time" 的HTML片段
-                const timeTagMatches = html.match(/<time[^>]*>.*?<\/time>/gi) || [];
-                const entryMatches = html.match(/<div[^>]*class="[^"]*entry[^"]*"[^>]*>[\s\S]{0,500}/gi) || [];
-                
-                let debugMsg = `🔍 **博客原始內容調試**
-
-📊 **基本信息:**
-- HTML長度: ${html.length} 字元
-- 找到 <time> 標籤: ${timeTagMatches.length} 個
-- 找到 entry 容器: ${entryMatches.length} 個
-
-`;
-
-                if (timeTagMatches.length > 0) {
-                    debugMsg += `📅 **Time 標籤:**\n`;
-                    timeTagMatches.slice(0, 3).forEach((tag, index) => {
-                        debugMsg += `${index + 1}. \`${tag}\`\n`;
-                    });
-                } else {
-                    debugMsg += `❌ **未找到 time 標籤**\n`;
-                }
-
-                if (entryMatches.length > 0) {
-                    debugMsg += `\n📦 **Entry 容器 (前3個):**\n`;
-                    entryMatches.slice(0, 3).forEach((entry, index) => {
-                        debugMsg += `${index + 1}. \`${entry.substring(0, 200)}...\`\n`;
-                    });
-                }
-
-                // 搜尋包含日期的任何內容
-                const dateContentMatches = html.match(/2025[.\-\/年]0?7[.\-\/月]1?4/gi) || [];
-                if (dateContentMatches.length > 0) {
-                    debugMsg += `\n🗓️ **包含 2025.07.14 的內容:**\n`;
-                    dateContentMatches.slice(0, 3).forEach((match, index) => {
-                        debugMsg += `${index + 1}. ${match}\n`;
-                    });
-                }
-
-                await message.reply(debugMsg);
-            } else {
-                await message.reply(`❌ HTTP錯誤: ${response.statusCode}`);
-            }
-        } catch (error) {
-            await message.reply(`❌ 獲取失敗: ${error.message}`);
-        }
-    } else {
-        await message.reply('❌ 博客監控未啟用');
-    }
-}
-
-else if (cmd === '!blog-dynamic') {
-    if (blogMonitor) {
-        await message.reply('🔍 測試動態內容載入...');
-        try {
-            const dynamicResult = await blogMonitor.getDynamicContent();
-            if (dynamicResult) {
-                const resultMsg = `✅ **找到動態內容載入方法**
-
-🔗 **來源URL:** ${dynamicResult.url}
-📊 **內容類型:** ${dynamicResult.type}
-📄 **內容長度:** ${typeof dynamicResult.data === 'string' ? dynamicResult.data.length : JSON.stringify(dynamicResult.data).length} 字元
-
-${dynamicResult.type === 'json' ? 
-`📋 **JSON結構:** ${Object.keys(dynamicResult.data).join(', ')}` :
-`📋 **包含time標籤:** ${dynamicResult.data.includes('<time') ? '✅ 是' : '❌ 否'}`}
-
-🎉 可以使用動態載入方法獲取文章內容！`;
-                
-                await message.reply(resultMsg);
-            } else {
-                await message.reply(`❌ **未找到動態內容載入方法**
-
-這表示：
-- 網站沒有公開的API端點
-- 內容完全依賴JavaScript動態載入
-- 需要特殊的請求頭或參數
-
-建議：考慮其他監控方法或聯繫網站管理員`);
-            }
-        } catch (error) {
-            await message.reply(`❌ 動態內容測試失敗: ${error.message}`);
-        }
-    } else {
-        await message.reply('❌ 博客監控未啟用');
-    }
-}
-
-else if (cmd === '!blog-latest') {
-    if (blogMonitor) {
-        await message.reply('🔍 檢查最新文章...');
-        try {
-            const latestArticle = await blogMonitor.checkForNewArticles(true); // 測試模式
-            if (latestArticle) {
-                const timeInfo = latestArticle.fullDateTime || latestArticle.dateString;
-                const sourceInfo = latestArticle.datetime ? 
-                    `Time標籤解析 (${latestArticle.original})` : 
-                    `通用模式解析 (${latestArticle.original})`;
-                
-                await message.reply(`📝 **找到最新文章:** ${timeInfo}
-
-🔗 **博客連結:** ${blogMonitor.blogUrl}
-⏰ **檢查時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-🔧 **解析方式:** ${sourceInfo}
-
-✅ 監控系統能正確檢測到文章！`);
-           } else {
-               await message.reply('📋 **未找到最近7天內的文章**\n\n可能原因：\n• 最近確實沒有新文章\n• 網站結構改變\n• 網絡連接問題');
-           }
-       } catch (error) {
-           await message.reply(`❌ 檢查失敗: ${error.message}`);
-       }
-   } else {
-       await message.reply('❌ 博客監控未啟用');
-   }
-}
-
-// 在 handleDiscordCommands 函數中添加調試命令
-else if (cmd === '!blog-debug') {
-    if (blogMonitor) {
-        await message.reply('🔍 執行博客調試分析...');
-        try {
-            const analysis = await blogMonitor.analyzeCurrentContent(true);
-            if (analysis.success) {
-                let debugMsg = `🔍 **博客調試分析結果**
-
-📊 **基本信息:**
-- 總日期數: ${analysis.totalDates}
-- HTML長度: ${analysis.htmlLength} 字元
-- 分析時間: ${analysis.analysisTime}
-
-📅 **最新文章:** ${analysis.latestArticle ? `${analysis.latestArticle.dateString} (${analysis.latestArticle.daysAgo}天前)` : '無'}`;
-
-                if (analysis.debugInfo) {
-                    debugMsg += `\n\n🔧 **調試信息:**\n`;
-                    analysis.debugInfo.patternResults.forEach(result => {
-                        debugMsg += `• ${result.description}: ${result.matches} 個匹配\n`;
-                        if (result.samples.length > 0) {
-                            debugMsg += `  範例: ${result.samples.join(', ')}\n`;
-                        }
-                    });
+✅ 分析完成，監控系統能正確解析推文！`;
                     
-                    debugMsg += `\n📄 **HTML片段:** \n\`\`\`\n${analysis.debugInfo.htmlSample.substring(0, 500)}...\n\`\`\``;
+                    await message.reply(analysisMsg);
+                } else {
+                    await message.reply(`❌ **內容分析失敗**\n\n錯誤: ${analysis.error}`);
                 }
-
-                await message.reply(debugMsg);
-            } else {
-                await message.reply(`❌ **調試分析失敗**\n\n錯誤: ${analysis.error}`);
+            } catch (error) {
+                await message.reply(`❌ 分析執行失敗: ${error.message}`);
             }
-        } catch (error) {
-            await message.reply(`❌ 調試執行失敗: ${error.message}`);
+        } else {
+            await message.reply('❌ Twitter監控未啟用');
         }
-    } else {
-        await message.reply('❌ 博客監控未啟用');
     }
-}
+
+    else if (cmd === '!blog-keywords' || cmd === '!twitter-keywords') {
+        if (blogMonitor) {
+            try {
+                const keywords = blogMonitor.reloadKeywords();
+                await message.reply(`🔍 **Twitter監控關鍵字**
+
+**當前關鍵字:** ${keywords.join(', ')}
+**關鍵字數量:** ${keywords.length}
+
+💡 **設定方式:**
+• 環境變數 \`BLOG_KEYWORDS\` 或 \`TWITTER_KEYWORDS\` (逗號分隔)
+• 或使用 \`BLOG_KEYWORD_1\`, \`BLOG_KEYWORD_2\` 等
+
+🔄 關鍵字已重新載入！`);
+            } catch (error) {
+                await message.reply(`❌ 關鍵字載入失敗: ${error.message}`);
+            }
+        } else {
+            await message.reply('❌ Twitter監控未啟用');
+        }
+    }
+
+    else if (cmd === '!blog-latest' || cmd === '!twitter-latest') {
+        if (blogMonitor) {
+            await message.reply('🔍 檢查最新推文...');
+            try {
+                const latestTweet = await blogMonitor.checkForNewArticles(true); // 測試模式
+                if (latestTweet) {
+                    await message.reply(`🐦 **找到最新相關推文!**
+
+🗓️ **發布時間:** ${latestTweet.fullDateTime}
+🔍 **匹配關鍵字:** ${latestTweet.keyword}
+📝 **推文內容:**
+${latestTweet.content}
+
+🔗 **查看完整推文:** https://x.com/${blogMonitor.targetAccount}
+⏰ **檢查時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
+
+✅ Twitter監控系統運作正常！`);
+                } else {
+                    await message.reply(`📋 **未找到最近包含關鍵字的推文**
+
+🔍 **監控關鍵字:** ${blogMonitor.keywords.join(', ')}
+🐦 **目標帳號:** @${blogMonitor.targetAccount}
+
+可能原因：
+• 最近確實沒有包含關鍵字的推文
+• Nitter服務臨時不可用
+• 網絡連接問題`);
+                }
+            } catch (error) {
+                await message.reply(`❌ 檢查失敗: ${error.message}`);
+            }
+        } else {
+            await message.reply('❌ Twitter監控未啟用');
+        }
+    }
+
+    else if (cmd === '!help') {
+        await message.reply(`🔍 **統一直播監控機器人** (日本時間版)
+
+**Instagram監控命令:**
+\`!ig-start\` - 開始Instagram監控
+\`!ig-stop\` - 停止Instagram監控
+\`!ig-status\` - Instagram監控狀態
+\`!ig-check\` - 手動檢查Instagram
+\`!ig-accounts\` - 檢查帳號狀態
+
+**Twitter監控命令:**
+\`!twitter-status\` / \`!blog-status\` - Twitter監控狀態
+\`!twitter-check\` / \`!blog-check\` - 手動檢查推文
+\`!twitter-test\` / \`!blog-test\` - 測試Twitter連接
+\`!twitter-analyze\` / \`!blog-analyze\` - 分析推文內容
+\`!twitter-latest\` / \`!blog-latest\` - 檢查最新推文
+\`!twitter-keywords\` / \`!blog-keywords\` - 查看/重載關鍵字
+
+**系統命令:**
+\`!status\` - 完整系統狀態
+\`!help\` - 顯示此幫助
+
+**Twitter監控說明:**
+🐦 監控目標: @FCweb_info
+🔍 關鍵字: 透過環境變數設定
+⏰ 檢查頻率: 每小時00分自動檢查`);
+    }
+
 }
 
 // 頻道專用API呼叫

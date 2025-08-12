@@ -76,7 +76,6 @@ class WebStatusPanel {
     }
 
 
-    // 安全獲取博客監控狀態
     getBlogStatus() {
         try {
             if (this.getBlogMonitor && typeof this.getBlogMonitor === 'function') {
@@ -86,7 +85,7 @@ class WebStatusPanel {
                 }
             }
         } catch (error) {
-            console.error('❌ [Web面板] 獲取博客狀態失敗:', error.message);
+            console.error('❌ [Web面板] 獲取Twitter狀態失敗:', error.message);
         }
         
         // 返回默認狀態
@@ -97,7 +96,9 @@ class WebStatusPanel {
             lastCheckTime: null,
             lastArticleDate: null,
             nextCheckTime: null,
-            blogUrl: 'https://web.familyclub.jp/s/jwb/diary/F2017?ima=2317'
+            twitterUrl: 'https://nitter.poast.org/FCweb_info',
+            targetAccount: 'FCweb_info',
+            keywords: []
         };
     }
     
@@ -169,6 +170,152 @@ class WebStatusPanel {
                 res.status(500).json({ error: 'Instagram status not available' });
             }
         });
+    }
+
+    // 在HTML生成中更新博客監控部分
+    generateTwitterMonitoringHTML() {
+        const blogStatus = this.getBlogStatus();
+        
+        if (!this.config.BLOG_NOTIFICATION_CHANNEL_ID) {
+            return '';
+        }
+
+        return `
+        <div class="status-card">
+            <div class="card-title">🐦 Twitter監控</div>
+            <div class="status-item">
+                <span>監控狀態:</span>
+                <span class="status-value">${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}</span>
+            </div>
+            <div class="status-item">
+                <span>目標帳號:</span>
+                <span class="status-value">@${blogStatus.targetAccount}</span>
+            </div>
+            <div class="status-item">
+                <span>檢查次數:</span>
+                <span class="status-value">${blogStatus.totalChecks}</span>
+            </div>
+            <div class="status-item">
+                <span>發現推文:</span>
+                <span class="status-value">${blogStatus.articlesFound}</span>
+            </div>
+            <div class="status-item">
+                <span>關鍵字數:</span>
+                <span class="status-value">${blogStatus.keywords.length}</span>
+            </div>
+            <div class="status-item">
+                <span>下次檢查:</span>
+                <span class="status-value">${blogStatus.nextCheckTime ? new Date(blogStatus.nextCheckTime).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }) : '未安排'}</span>
+            </div>
+        </div>`;
+    }
+
+    // 生成Twitter監控詳情HTML
+    generateTwitterDetailHTML() {
+        const blogStatus = this.getBlogStatus();
+        
+        if (!this.config.BLOG_NOTIFICATION_CHANNEL_ID) {
+            return '';
+        }
+
+        return `
+        <div class="section">
+            <div class="section-title">🐦 Twitter監控詳情</div>
+            <div class="stats-grid" style="margin-bottom: 20px;">
+                <div class="stat-box ${blogStatus.isMonitoring ? '' : 'warning'}">
+                    <div class="stat-number">${blogStatus.isMonitoring ? '✅' : '❌'}</div>
+                    <div class="stat-label">監控狀態</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">${blogStatus.totalChecks}</div>
+                    <div class="stat-label">總檢查次數</div>
+                </div>
+                <div class="stat-box ${blogStatus.articlesFound > 0 ? '' : 'warning'}">
+                    <div class="stat-number">${blogStatus.articlesFound}</div>
+                    <div class="stat-label">發現推文</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">${blogStatus.keywords.length}</div>
+                    <div class="stat-label">監控關鍵字</div>
+                </div>
+            </div>
+
+            <div class="blog-info">
+                <div class="blog-detail-card">
+                    <h4>📋 Twitter監控信息</h4>
+                    <div class="detail-grid">
+                        <div class="detail-item">
+                            <span>Twitter帳號:</span>
+                            <span><a href="https://x.com/${blogStatus.targetAccount}" target="_blank" style="color: #2196F3; text-decoration: none;">@${blogStatus.targetAccount}</a></span>
+                        </div>
+                        <div class="detail-item">
+                            <span>Nitter網址:</span>
+                            <span><a href="${blogStatus.twitterUrl}" target="_blank" style="color: #2196F3; text-decoration: none;">nitter.poast.org</a></span>
+                        </div>
+                        <div class="detail-item">
+                            <span>檢查頻率:</span>
+                            <span>每小時00分</span>
+                        </div>
+                        <div class="detail-item">
+                            <span>監控關鍵字:</span>
+                            <span>${blogStatus.keywords.join(', ') || '未設定'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span>最後檢查:</span>
+                            <span>${blogStatus.lastCheckTime || '尚未檢查'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span>最新推文時間:</span>
+                            <span>${blogStatus.lastArticleDate || '無'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span>下次檢查時間:</span>
+                            <span class="next-check">${blogStatus.nextCheckTime || '未安排'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span>通知頻道:</span>
+                            <span>已配置 ✅</span>
+                        </div>
+                    </div>
+                </div>
+
+                ${blogStatus.lastFoundArticles && blogStatus.lastFoundArticles.length > 0 ? `
+                <div class="blog-detail-card" style="margin-top: 15px;">
+                    <h4>📝 最近發現的推文</h4>
+                    <div class="recent-tweets">
+                        ${blogStatus.lastFoundArticles.slice(0, 3).map((tweet, index) => `
+                            <div class="tweet-item" style="padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 10px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
+                                    <span style="color: #2196F3; font-weight: bold;">${tweet.date}</span>
+                                    <span style="color: #4CAF50; font-size: 0.9em;">關鍵字: ${tweet.keyword}</span>
+                                </div>
+                                <div style="color: #ccc; font-size: 0.9em;">
+                                    ${tweet.content}
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                ` : ''}
+            </div>
+
+            ${blogStatus.articlesFound > 0 ? `
+            <div class="blog-success">
+                🎉 <strong>監控運作正常!</strong> 已成功檢測到 ${blogStatus.articlesFound} 篇相關推文
+                <br>🔍 關鍵字: ${blogStatus.keywords.join(', ')}
+            </div>
+            ` : blogStatus.totalChecks > 5 ? `
+            <div class="blog-waiting">
+                ⏳ <strong>持續監控中...</strong> 已檢查 ${blogStatus.totalChecks} 次，等待包含關鍵字的新推文
+                <br>🔍 監控關鍵字: ${blogStatus.keywords.join(', ')}
+            </div>
+            ` : `
+            <div class="blog-waiting">
+                🚀 <strong>監控系統啟動中...</strong> 正在等待首次檢查結果
+                <br>🔍 監控關鍵字: ${blogStatus.keywords.join(', ')}
+            </div>
+            `}
+        </div>`;
     }
 
     generateCookieStatusHTML() {
@@ -1019,8 +1166,12 @@ class WebStatusPanel {
                 <div class="command">!ig-check - 手動檢查Instagram</div>
                 <div class="command">!ig-accounts - 檢查帳號狀態</div>
                 ${this.config.BLOG_NOTIFICATION_CHANNEL_ID ? `
-                <div class="command">!blog-status - 博客監控狀態</div>
-                <div class="command">!blog-check - 手動檢查博客</div>
+                <div class="command">!twitter-status - Twitter監控狀態</div>
+                <div class="command">!twitter-check - 手動檢查推文</div>
+                <div class="command">!twitter-test - 測試Twitter連接</div>
+                <div class="command">!twitter-analyze - 分析推文內容</div>
+                <div class="command">!twitter-latest - 檢查最新推文</div>
+                <div class="command">!twitter-keywords - 查看/重載關鍵字</div>
                 ` : ''}
                 <div class="command">!status - 完整系統狀態</div>
                 <div class="command">!help - 顯示幫助</div>
