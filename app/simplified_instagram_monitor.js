@@ -21,11 +21,13 @@ class SimplifiedInstagramMonitor {
         this.accountStats = new Map();
         this.cooldownAccounts = new Map();
         this.isMonitoring = false;
+        this.monitoringTimeout = null; // 新增：用於追蹤監控循環
         this.notificationCallback = notificationCallback; // Discord通知回調函數
         
         // Cookie失效追蹤
         this.cookieFailureStats = new Map();
         this.lastCookieAlert = new Map(); // 追蹤每個帳號的最後提醒時間
+        this.allAccountsFailureNotified = false; // 新增：追蹤是否已發送全體失效通知
         
         this.initializeStats();
         
@@ -111,9 +113,29 @@ class SimplifiedInstagramMonitor {
         });
     }
     
+    // 檢查錯誤類型是否為Cookie問題
+    isCookieError(statusCode, errorMessage) {
+        // 400, 401, 403 都可能是Cookie問題
+        if (statusCode === 400 || statusCode === 401 || statusCode === 403) {
+            return true;
+        }
+        
+        // 檢查錯誤訊息中是否包含認證相關的關鍵字
+        if (errorMessage && typeof errorMessage === 'string') {
+            const lowerMessage = errorMessage.toLowerCase();
+            return lowerMessage.includes('unauthorized') || 
+                   lowerMessage.includes('forbidden') || 
+                   lowerMessage.includes('invalid') ||
+                   lowerMessage.includes('authentication');
+        }
+        
+        return false;
+    }
+    
     // 檢查並發送Cookie失效提醒
-    async checkAndSendCookieAlert(accountId, errorType) {
-        if (errorType !== 'unauthorized' && errorType !== 'forbidden') return;
+    async checkAndSendCookieAlert(accountId, errorType, statusCode) {
+        // 檢查是否為Cookie相關錯誤
+        if (!this.isCookieError(statusCode, errorType)) return;
         
         const cookieStats = this.cookieFailureStats.get(accountId);
         const now = Date.now();
@@ -122,58 +144,120 @@ class SimplifiedInstagramMonitor {
         cookieStats.consecutiveFailures++;
         cookieStats.lastFailureTime = now;
         
-        // 如果連續失敗3次且之前沒有標記為失效，標記為失效
-        if (cookieStats.consecutiveFailures >= 3 && !cookieStats.isCurrentlyInvalid) {
+        console.log(`🔑 [Cookie檢查] ${accountId}: 檢測到認證錯誤 (HTTP ${statusCode}), 連續失敗 ${cookieStats.consecutiveFailures} 次`);
+        
+        // 如果連續失敗2次且之前沒有標記為失效，立即標記為失效（400錯誤通常表示帳號已被封）
+        const failureThreshold = statusCode === 400 ? 1 : 3; // 400錯誤只需1次就標記失效
+        
+        if (cookieStats.consecutiveFailures >= failureThreshold && !cookieStats.isCurrentlyInvalid) {
             cookieStats.isCurrentlyInvalid = true;
             cookieStats.invalidSince = now;
+            
+            console.log(`🚫 [Cookie失效] ${accountId} 已標記為失效 (HTTP ${statusCode})`);
             
             // 檢查是否需要發送提醒（避免重複提醒）
             const lastAlert = this.lastCookieAlert.get(accountId) || 0;
             if (now - lastAlert > SAFE_CONFIG.cookieAlertCooldown) {
-                await this.sendCookieInvalidAlert(accountId);
+                await this.sendCookieInvalidAlert(accountId, statusCode);
                 this.lastCookieAlert.set(accountId, now);
             }
+            
+            // 檢查是否所有帳號都失效
+            await this.checkAllAccountsFailure();
         }
+    }
+    
+    // 檢查所有帳號是否都失效
+    async checkAllAccountsFailure() {
+        const allAccountsInvalid = this.accounts.every(acc => {
+            const cookieStats = this.cookieFailureStats.get(acc.id);
+            return cookieStats.isCurrentlyInvalid;
+        });
         
-        console.log(`🔑 [Cookie檢查] ${accountId}: 連續失敗 ${cookieStats.consecutiveFailures} 次`);
+        if (allAccountsInvalid && !this.allAccountsFailureNotified && this.notificationCallback) {
+            this.allAccountsFailureNotified = true;
+            
+            const criticalMessage = `🆘 **緊急警告：所有Instagram帳號已失效** 
+
+⛔ **監控已完全停止**
+🕐 **停止時間：** ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}
+
+🔧 **緊急處理所需：**
+所有帳號的認證資訊都已失效，需要立即更新！
+
+📋 **失效帳號清單：**
+${this.accounts.map(acc => {
+    const cookieStats = this.cookieFailureStats.get(acc.id);
+    const invalidTime = cookieStats.invalidSince ? 
+        new Date(cookieStats.invalidSince).toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' }) : 
+        '未知';
+    return `• ${acc.id}: ${acc.sessionId.substring(0, 12)}**** (失效時間: ${invalidTime})`;
+}).join('\n')}
+
+⚡ **立即行動步驟：**
+1. 瀏覽器登入 Instagram
+2. 開發者工具 → Application → Cookies → instagram.com
+3. 複製 sessionid, csrftoken, ds_user_id
+4. 更新對應的環境變數
+5. 重新部署應用程式
+
+📞 監控系統將停止運作直到帳號修復完成！`;
+            
+            try {
+                await this.notificationCallback(criticalMessage, 'critical_alert', 'Instagram');
+                console.log(`📨 [緊急通知] 所有帳號失效通知已發送`);
+            } catch (error) {
+                console.error(`❌ [緊急通知] 發送失敗:`, error.message);
+            }
+        }
     }
     
     // 發送Cookie失效提醒
-    async sendCookieInvalidAlert(accountId) {
+    async sendCookieInvalidAlert(accountId, statusCode) {
         if (!this.notificationCallback) return;
         
         const account = this.accounts.find(acc => acc.id === accountId);
         const cookieStats = this.cookieFailureStats.get(accountId);
         
+        const errorDescription = statusCode === 400 ? 
+            '帳號可能被Instagram限制或封鎖' : 
+            statusCode === 401 ? 
+            'Session過期，需要重新登入' : 
+            statusCode === 403 ? 
+            '權限不足，可能被暫時限制' : 
+            '認證失敗';
+        
         const alertMessage = `🚨 **Instagram帳號認證失效警告** 🚨
 
-**失效帳號:** ${accountId}
-**SessionID:** ${account?.sessionId?.substring(0, 12)}****
-**失效時間:** ${new Date(cookieStats.invalidSince).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-**連續失敗:** ${cookieStats.consecutiveFailures} 次
+**失效帳號：** ${accountId}
+**SessionID：** ${account?.sessionId?.substring(0, 12)}****
+**錯誤代碼：** HTTP ${statusCode}
+**錯誤說明：** ${errorDescription}
+**失效時間：** ${new Date(cookieStats.invalidSince).toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}
+**連續失敗：** ${cookieStats.consecutiveFailures} 次
 
-⚠️ **需要立即處理:**
+⚠️ **需要立即處理：**
 1. 重新登入Instagram獲取新的cookies
 2. 更新環境變數中的認證資訊
 3. 重新部署應用程式
 
-📋 **影響範圍:**
-• 該帳號無法繼續監控Instagram
-• 系統將自動切換到其他可用帳號
+📋 **影響範圍：**
+• 該帳號已被系統自動停用
+• 系統將切換到其他可用帳號
 • 如果所有帳號都失效，監控將完全停止
 
-🔧 **修復步驟:**
+🔧 **修復步驟：**
 1. 瀏覽器登入 Instagram
-2. 開發者工具 → Application → Cookies
+2. 開發者工具 → Application → Cookies → instagram.com
 3. 複製 sessionid, csrftoken, ds_user_id
-4. 更新對應的環境變數
+4. 更新對應的環境變數 ${accountId.toUpperCase().replace('ACCOUNT_', 'IG_ACCOUNT_')}
 5. 重新啟動應用
 
 ⏰ 下次提醒將在1小時後（如果問題未解決）`;
 
         try {
             await this.notificationCallback(alertMessage, 'cookie_alert', 'Instagram');
-            console.log(`📨 [Cookie提醒] ${accountId} 失效提醒已發送`);
+            console.log(`📨 [Cookie提醒] ${accountId} 失效提醒已發送 (HTTP ${statusCode})`);
         } catch (error) {
             console.error(`❌ [Cookie提醒] 發送失敗:`, error.message);
         }
@@ -189,9 +273,9 @@ class SimplifiedInstagramMonitor {
             if (cookieStats.isCurrentlyInvalid && this.notificationCallback) {
                 const recoveryMessage = `✅ **Instagram帳號認證已恢復** 
 
-**帳號:** ${accountId}
-**恢復時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-**停機時長:** ${Math.round((Date.now() - cookieStats.invalidSince) / 60000)} 分鐘
+**帳號：** ${accountId}
+**恢復時間：** ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}
+**停機時長：** ${Math.round((Date.now() - cookieStats.invalidSince) / 60000)} 分鐘
 
 🎉 該帳號已重新開始正常工作！`;
                 
@@ -202,6 +286,9 @@ class SimplifiedInstagramMonitor {
             cookieStats.consecutiveFailures = 0;
             cookieStats.isCurrentlyInvalid = false;
             cookieStats.invalidSince = null;
+            
+            // 重置全體失效通知標記
+            this.allAccountsFailureNotified = false;
         }
     }
     
@@ -231,12 +318,12 @@ class SimplifiedInstagramMonitor {
             return currentStats.dailyRequests < bestStats.dailyRequests ? current : best;
         });
         
-        console.log(`🔄 [帳號輪換] 使用: ${bestAccount.id}`);
+        console.log(`🔄 [帳號輪換] 選擇: ${bestAccount.id}`);
         return bestAccount;
     }
     
     // 記錄請求結果 (智能冷卻 + Cookie檢查)
-    recordRequest(accountId, success, errorType = null) {
+    recordRequest(accountId, success, errorInfo = null) {
         const stats = this.accountStats.get(accountId);
         if (!stats) return;
         
@@ -259,8 +346,11 @@ class SimplifiedInstagramMonitor {
         } else {
             stats.errorCount++;
             
+            const statusCode = errorInfo?.statusCode || 0;
+            const errorType = errorInfo?.errorType || 'unknown';
+            
             // 檢查Cookie失效並發送提醒
-            this.checkAndSendCookieAlert(accountId, errorType);
+            this.checkAndSendCookieAlert(accountId, errorType, statusCode);
             
             // 根據錯誤類型和可用帳號數量智能調整冷卻
             const availableAccountsCount = this.accounts.filter(account => {
@@ -281,9 +371,9 @@ class SimplifiedInstagramMonitor {
             }
             
             // 根據錯誤類型調整
-            if (errorType === 'rate_limit') {
+            if (statusCode === 429) {
                 cooldownMinutes = Math.min(cooldownMinutes * 1.5, 45); // 最多45分鐘
-            } else if (errorType === 'forbidden' || errorType === 'unauthorized') {
+            } else if (this.isCookieError(statusCode, errorType)) {
                 cooldownMinutes = Math.min(cooldownMinutes * 3, 120); // Cookie問題更長冷卻
             }
             
@@ -406,12 +496,12 @@ class SimplifiedInstagramMonitor {
                 }
             }
             
-            console.log(`❌ [Instagram] 獲取用戶ID失敗: ${response.statusCode}`);
-            return null;
+            console.log(`❌ [Instagram] 獲取用戶ID失敗: HTTP ${response.statusCode}`);
+            return { error: true, statusCode: response.statusCode, errorType: 'user_id_failed' };
             
         } catch (error) {
             console.error('❌ [Instagram] 獲取用戶ID錯誤:', error.message);
-            return null;
+            return { error: true, statusCode: 0, errorType: error.message };
         }
     }
     
@@ -425,34 +515,6 @@ class SimplifiedInstagramMonitor {
         const account = this.selectBestAccount();
         if (!account) {
             console.log('😴 [檢查] 沒有可用帳號');
-            
-            // 檢查是否所有帳號都因Cookie失效而不可用
-            const allAccountsInvalid = this.accounts.every(acc => {
-                const cookieStats = this.cookieFailureStats.get(acc.id);
-                return cookieStats.isCurrentlyInvalid;
-            });
-            
-            if (allAccountsInvalid && this.notificationCallback) {
-                const criticalMessage = `🆘 **嚴重警告：所有Instagram帳號認證失效** 
-
-⛔ **監控已完全停止**
-🕐 **停止時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-
-🔧 **緊急處理:**
-所有帳號的cookies都已失效，需要立即更新認證資訊！
-
-📋 **失效帳號列表:**
-${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****`).join('\n')}
-
-⚡ **立即行動:** 請更新所有帳號的cookies並重新部署！`;
-                
-                try {
-                    await this.notificationCallback(criticalMessage, 'critical_alert', 'Instagram');
-                } catch (error) {
-                    console.error('❌ [緊急提醒] 發送失敗:', error.message);
-                }
-            }
-            
             return false;
         }
         
@@ -463,11 +525,15 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
             await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 3000));
             
             // 首先獲取用戶ID
-            const userId = await this.getUserId(username, account);
-            if (!userId) {
-                this.recordRequest(account.id, false, 'user_id_failed');
+            const userIdResult = await this.getUserId(username, account);
+            if (userIdResult.error) {
+                this.recordRequest(account.id, false, {
+                    statusCode: userIdResult.statusCode,
+                    errorType: userIdResult.errorType
+                });
                 return false;
             }
+            const userId = userIdResult;
             
             // 檢查story端點 (old_main.js的成功方法)
             await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1500));
@@ -520,53 +586,21 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
                 return false;
                 
             } else {
-                // 分析錯誤類型
-                let errorType = 'network_error';
-                if (response.statusCode === 401) {
-                    errorType = 'unauthorized';
-                } else if (response.statusCode === 403) {
-                    errorType = 'forbidden';
-                } else if (response.statusCode === 429) {
-                    errorType = 'rate_limit';
-                }
-                
                 console.log(`❌ [檢查] Story端點失敗: HTTP ${response.statusCode}`);
-                this.recordRequest(account.id, false, errorType);
+                this.recordRequest(account.id, false, {
+                    statusCode: response.statusCode,
+                    errorType: 'story_endpoint_failed'
+                });
                 return false;
             }
             
         } catch (error) {
             console.error(`❌ [檢查] ${account.id} 失敗: ${error.message}`);
             
-            // 分析錯誤類型並設置適當的冷卻
-            let errorType = 'network_error';
-            
-            if (error.message.includes('401')) {
-                errorType = 'unauthorized';
-            } else if (error.message.includes('403')) {
-                errorType = 'forbidden';
-            } else if (error.message.includes('429')) {
-                errorType = 'rate_limit';
-            }
-            
-            this.recordRequest(account.id, false, errorType);
-            
-            // 如果所有帳號都連續失敗，暫停監控一段時間
-            const allAccountsFailing = this.accounts.every(acc => {
-                const stats = this.accountStats.get(acc.id);
-                const cookieStats = this.cookieFailureStats.get(acc.id);
-                return (stats.errorCount > stats.successCount && stats.errorCount >= 3) ||
-                       cookieStats.isCurrentlyInvalid;
+            this.recordRequest(account.id, false, {
+                statusCode: 0,
+                errorType: error.message
             });
-            
-            if (allAccountsFailing) {
-                console.log('⚠️ [監控] 所有帳號連續失敗，暫停監控30分鐘');
-                this.stopMonitoring();
-                setTimeout(() => {
-                    console.log('🔄 [監控] 嘗試重新啟動監控');
-                    this.startMonitoring(username);
-                }, 30 * 60 * 1000); // 30分鐘後重試
-            }
             
             return false;
         }
@@ -623,16 +657,25 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
             return;
         }
         
+        // 清除之前的監控循環
+        if (this.monitoringTimeout) {
+            clearTimeout(this.monitoringTimeout);
+            this.monitoringTimeout = null;
+        }
+        
         this.isMonitoring = true;
         let isLiveNow = false;
         
         console.log('🚀 [簡化監控] 開始Instagram監控 (日本時間)');
         console.log(`📊 [配置] 間隔: ${SAFE_CONFIG.minInterval}-${SAFE_CONFIG.maxInterval}秒`);
         console.log(`🔐 [帳號] 總數: ${this.accounts.length}`);
-        console.log(`🕐 [時間] 當前日本時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`);
+        console.log(`🕐 [時間] 當前日本時間: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}`);
         
         const monitorLoop = async () => {
-            if (!this.isMonitoring) return;
+            if (!this.isMonitoring) {
+                console.log('⏹️ [監控循環] 監控已停止，退出循環');
+                return;
+            }
             
             try {
                 const currentlyLive = await this.checkLive(username);
@@ -651,7 +694,7 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
                 
                 // 計算下次檢查間隔
                 const nextInterval = this.calculateNextInterval();
-                const nextCheckTime = new Date(Date.now() + nextInterval * 1000).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+                const nextCheckTime = new Date(Date.now() + nextInterval * 1000).toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' });
                 console.log(`⏰ [監控] 下次檢查: ${Math.round(nextInterval/60)}分鐘後 (${nextCheckTime})`);
                 
                 // 顯示狀態
@@ -665,25 +708,38 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
                 }).length;
                 
                 console.log(`📊 [狀態] 可用帳號: ${availableCount}/${this.accounts.length}, 今日請求: ${this.dailyRequestCount}/${SAFE_CONFIG.maxDailyRequests}`);
-                console.log(`🕐 [日本時間] ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`);
+                console.log(`🕐 [日本時間] ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}`);
                 
-                setTimeout(monitorLoop, nextInterval * 1000);
+                // 使用 setTimeout 而不是立即遞迴，避免重複執行
+                this.monitoringTimeout = setTimeout(monitorLoop, nextInterval * 1000);
                 
             } catch (error) {
                 console.error('❌ [監控] 循環錯誤:', error.message);
-                setTimeout(monitorLoop, SAFE_CONFIG.maxInterval * 1000);
+                
+                // 發生錯誤時使用最大間隔重試
+                if (this.isMonitoring) {
+                    this.monitoringTimeout = setTimeout(monitorLoop, SAFE_CONFIG.maxInterval * 1000);
+                }
             }
         };
         
         // 初始延遲
-        const initialDelay = 30 + Math.random() * 60;
-        console.log(`⏳ [監控] ${Math.round(initialDelay)}秒後開始首次檢查`);
-        setTimeout(monitorLoop, initialDelay * 1000);
+        const initialDelay = (30 + Math.random() * 60) * 1000; // 轉換為毫秒
+        console.log(`⏳ [監控] ${Math.round(initialDelay/1000)}秒後開始首次檢查`);
+        this.monitoringTimeout = setTimeout(monitorLoop, initialDelay);
     }
     
     // 停止監控
     stopMonitoring() {
         this.isMonitoring = false;
+        
+        // 清除監控循環
+        if (this.monitoringTimeout) {
+            clearTimeout(this.monitoringTimeout);
+            this.monitoringTimeout = null;
+            console.log('⏹️ [監控] 監控循環已清除');
+        }
+        
         console.log('⏹️ [監控] 已停止');
     }
     
@@ -727,9 +783,9 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
             successfulRequests: totalSuccessful,
             successRate: successRate,
             consecutiveErrors: 0, // 這個可以根據需要計算
-            lastCheck: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
+            lastCheck: new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' }),
             targetUserId: null,
-            japanTime: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
+            japanTime: new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' }),
             japanHour: parseInt(this.getJapanHour()),
             accountDetails: Array.from(this.accountStats.entries()).map(([id, stats]) => {
                 const cookieStats = this.cookieFailureStats.get(id);
@@ -738,12 +794,12 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
                     dailyRequests: stats.dailyRequests,
                     successCount: stats.successCount,
                     errorCount: stats.errorCount,
-                    lastUsed: stats.lastUsed ? new Date(stats.lastUsed).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : 'Never',
+                    lastUsed: stats.lastUsed ? new Date(stats.lastUsed).toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' }) : 'Never',
                     inCooldown: this.cooldownAccounts.has(id) && this.cooldownAccounts.get(id) > Date.now(),
                     isDisabled: cookieStats.isCurrentlyInvalid, // 向後兼容
                     cookieStatus: cookieStats.isCurrentlyInvalid ? 'Invalid' : 'Valid',
                     consecutiveFailures: cookieStats.consecutiveFailures,
-                    invalidSince: cookieStats.invalidSince ? new Date(cookieStats.invalidSince).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null
+                    invalidSince: cookieStats.invalidSince ? new Date(cookieStats.invalidSince).toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' }) : null
                 };
             })
         };
@@ -756,7 +812,7 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
             validAccounts: 0,
             invalidAccounts: 0,
             recentlyFailed: 0,
-            japanTime: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
+            japanTime: new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' }),
             details: []
         };
         
@@ -767,8 +823,8 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
                 sessionId: account.sessionId.substring(0, 12) + '****',
                 status: cookieStats.isCurrentlyInvalid ? 'Invalid' : 'Valid',
                 consecutiveFailures: cookieStats.consecutiveFailures,
-                lastFailure: cookieStats.lastFailureTime ? new Date(cookieStats.lastFailureTime).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null,
-                invalidSince: cookieStats.invalidSince ? new Date(cookieStats.invalidSince).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null
+                lastFailure: cookieStats.lastFailureTime ? new Date(cookieStats.lastFailureTime).toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' }) : null,
+                invalidSince: cookieStats.invalidSince ? new Date(cookieStats.invalidSince).toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' }) : null
             };
             
             if (cookieStats.isCurrentlyInvalid) {
