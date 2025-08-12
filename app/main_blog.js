@@ -709,14 +709,18 @@ else if (cmd === '!blog-analyze') {
 
 📅 **總日期數:** ${analysis.totalDates}
 📝 **最近文章:** ${analysis.recentArticles} 篇 (30天內)
-🗓️ **最新文章:** ${analysis.latestArticle ? `${analysis.latestArticle.dateString} (${analysis.latestArticle.daysAgo}天前)` : '無'}
+🗓️ **最新文章:** ${analysis.latestArticle ? 
+    (analysis.latestArticle.fullDateTime || analysis.latestArticle.dateString) + ` (${analysis.latestArticle.daysAgo}天前)` : 
+    '無'}
 ⏰ **分析時間:** ${analysis.analysisTime}
+🔧 **解析方式:** ${analysis.useTimeTag ? '✅ Time標籤解析' : '⚠️ 通用模式'}
 
 ${analysis.recentArticles > 0 ? 
 `📋 **最近文章列表:**
-${analysis.allRecentArticles.slice(0, 5).map((article, index) => 
-    `${index + 1}. ${article.dateString} (${article.daysAgo}天前)`
-).join('\n')}` : 
+${analysis.allRecentArticles.slice(0, 5).map((article, index) => {
+    const timeInfo = article.fullDateTime || article.dateString;
+    return `${index + 1}. ${timeInfo} (${article.daysAgo}天前)`;
+}).join('\n')}` : 
 '📭 最近30天內無文章'}
 
 ✅ 分析完成，監控系統能正確解析文章！`;
@@ -739,21 +743,27 @@ else if (cmd === '!blog-latest') {
         try {
             const latestArticle = await blogMonitor.checkForNewArticles(true); // 測試模式
             if (latestArticle) {
-                await message.reply(`📝 **找到最新文章:** ${latestArticle.dateString}
+                const timeInfo = latestArticle.fullDateTime || latestArticle.dateString;
+                const sourceInfo = latestArticle.datetime ? 
+                    `Time標籤解析 (${latestArticle.original})` : 
+                    `通用模式解析 (${latestArticle.original})`;
+                
+                await message.reply(`📝 **找到最新文章:** ${timeInfo}
 
 🔗 **博客連結:** ${blogMonitor.blogUrl}
 ⏰ **檢查時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
+🔧 **解析方式:** ${sourceInfo}
 
 ✅ 監控系統能正確檢測到文章！`);
-            } else {
-                await message.reply('📋 **未找到最近7天內的文章**\n\n可能原因：\n• 最近確實沒有新文章\n• 網站結構改變\n• 網絡連接問題');
-            }
-        } catch (error) {
-            await message.reply(`❌ 檢查失敗: ${error.message}`);
-        }
-    } else {
-        await message.reply('❌ 博客監控未啟用');
-    }
+           } else {
+               await message.reply('📋 **未找到最近7天內的文章**\n\n可能原因：\n• 最近確實沒有新文章\n• 網站結構改變\n• 網絡連接問題');
+           }
+       } catch (error) {
+           await message.reply(`❌ 檢查失敗: ${error.message}`);
+       }
+   } else {
+       await message.reply('❌ 博客監控未啟用');
+   }
 }
 
 // 在 handleDiscordCommands 函數中添加調試命令
