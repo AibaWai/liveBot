@@ -10,6 +10,7 @@ RUN npm install --only=production
 
 # Copy application files
 COPY app/main.js main.js
+COPY app/main_blog.js main_blog.js
 COPY app/simplified_instagram_monitor.js simplified_instagram_monitor.js
 COPY app/safer_instagram_monitor.js safer_instagram_monitor.js
 COPY app/web_status_panel.js web_status_panel.js
@@ -33,4 +34,4 @@ HEALTHCHECK --interval=5m --timeout=30s --start-period=5s --retries=3 \
 # Expose port (for Koyeb)
 EXPOSE 3000
 
-CMD ["node", "main.js"]
+CMD ["node", "main_blog.js"]
