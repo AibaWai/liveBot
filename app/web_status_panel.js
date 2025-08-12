@@ -1,12 +1,13 @@
 const express = require('express');
 
 class WebStatusPanel {
-    constructor(app, unifiedState, config, client, getInstagramMonitorFn) {
+    constructor(app, unifiedState, config, client, getInstagramMonitorFn, getBlogMonitorFn = null) {
         this.app = app;
         this.unifiedState = unifiedState;
         this.config = config;
         this.client = client;
-        this.getInstagramMonitor = getInstagramMonitorFn; // 使用函數而不是直接引用
+        this.getInstagramMonitor = getInstagramMonitorFn;
+        this.getBlogMonitor = getBlogMonitorFn; // 新增博客監控函數
         
         this.setupRoutes();
     }
@@ -71,6 +72,29 @@ class WebStatusPanel {
             japanTime: this.getJapanTimeString(),
             japanHour: parseInt(this.getJapanHour()),
             accountDetails: []
+        };
+    }
+
+    // 安全獲取博客監控狀態
+    getBlogStatus() {
+        try {
+            // 這裡需要從 main.js 傳入 blogMonitor 實例
+            if (this.blogMonitor && typeof this.blogMonitor.getStatus === 'function') {
+                return this.blogMonitor.getStatus();
+            }
+        } catch (error) {
+            console.error('❌ [Web面板] 獲取博客狀態失敗:', error.message);
+        }
+        
+        // 返回默認狀態
+        return {
+            isMonitoring: false,
+            totalChecks: 0,
+            articlesFound: 0,
+            lastCheckTime: null,
+            lastArticleDate: null,
+            nextCheckTime: null,
+            blogUrl: 'https://web.familyclub.jp/s/jwb/diary/F2017?ima=2317'
         };
     }
     
@@ -587,6 +611,67 @@ class WebStatusPanel {
         .stat-box.error .stat-number {
             color: #f44336;
         }
+
+        .blog-info {
+            margin-top: 20px;
+        }
+
+        .blog-detail-card {
+            background: rgba(26, 26, 46, 0.8);
+            border-radius: 10px;
+            padding: 20px;
+            border-left: 3px solid #2196F3;
+        }
+
+        .blog-detail-card h4 {
+            color: #2196F3;
+            margin-bottom: 15px;
+            font-size: 1.2em;
+        }
+
+        .detail-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 10px;
+        }
+
+        .detail-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+            font-size: 0.9em;
+        }
+
+        .detail-item:last-child {
+            border-bottom: none;
+        }
+
+        .next-check {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+
+        .blog-success {
+            background: rgba(76, 175, 80, 0.2);
+            border: 1px solid #4CAF50;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 15px;
+            color: #81c784;
+            text-align: center;
+        }
+
+        .blog-waiting {
+            background: rgba(33, 150, 243, 0.2);
+            border: 1px solid #2196F3;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 15px;
+            color: #64b5f6;
+            text-align: center;
+        }
+        
     </style>
     <script>
         // Auto refresh every 30 seconds
@@ -665,6 +750,28 @@ class WebStatusPanel {
                     <span class="status-value">${this.unifiedState.discord.lastDetections.length}</span>
                 </div>
             </div>
+
+            // 在現有的 4 個狀態卡片後添加第 5 個
+            ${BLOG_NOTIFICATION_CHANNEL_ID ? `
+            <div class="status-card">
+                <div class="card-title">📝 博客監控</div>
+                <div class="status-item">
+                    <span>監控狀態:</span>
+                    <span class="status-value">${this.getBlogStatus().isMonitoring ? '✅ 運行中' : '❌ 已停止'}</span>
+                </div>
+                <div class="status-item">
+                    <span>檢查次數:</span>
+                    <span class="status-value">${this.getBlogStatus().totalChecks}</span>
+                </div>
+                <div class="status-item">
+                    <span>發現文章:</span>
+                    <span class="status-value">${this.getBlogStatus().articlesFound}</span>
+                </div>
+                <div class="status-item">
+                    <span>下次檢查:</span>
+                    <span class="status-value">${this.getBlogStatus().nextCheckTime ? new Date(this.getBlogStatus().nextCheckTime).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }) : '未安排'}</span>
+                </div>
+            </div>` : ''}
 
             <div class="status-card">
                 <div class="card-title">📞 通知統計</div>
@@ -802,6 +909,71 @@ class WebStatusPanel {
             ` : ''}
         </div>` : ''}
 
+        ${BLOG_NOTIFICATION_CHANNEL_ID ? `
+        <div class="section">
+            <div class="section-title">📝 博客監控詳情</div>
+            <div class="stats-grid" style="margin-bottom: 20px;">
+                <div class="stat-box ${this.getBlogStatus().isMonitoring ? '' : 'warning'}">
+                    <div class="stat-number">${this.getBlogStatus().isMonitoring ? '✅' : '❌'}</div>
+                    <div class="stat-label">監控狀態</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">${this.getBlogStatus().totalChecks}</div>
+                    <div class="stat-label">總檢查次數</div>
+                </div>
+                <div class="stat-box ${this.getBlogStatus().articlesFound > 0 ? '' : 'warning'}">
+                    <div class="stat-number">${this.getBlogStatus().articlesFound}</div>
+                    <div class="stat-label">發現新文章</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">${this.getBlogStatus().nextCheckTime ? new Date(this.getBlogStatus().nextCheckTime).getHours() : '--'}</div>
+                    <div class="stat-label">下次檢查 (時)</div>
+                </div>
+            </div>
+
+            <div class="blog-info">
+                <div class="blog-detail-card">
+                    <h4>📋 博客監控信息</h4>
+                    <div class="detail-grid">
+                        <div class="detail-item">
+                            <span>博客網址:</span>
+                            <span><a href="${this.getBlogStatus().blogUrl}" target="_blank" style="color: #2196F3; text-decoration: none;">familyclub.jp</a></span>
+                        </div>
+                        <div class="detail-item">
+                            <span>檢查頻率:</span>
+                            <span>每小時00分</span>
+                        </div>
+                        <div class="detail-item">
+                            <span>最後檢查:</span>
+                            <span>${this.getBlogStatus().lastCheckTime || '尚未檢查'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span>最新文章日期:</span>
+                            <span>${this.getBlogStatus().lastArticleDate || '無'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span>下次檢查時間:</span>
+                            <span class="next-check">${this.getBlogStatus().nextCheckTime || '未安排'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span>通知頻道:</span>
+                            <span>已配置 ✅</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            ${this.getBlogStatus().articlesFound > 0 ? `
+            <div class="blog-success">
+                🎉 <strong>監控運作正常!</strong> 已成功檢測到 ${this.getBlogStatus().articlesFound} 篇新文章
+            </div>
+            ` : this.getBlogStatus().totalChecks > 10 ? `
+            <div class="blog-waiting">
+                ⏳ <strong>持續監控中...</strong> 已檢查 ${this.getBlogStatus().totalChecks} 次，等待新文章發布
+            </div>
+            ` : ''}
+        </div>` : ''}
+
         ${Object.keys(this.config.CHANNEL_CONFIGS).length > 0 ? `
         <div class="section">
             <div class="section-title">📺 Discord 頻道監控詳情</div>
@@ -844,6 +1016,10 @@ class WebStatusPanel {
                 <div class="command">!ig-status - Instagram監控狀態</div>
                 <div class="command">!ig-check - 手動檢查Instagram</div>
                 <div class="command">!ig-accounts - 檢查帳號狀態</div>
+                ${BLOG_NOTIFICATION_CHANNEL_ID ? `
+                <div class="command">!blog-status - 博客監控狀態</div>
+                <div class="command">!blog-check - 手動檢查博客</div>
+                ` : ''}
                 <div class="command">!status - 完整系統狀態</div>
                 <div class="command">!help - 顯示幫助</div>
             </div>
