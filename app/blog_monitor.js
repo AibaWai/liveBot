@@ -52,6 +52,141 @@ class BlogMonitor {
         });
     }
 
+    // 新增：嘗試找到API端點或動態內容
+    async findApiEndpoint() {
+        try {
+            console.log('🔍 [Blog API] 尋找動態載入端點...');
+            
+            const response = await this.makeRequest(this.blogUrl);
+            const html = response.data;
+            
+            // 尋找可能的API端點或數據載入腳本
+            const scriptMatches = html.match(/<script[^>]*>[\s\S]*?<\/script>/gi) || [];
+            const apiPatterns = [
+                /\/api\/[^"'\s]+/g,
+                /\/diary\/[^"'\s]+\/api/g,
+                /ajax[^"'\s]*/g,
+                /fetch\(['"]([^'"]+)['"]\)/g,
+                /xhr\.open\(['"]GET['"],\s*['"]([^'"]+)['"]\)/g
+            ];
+            
+            const potentialEndpoints = [];
+            
+            // 檢查script標籤中的API端點
+            scriptMatches.forEach(script => {
+                apiPatterns.forEach(pattern => {
+                    const matches = [...script.matchAll(pattern)];
+                    matches.forEach(match => {
+                        if (match[1]) {
+                            potentialEndpoints.push(match[1]);
+                        } else {
+                            potentialEndpoints.push(match[0]);
+                        }
+                    });
+                });
+            });
+            
+            // 尋找常見的AJAX或API端點模式
+            const commonEndpoints = [
+                '/s/jwb/diary/F2017/api',
+                '/s/jwb/diary/F2017/entries',
+                '/s/jwb/diary/F2017/list',
+                '/api/diary/F2017',
+                '/diary/F2017/entries.json'
+            ];
+            
+            console.log(`🔍 [Blog API] 找到 ${potentialEndpoints.length} 個潛在端點`);
+            console.log(`🔍 [Blog API] 將測試 ${commonEndpoints.length} 個常見端點`);
+            
+            // 測試找到的端點
+            const allEndpoints = [...new Set([...potentialEndpoints, ...commonEndpoints])];
+            
+            for (const endpoint of allEndpoints.slice(0, 10)) { // 限制測試數量
+                try {
+                    let testUrl = endpoint;
+                    if (!endpoint.startsWith('http')) {
+                        testUrl = `https://web.familyclub.jp${endpoint.startsWith('/') ? '' : '/'}${endpoint}`;
+                    }
+                    
+                    console.log(`🧪 [Blog API] 測試端點: ${testUrl}`);
+                    
+                    const testResponse = await this.makeRequest(testUrl);
+                    
+                    if (testResponse.statusCode === 200) {
+                        const contentType = testResponse.headers['content-type'] || '';
+                        
+                        if (contentType.includes('json')) {
+                            console.log(`✅ [Blog API] 找到JSON端點: ${testUrl}`);
+                            
+                            try {
+                                const jsonData = JSON.parse(testResponse.data);
+                                console.log(`📊 [Blog API] JSON數據結構:`, Object.keys(jsonData));
+                                return { url: testUrl, data: jsonData, type: 'json' };
+                            } catch (parseError) {
+                                console.log(`⚠️ [Blog API] JSON解析失敗: ${testUrl}`);
+                            }
+                        } else if (testResponse.data.includes('<time')) {
+                            console.log(`✅ [Blog API] 找到HTML端點包含time標籤: ${testUrl}`);
+                            return { url: testUrl, data: testResponse.data, type: 'html' };
+                        }
+                    }
+                } catch (testError) {
+                    // 忽略測試錯誤，繼續下一個
+                }
+            }
+            
+            return null;
+            
+        } catch (error) {
+            console.error('❌ [Blog API] API搜尋失敗:', error.message);
+            return null;
+        }
+    }
+
+    // 新增：嘗試使用不同方法獲取動態內容
+    async getDynamicContent() {
+        try {
+            console.log('🔄 [Blog動態] 嘗試獲取動態載入內容...');
+            
+            // 方法1: 尋找API端點
+            const apiResult = await this.findApiEndpoint();
+            if (apiResult) {
+                return apiResult;
+            }
+            
+            // 方法2: 嘗試添加查詢參數強制載入內容
+            const urlVariations = [
+                this.blogUrl + '&_=' + Date.now(),
+                this.blogUrl + '&loaded=true',
+                this.blogUrl + '&format=full',
+                this.blogUrl.replace('?ima=2317', '') + '?ajax=1',
+                this.blogUrl.replace('?ima=2317', '') + '/entries'
+            ];
+            
+            for (const url of urlVariations) {
+                try {
+                    console.log(`🧪 [Blog動態] 測試URL變化: ${url}`);
+                    
+                    const response = await this.makeRequest(url);
+                    
+                    if (response.statusCode === 200 && response.data.includes('<time')) {
+                        console.log(`✅ [Blog動態] 找到包含time標籤的變化URL: ${url}`);
+                        return { url: url, data: response.data, type: 'html' };
+                    }
+                } catch (error) {
+                    // 繼續嘗試下一個
+                }
+            }
+            
+            console.log('⚠️ [Blog動態] 未找到動態內容載入方法');
+            return null;
+            
+        } catch (error) {
+            console.error('❌ [Blog動態] 動態內容獲取失敗:', error.message);
+            return null;
+        }
+    }
+
     // 新增：測試網站連接和內容解析
     async testWebsiteAccess() {
         try {
@@ -73,6 +208,7 @@ class BlogMonitor {
 
             // 檢查是否包含預期的HTML結構
             const html = response.data;
+            const allDates = [];
             const hasHtmlStructure = html.includes('<html') && html.includes('</html>');
             const hasContent = html.length > 1000; // 至少1KB的內容
             
@@ -555,6 +691,20 @@ class BlogMonitor {
         }
         
         console.log('⏹️ [Blog] 博客監控已停止');
+    }
+
+    // 獲取狀態（增強版）
+    getStatus() {
+        return {
+            isMonitoring: this.isMonitoring,
+            totalChecks: this.totalChecks,
+            articlesFound: this.articlesFound,
+            lastCheckTime: this.lastCheckTime,
+            lastArticleDate: this.lastArticleDate ? this.lastArticleDate.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null,
+            nextCheckTime: this.isMonitoring ? new Date(Date.now() + this.calculateNextCheckTime() * 1000).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null,
+            blogUrl: this.blogUrl,
+            lastFoundArticles: this.lastFoundArticles.map(article => article.dateString || article.fullDateTime) // 最近找到的文章
+        };
     }
 
     // 暴露makeRequest方法供調試使用

@@ -622,6 +622,8 @@ async function handleDiscordCommands(message) {
 \`!blog-analyze\` - 分析網站內容
 \`!blog-latest\` - 檢查最新文章
 \`!blog-debug\` - 調試分析
+\`!blog-raw\` - 查看原始HTML
+\`!blog-dynamic\` - 測試動態載入
 
 **系統命令:**
 \`!status\` - 完整系統狀態
@@ -789,6 +791,43 @@ else if (cmd === '!blog-raw') {
             }
         } catch (error) {
             await message.reply(`❌ 獲取失敗: ${error.message}`);
+        }
+    } else {
+        await message.reply('❌ 博客監控未啟用');
+    }
+}
+
+else if (cmd === '!blog-dynamic') {
+    if (blogMonitor) {
+        await message.reply('🔍 測試動態內容載入...');
+        try {
+            const dynamicResult = await blogMonitor.getDynamicContent();
+            if (dynamicResult) {
+                const resultMsg = `✅ **找到動態內容載入方法**
+
+🔗 **來源URL:** ${dynamicResult.url}
+📊 **內容類型:** ${dynamicResult.type}
+📄 **內容長度:** ${typeof dynamicResult.data === 'string' ? dynamicResult.data.length : JSON.stringify(dynamicResult.data).length} 字元
+
+${dynamicResult.type === 'json' ? 
+`📋 **JSON結構:** ${Object.keys(dynamicResult.data).join(', ')}` :
+`📋 **包含time標籤:** ${dynamicResult.data.includes('<time') ? '✅ 是' : '❌ 否'}`}
+
+🎉 可以使用動態載入方法獲取文章內容！`;
+                
+                await message.reply(resultMsg);
+            } else {
+                await message.reply(`❌ **未找到動態內容載入方法**
+
+這表示：
+- 網站沒有公開的API端點
+- 內容完全依賴JavaScript動態載入
+- 需要特殊的請求頭或參數
+
+建議：考慮其他監控方法或聯繫網站管理員`);
+            }
+        } catch (error) {
+            await message.reply(`❌ 動態內容測試失敗: ${error.message}`);
         }
     } else {
         await message.reply('❌ 博客監控未啟用');
