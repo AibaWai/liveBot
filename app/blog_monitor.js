@@ -12,6 +12,10 @@ class BlogMonitor {
         this.articlesFound = 0;
         this.lastCheckTime = null;
         this.lastFoundArticles = []; // 存儲最近找到的文章
+        
+        // 新增：Twitter監控配置
+        this.twitterUrl = 'https://nitter.poast.org/FCweb_info'; // 使用Nitter代替Twitter
+        this.useTwitterMonitoring = true; // 預設使用Twitter監控
     }
 
     // 安全HTTP請求
@@ -90,7 +94,156 @@ class BlogMonitor {
         }
     }
 
-    // 新增：詳細調試HTML內容
+    // 新增：Twitter監控方法（使用Nitter）
+    async checkTwitterForUpdates() {
+        try {
+            console.log('🐦 [Twitter監控] 檢查Twitter更新通知...');
+            
+            const response = await this.makeRequest(this.twitterUrl, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8'
+                }
+            });
+            
+            if (response.statusCode !== 200) {
+                console.error(`❌ [Twitter監控] HTTP錯誤: ${response.statusCode}`);
+                return [];
+            }
+            
+            const html = response.data;
+            console.log(`📊 [Twitter監控] HTML長度: ${html.length} 字元`);
+            
+            // 解析Nitter頁面中的推文
+            const tweets = [];
+            
+            // 尋找推文容器
+            const tweetPattern = /<div class="tweet-content[^>]*>([\s\S]*?)<\/div>/gi;
+            let tweetMatch;
+            
+            while ((tweetMatch = tweetPattern.exec(html)) !== null) {
+                const tweetContent = tweetMatch[1];
+                
+                // 檢查是否包含目標博客更新
+                if (tweetContent.includes('髙木雄也')) 
+                    {
+                    
+                    console.log('🎯 [Twitter監控] 找到相關推文');
+                    
+                    // 嘗試提取時間信息
+                    const timePattern = /(\d{4})\/(\d{1,2})\/(\d{1,2})\s+(\d{1,2}):(\d{2})/;
+                    const timeMatch = tweetContent.match(timePattern);
+                    
+                    if (timeMatch) {
+                        const year = parseInt(timeMatch[1]);
+                        const month = parseInt(timeMatch[2]);
+                        const day = parseInt(timeMatch[3]);
+                        const hour = parseInt(timeMatch[4]);
+                        const minute = parseInt(timeMatch[5]);
+                        
+                        const tweetDate = new Date(year, month - 1, day, hour, minute);
+                        
+                        tweets.push({
+                            date: tweetDate,
+                            content: tweetContent.substring(0, 200),
+                            dateString: `${year}年${month}月${day}日`,
+                            fullDateTime: `${year}年${month}月${day}日 ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
+                            source: 'twitter'
+                        });
+                        
+                        console.log(`📅 [Twitter監控] 推文時間: ${year}年${month}月${day}日 ${hour}:${minute}`);
+                    }
+                }
+            }
+            
+            // 如果Nitter不可用，嘗試備用RSS方法
+            if (tweets.length === 0) {
+                console.log('🔄 [Twitter監控] Nitter未找到推文，嘗試RSS方法...');
+                return await this.checkTwitterRSS();
+            }
+            
+            return tweets.sort((a, b) => b.date - a.date);
+            
+        } catch (error) {
+            console.error('❌ [Twitter監控] Twitter檢查失敗:', error.message);
+            return [];
+        }
+    }
+    
+    // 新增：Twitter RSS備用方法
+    async checkTwitterRSS() {
+        try {
+            // 嘗試使用RSS bridge或其他服務
+            const rssEndpoints = [
+                'https://nitter.poast.org/FCweb_info/rss',
+                'https://nitter.net/FCweb_info/rss',
+                'https://nitter.it/FCweb_info/rss'
+            ];
+            
+            for (const rssUrl of rssEndpoints) {
+                try {
+                    console.log(`🔄 [Twitter RSS] 嘗試RSS端點: ${rssUrl}`);
+                    
+                    const response = await this.makeRequest(rssUrl);
+                    if (response.statusCode === 200) {
+                        console.log(`✅ [Twitter RSS] RSS獲取成功: ${rssUrl}`);
+                        return this.parseRSSFeed(response.data);
+                    }
+                } catch (error) {
+                    console.log(`❌ [Twitter RSS] RSS端點失敗: ${rssUrl}`);
+                }
+            }
+            
+            return [];
+            
+        } catch (error) {
+            console.error('❌ [Twitter RSS] RSS檢查失敗:', error.message);
+            return [];
+        }
+    }
+    
+    // 新增：解析RSS Feed
+    parseRSSFeed(rssData) {
+        const articles = [];
+        
+        try {
+            // 尋找RSS item
+            const itemPattern = /<item>([\s\S]*?)<\/item>/gi;
+            let itemMatch;
+            
+            while ((itemMatch = itemPattern.exec(rssData)) !== null) {
+                const itemContent = itemMatch[1];
+                
+                // 檢查是否包含目標內容
+                if (itemContent.includes('F2017') || 
+                    itemContent.includes('橋本将生') || 
+                    itemContent.includes('猪俣周杜') || 
+                    itemContent.includes('篠塚大輝')) {
+                    
+                    // 提取發布日期
+                    const pubDateMatch = itemContent.match(/<pubDate>(.*?)<\/pubDate>/);
+                    if (pubDateMatch) {
+                        const pubDate = new Date(pubDateMatch[1]);
+                        
+                        articles.push({
+                            date: pubDate,
+                            dateString: `${pubDate.getFullYear()}年${pubDate.getMonth() + 1}月${pubDate.getDate()}日`,
+                            fullDateTime: `${pubDate.getFullYear()}年${pubDate.getMonth() + 1}月${pubDate.getDate()}日 ${pubDate.getHours().toString().padStart(2, '0')}:${pubDate.getMinutes().toString().padStart(2, '0')}`,
+                            content: itemContent.substring(0, 200),
+                            source: 'rss'
+                        });
+                    }
+                }
+            }
+            
+            return articles.sort((a, b) => b.date - a.date);
+            
+        } catch (error) {
+            console.error('❌ [RSS解析] 解析失敗:', error.message);
+            return [];
+        }
+    }
     async debugHtmlContent() {
         try {
             console.log('🔍 [Blog調試] 開始詳細分析HTML內容...');
@@ -540,50 +693,65 @@ class BlogMonitor {
         }
     }
 
-    // 解析博客頁面尋找新文章（增強版）
+    // 修改：主要檢查方法，優先使用Twitter監控
     async checkForNewArticles(testMode = false) {
         try {
             console.log(`🔍 [Blog] 檢查新文章... ${testMode ? '(測試模式)' : ''}`);
             this.totalChecks++;
             this.lastCheckTime = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
 
-            // 首先嘗試獲取動態內容
-            const dynamicContent = await this.getDynamicContent();
+            let articles = [];
             
-            let dates = [];
-            
-            if (dynamicContent && dynamicContent.type === 'json') {
-                dates = this.parseArticlesFromJson(dynamicContent.data);
-            } else {
-                const response = await this.makeRequest(this.blogUrl);
-                if (response.statusCode !== 200) {
-                    console.log(`❌ [Blog] HTTP錯誤: ${response.statusCode}`);
-                    return null;
+            // 優先使用Twitter監控
+            if (this.useTwitterMonitoring) {
+                console.log('🐦 [Blog] 使用Twitter監控方法...');
+                articles = await this.checkTwitterForUpdates();
+                
+                if (articles.length > 0) {
+                    console.log(`✅ [Blog] Twitter監控找到 ${articles.length} 個更新`);
                 }
-                dates = this.parseArticlesFromHtml(response.data, testMode);
+            }
+            
+            // 如果Twitter監控失敗，回退到原始方法
+            if (articles.length === 0) {
+                console.log('🔄 [Blog] Twitter監控無結果，嘗試直接網站監控...');
+                
+                // 首先嘗試獲取動態內容
+                const dynamicContent = await this.getDynamicContent();
+                
+                if (dynamicContent && dynamicContent.type === 'json') {
+                    articles = this.parseArticlesFromJson(dynamicContent.data);
+                } else {
+                    const response = await this.makeRequest(this.blogUrl);
+                    if (response.statusCode !== 200) {
+                        console.log(`❌ [Blog] HTTP錯誤: ${response.statusCode}`);
+                        return null;
+                    }
+                    articles = this.parseArticlesFromHtml(response.data, testMode);
+                }
             }
 
             // 去重複並排序
-            const uniqueDates = dates.filter((date, index, self) => 
-                index === self.findIndex(d => d.date.getTime() === date.date.getTime())
+            const uniqueArticles = articles.filter((article, index, self) => 
+                index === self.findIndex(a => a.date.getTime() === article.date.getTime())
             );
             
-            uniqueDates.sort((a, b) => b.date - a.date);
+            uniqueArticles.sort((a, b) => b.date - a.date);
 
-            if (uniqueDates.length > 0) {
-                const latestArticle = uniqueDates[0];
+            if (uniqueArticles.length > 0) {
+                const latestArticle = uniqueArticles[0];
 
                 if (testMode) {
                     const timeInfo = latestArticle.fullDateTime || latestArticle.dateString;
-                    console.log(`📝 [Blog測試] 找到最新文章: ${timeInfo}`);
-                    this.lastFoundArticles = uniqueDates.slice(0, 5);
+                    console.log(`📝 [Blog測試] 找到最新文章: ${timeInfo} (來源: ${latestArticle.source})`);
+                    this.lastFoundArticles = uniqueArticles.slice(0, 5);
                     return latestArticle;
                 }
 
                 if (!this.lastArticleDate || latestArticle.date > this.lastArticleDate) {
                     this.lastArticleDate = latestArticle.date;
                     this.articlesFound++;
-                    console.log(`📝 [Blog] 發現新文章: ${latestArticle.fullDateTime || latestArticle.dateString}`);
+                    console.log(`📝 [Blog] 發現新文章: ${latestArticle.fullDateTime || latestArticle.dateString} (來源: ${latestArticle.source})`);
                     return latestArticle;
                 }
             }
@@ -795,8 +963,20 @@ class BlogMonitor {
             lastArticleDate: this.lastArticleDate ? this.lastArticleDate.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null,
             nextCheckTime: this.isMonitoring ? new Date(Date.now() + this.calculateNextCheckTime() * 1000).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null,
             blogUrl: this.blogUrl,
-            lastFoundArticles: this.lastFoundArticles.map(article => article.dateString || article.fullDateTime) // 最近找到的文章
+            twitterUrl: this.twitterUrl,
+            useTwitterMonitoring: this.useTwitterMonitoring,
+            lastFoundArticles: this.lastFoundArticles.map(article => ({
+                date: article.dateString || article.fullDateTime,
+                source: article.source
+            })) // 包含來源信息
         };
+    }
+
+    // 新增：切換監控方法
+    toggleMonitoringMethod() {
+        this.useTwitterMonitoring = !this.useTwitterMonitoring;
+        console.log(`🔄 [Blog] 切換監控方法: ${this.useTwitterMonitoring ? 'Twitter監控' : '網站直接監控'}`);
+        return this.useTwitterMonitoring;
     }
 
     // 暴露調試方法供外部使用
