@@ -6,7 +6,7 @@ class BlogMonitor {
         this.lastArticleDate = null;
         this.isMonitoring = false;
         this.monitoringInterval = null;
-        this.blogUrl = 'https://web.familyclub.jp/s/jwb/diary/F2017?ima=2317';
+        this.blogUrl = 'https://web.familyclub.jp/s/jwb/diary/F2017?ima=3047';
         this.checkIntervalMinutes = 60; // 每小時檢查一次
         this.totalChecks = 0;
         this.articlesFound = 0;
@@ -208,7 +208,6 @@ class BlogMonitor {
 
             // 檢查是否包含預期的HTML結構
             const html = response.data;
-            const allDates = [];
             const hasHtmlStructure = html.includes('<html') && html.includes('</html>');
             const hasContent = html.length > 1000; // 至少1KB的內容
             
@@ -246,7 +245,7 @@ class BlogMonitor {
         }
     }
 
-    // 新增：詳細分析當前網站內容
+    // 修復的：詳細分析當前網站內容
     async analyzeCurrentContent(showDetails = false) {
         try {
             console.log('🔍 [Blog分析] 分析當前網站內容...');
@@ -261,6 +260,7 @@ class BlogMonitor {
             }
 
             const html = response.data;
+            const allDates = []; // 修復：在函數開始時定義 allDates
             
             // 專門針對familyclub.jp的time標籤解析 - 更寬松的匹配
             const timeTagPatterns = [
@@ -271,7 +271,7 @@ class BlogMonitor {
                 // 更寬松的匹配
                 /<time[^>]*datetime="([^"]+)"[^>]*>([^<]+)<\/time>/gi,
                 // 最寬松的匹配
-                /<time[^>]*>([^<]*2025[^<]*)<\/time>/gi
+                /<time[^>]*>([^<]*202[45][^<]*)<\/time>/gi
             ];
             
             console.log('🔍 [Blog分析] 嘗試多種time標籤模式...');
@@ -315,18 +315,26 @@ class BlogMonitor {
                             };
                         }
                     } else {
-                        // 解析顯示文本 (2025.07.14 19:00)
-                        const textMatch = displayText.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})\s+(\d{1,2}):(\d{2})/);
-                        if (textMatch) {
-                            const year = parseInt(textMatch[1]);
-                            const month = parseInt(textMatch[2]);
-                            const day = parseInt(textMatch[3]);
-                            const hour = parseInt(textMatch[4]);
-                            const minute = parseInt(textMatch[5]);
-                            parsedDate = {
-                                date: new Date(year, month - 1, day, hour, minute),
-                                year, month, day, hour, minute
-                            };
+                        // 解析顯示文本 (2025.07.14 19:00 或其他格式)
+                        const textMatches = [
+                            displayText.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})\s+(\d{1,2}):(\d{2})/),
+                            displayText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日\s+(\d{1,2}):(\d{2})/),
+                            displayText.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/)
+                        ];
+                        
+                        for (const textMatch of textMatches) {
+                            if (textMatch) {
+                                const year = parseInt(textMatch[1]);
+                                const month = parseInt(textMatch[2]);
+                                const day = parseInt(textMatch[3]);
+                                const hour = textMatch[4] ? parseInt(textMatch[4]) : 0;
+                                const minute = textMatch[5] ? parseInt(textMatch[5]) : 0;
+                                parsedDate = {
+                                    date: new Date(year, month - 1, day, hour, minute),
+                                    year, month, day, hour, minute
+                                };
+                                break;
+                            }
                         }
                     }
                     
@@ -513,40 +521,88 @@ class BlogMonitor {
         }
     }
 
-    // 從HTML解析文章（分離出來的函數）
+    // 修復的：從HTML解析文章（適應更多日期格式）
     parseArticlesFromHtml(html, testMode = false) {
         const dates = [];
         
-        const timeTagPattern = /<time[^>]*datetime="([^"]+)"[^>]*class="entry__posted"[^>]*>([^<]+)<\/time>/g;
-        let match;
+        // 嘗試多種time標籤模式
+        const timeTagPatterns = [
+            /<time[^>]*datetime="([^"]+)"[^>]*class="entry__posted"[^>]*>([^<]+)<\/time>/g,
+            /<time[^>]*class="entry__posted"[^>]*datetime="([^"]+)"[^>]*>([^<]+)<\/time>/g,
+            /<time[^>]*datetime="([^"]+)"[^>]*>([^<]+)<\/time>/g,
+            /<time[^>]*>([^<]*202[45][^<]*)<\/time>/g
+        ];
         
-        while ((match = timeTagPattern.exec(html)) !== null) {
-            const datetimeAttr = match[1];
-            const displayText = match[2].trim();
+        for (let patternIndex = 0; patternIndex < timeTagPatterns.length; patternIndex++) {
+            const pattern = timeTagPatterns[patternIndex];
+            let match;
             
-            const dateMatch = datetimeAttr.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-            if (dateMatch) {
-                const year = parseInt(dateMatch[1]);
-                const month = parseInt(dateMatch[2]);
-                const day = parseInt(dateMatch[3]);
-                const hour = parseInt(dateMatch[4]);
-                const minute = parseInt(dateMatch[5]);
+            while ((match = pattern.exec(html)) !== null) {
+                let datetimeAttr, displayText;
                 
-                const articleDate = new Date(year, month - 1, day, hour, minute);
-                const now = new Date();
-                const diffDays = (now - articleDate) / (1000 * 60 * 60 * 24);
-                const dayLimit = testMode ? 30 : 7;
-                
-                if (diffDays >= 0 && diffDays <= dayLimit) {
-                    dates.push({
-                        date: articleDate,
-                        dateString: `${year}年${month}月${day}日`,
-                        fullDateTime: `${year}年${month}月${day}日 ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
-                        original: displayText,
-                        datetime: datetimeAttr,
-                        source: 'html'
-                    });
+                if (patternIndex === 3) {
+                    // 最寬松模式
+                    displayText = match[1].trim();
+                    datetimeAttr = null;
+                } else {
+                    datetimeAttr = match[1];
+                    displayText = match[2].trim();
                 }
+                
+                let parsedDate = null;
+                
+                if (datetimeAttr) {
+                    // 解析 datetime 屬性
+                    const dateMatch = datetimeAttr.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+                    if (dateMatch) {
+                        const year = parseInt(dateMatch[1]);
+                        const month = parseInt(dateMatch[2]);
+                        const day = parseInt(dateMatch[3]);
+                        const hour = parseInt(dateMatch[4]);
+                        const minute = parseInt(dateMatch[5]);
+                        parsedDate = new Date(year, month - 1, day, hour, minute);
+                    }
+                } else {
+                    // 解析顯示文本
+                    const textMatches = [
+                        displayText.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})\s+(\d{1,2}):(\d{2})/),
+                        displayText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日\s+(\d{1,2}):(\d{2})/),
+                        displayText.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/)
+                    ];
+                    
+                    for (const textMatch of textMatches) {
+                        if (textMatch) {
+                            const year = parseInt(textMatch[1]);
+                            const month = parseInt(textMatch[2]);
+                            const day = parseInt(textMatch[3]);
+                            const hour = textMatch[4] ? parseInt(textMatch[4]) : 0;
+                            const minute = textMatch[5] ? parseInt(textMatch[5]) : 0;
+                            parsedDate = new Date(year, month - 1, day, hour, minute);
+                            break;
+                        }
+                    }
+                }
+                
+                if (parsedDate) {
+                    const now = new Date();
+                    const diffDays = (now - parsedDate) / (1000 * 60 * 60 * 24);
+                    const dayLimit = testMode ? 30 : 7;
+                    
+                    if (diffDays >= 0 && diffDays <= dayLimit) {
+                        dates.push({
+                            date: parsedDate,
+                            dateString: `${parsedDate.getFullYear()}年${parsedDate.getMonth() + 1}月${parsedDate.getDate()}日`,
+                            fullDateTime: `${parsedDate.getFullYear()}年${parsedDate.getMonth() + 1}月${parsedDate.getDate()}日 ${parsedDate.getHours().toString().padStart(2, '0')}:${parsedDate.getMinutes().toString().padStart(2, '0')}`,
+                            original: displayText,
+                            datetime: datetimeAttr,
+                            source: 'html'
+                        });
+                    }
+                }
+            }
+            
+            if (dates.length > 0) {
+                break; // 如果找到了文章，就不需要嘗試其他模式
             }
         }
         
@@ -647,7 +703,6 @@ class BlogMonitor {
         
         console.log('⏹️ [Blog] 博客監控已停止');
     }
-
 
     // 獲取狀態（增強版）
     getStatus() {
