@@ -87,6 +87,7 @@ if (missingVars.length > 0) {
 }
 
 // === 配置整合 ===
+// === 配置整合 ===
 const config = {
     // Discord Bot 基本配置
     DISCORD_TOKEN: process.env.DISCORD_TOKEN,
@@ -104,7 +105,10 @@ const config = {
     // PushCall 配置 (可選)
     PUSHCALL_API_KEY: process.env.PUSHCALL_API_KEY,
     PUSHCALL_FROM: process.env.PUSHCALL_FROM,
-    PUSHCALL_TO: process.env.PUSHCALL_TO
+    PUSHCALL_TO: process.env.PUSHCALL_TO,
+    
+    // 博客監控配置 (新增)
+    BLOG_NOTIFICATION_CHANNEL_ID: process.env.BLOG_NOTIFICATION_CHANNEL_ID
 };
 
 // === Instagram 監控配置 ===
@@ -717,7 +721,8 @@ function initializeWebStatusPanel() {
                 unifiedState, 
                 config, 
                 client, 
-                () => instagramMonitor  // 傳遞函數而不是直接引用
+                () => instagramMonitor,  // Instagram監控函數
+                () => blogMonitor       // 博客監控函數 (新增)
             );
             console.log('🌐 [Web面板] 狀態面板已初始化');
         } catch (error) {

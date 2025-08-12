@@ -752,7 +752,7 @@ class WebStatusPanel {
             </div>
 
             // 在現有的 4 個狀態卡片後添加第 5 個
-            ${BLOG_NOTIFICATION_CHANNEL_ID ? `
+            ${this.config.BLOG_NOTIFICATION_CHANNEL_ID ? `
             <div class="status-card">
                 <div class="card-title">📝 博客監控</div>
                 <div class="status-item">
@@ -909,7 +909,7 @@ class WebStatusPanel {
             ` : ''}
         </div>` : ''}
 
-        ${BLOG_NOTIFICATION_CHANNEL_ID ? `
+        ${this.config.BLOG_NOTIFICATION_CHANNEL_ID ? `
         <div class="section">
             <div class="section-title">📝 博客監控詳情</div>
             <div class="stats-grid" style="margin-bottom: 20px;">
@@ -1016,7 +1016,7 @@ class WebStatusPanel {
                 <div class="command">!ig-status - Instagram監控狀態</div>
                 <div class="command">!ig-check - 手動檢查Instagram</div>
                 <div class="command">!ig-accounts - 檢查帳號狀態</div>
-                ${BLOG_NOTIFICATION_CHANNEL_ID ? `
+                ${this.config.BLOG_NOTIFICATION_CHANNEL_ID ? `
                 <div class="command">!blog-status - 博客監控狀態</div>
                 <div class="command">!blog-check - 手動檢查博客</div>
                 ` : ''}
