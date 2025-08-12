@@ -12,14 +12,22 @@ class BlogMonitor {
         this.lastCheckTime = null;
         this.lastFoundArticles = []; // 存儲最近找到的文章
         
-        // Twitter監控配置
-        this.twitterUrl = 'https://nitter.poast.org/FCweb_info'; // 主要Nitter實例
-        this.twitterUrlBackup = 'https://nitter.net/FCweb_info'; // 備用Nitter實例
+        // Twitter監控配置 - 使用更多可靠的Nitter實例
+        this.nitterInstances = [
+            'https://nitter.poast.org/FCweb_info',
+            'https://nitter.net/FCweb_info', 
+            'https://nitter.it/FCweb_info',
+            'https://nitter.privacydev.net/FCweb_info',
+            'https://nitter.1d4.us/FCweb_info',
+            'https://nitter.kavin.rocks/FCweb_info'
+        ];
         this.targetAccount = 'FCweb_info'; // Twitter帳號
+        this.currentInstanceIndex = 0; // 當前使用的實例索引
         
         // 從環境變數讀取關鍵字
         this.keywords = this.loadKeywords();
-        console.log('🔍 [Blog Monitor] 監控關鍵字:', this.keywords);
+        console.log('🔍 [Twitter Monitor] 監控關鍵字:', this.keywords);
+        console.log('🔗 [Twitter Monitor] 可用Nitter實例:', this.nitterInstances.length, '個');
     }
 
     // 從環境變數載入關鍵字
@@ -45,167 +53,232 @@ class BlogMonitor {
         
         // 如果沒有設定關鍵字，使用預設值
         if (keywords.length === 0) {
-            console.warn('⚠️ [Blog Monitor] 未設定監控關鍵字，使用預設關鍵字');
-            keywords.push('F2017', '髙木雄也', '橋本将生', '猪俣周杜', '篠塚大輝');
+            console.warn('⚠️ [Twitter Monitor] 未設定監控關鍵字，使用預設關鍵字');
+            keywords.push('髙木雄也');
         }
         
         return keywords;
     }
 
-    // 安全HTTP請求
+    // 安全HTTP請求 - 增加更多選項
     makeRequest(url, options = {}) {
         return new Promise((resolve, reject) => {
             const req = https.request(url, {
                 method: 'GET',
                 headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                    'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9,ja;q=0.8',
                     'Accept-Encoding': 'gzip, deflate, br',
                     'DNT': '1',
                     'Connection': 'keep-alive',
                     'Upgrade-Insecure-Requests': '1',
+                    'Sec-Fetch-Dest': 'document',
+                    'Sec-Fetch-Mode': 'navigate',
+                    'Sec-Fetch-Site': 'none',
+                    'Cache-Control': 'max-age=0',
                     ...options.headers
                 },
-                timeout: 30000
+                timeout: 15000 // 減少超時時間
             }, (res) => {
                 let data = '';
-                res.on('data', (chunk) => { data += chunk; });
-                res.on('end', () => {
+                
+                // 處理gzip壓縮
+                let stream = res;
+                if (res.headers['content-encoding'] === 'gzip') {
+                    const zlib = require('zlib');
+                    stream = res.pipe(zlib.createGunzip());
+                }
+                
+                stream.on('data', (chunk) => { data += chunk; });
+                stream.on('end', () => {
                     resolve({ 
                         statusCode: res.statusCode, 
                         data: data,
-                        headers: res.headers
+                        headers: res.headers,
+                        url: url
                     });
                 });
+                stream.on('error', reject);
             });
             
-            req.on('error', reject);
+            req.on('error', (err) => {
+                console.error(`❌ [Request Error] ${url}:`, err.message);
+                reject(err);
+            });
             req.on('timeout', () => {
                 req.destroy();
-                reject(new Error('Request timeout'));
+                reject(new Error(`Request timeout for ${url}`));
             });
             
             req.end();
         });
     }
 
-    // Twitter監控方法（使用Nitter）
+    // Twitter監控方法（使用多個Nitter實例）
     async checkTwitterForUpdates() {
-        const urls = [this.twitterUrl, this.twitterUrlBackup];
+        let lastError = null;
         
-        for (const url of urls) {
+        // 嘗試所有可用的Nitter實例
+        for (let i = 0; i < this.nitterInstances.length; i++) {
+            const instanceIndex = (this.currentInstanceIndex + i) % this.nitterInstances.length;
+            const url = this.nitterInstances[instanceIndex];
+            
             try {
-                console.log(`🐦 [Twitter監控] 檢查 ${url}...`);
+                console.log(`🐦 [Twitter監控] 嘗試實例 ${instanceIndex + 1}/${this.nitterInstances.length}: ${url}...`);
                 
-                const response = await this.makeRequest(url, {
-                    headers: {
-                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                        'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8'
+                const response = await this.makeRequest(url);
+                
+                if (response.statusCode === 200) {
+                    console.log(`✅ [Twitter監控] 實例 ${instanceIndex + 1} 連接成功`);
+                    console.log(`📊 [Twitter監控] HTML長度: ${response.data.length} 字元`);
+                    
+                    // 更新當前使用的實例
+                    this.currentInstanceIndex = instanceIndex;
+                    
+                    // 解析推文
+                    const tweets = this.parseNitterTweets(response.data, url);
+                    
+                    if (tweets.length > 0) {
+                        console.log(`🎯 [Twitter監控] 從實例 ${instanceIndex + 1} 找到 ${tweets.length} 個相關推文`);
+                        return tweets;
+                    } else {
+                        console.log(`📋 [Twitter監控] 實例 ${instanceIndex + 1} 未找到包含關鍵字的推文`);
+                        // 如果沒有找到推文但連接成功，仍然返回空數組（而不是繼續嘗試其他實例）
+                        return [];
                     }
-                });
-                
-                if (response.statusCode !== 200) {
-                    console.error(`❌ [Twitter監控] HTTP錯誤: ${response.statusCode} for ${url}`);
-                    continue;
-                }
-                
-                const html = response.data;
-                console.log(`📊 [Twitter監控] HTML長度: ${html.length} 字元`);
-                
-                // 解析推文
-                const tweets = this.parseNitterTweets(html);
-                
-                if (tweets.length > 0) {
-                    console.log(`✅ [Twitter監控] 從 ${url} 找到 ${tweets.length} 個相關推文`);
-                    return tweets;
+                } else if (response.statusCode === 403) {
+                    console.warn(`⚠️ [Twitter監控] 實例 ${instanceIndex + 1} 返回403禁止訪問，嘗試下一個實例`);
+                    lastError = new Error(`HTTP 403 from ${url}`);
+                } else if (response.statusCode === 429) {
+                    console.warn(`⚠️ [Twitter監控] 實例 ${instanceIndex + 1} 返回429限制請求，嘗試下一個實例`);
+                    lastError = new Error(`HTTP 429 from ${url}`);
+                } else {
+                    console.warn(`⚠️ [Twitter監控] 實例 ${instanceIndex + 1} HTTP錯誤: ${response.statusCode}`);
+                    lastError = new Error(`HTTP ${response.statusCode} from ${url}`);
                 }
                 
             } catch (error) {
-                console.error(`❌ [Twitter監控] ${url} 檢查失敗:`, error.message);
+                console.warn(`⚠️ [Twitter監控] 實例 ${instanceIndex + 1} 連接失敗: ${error.message}`);
+                lastError = error;
             }
+        }
+        
+        // 所有實例都失敗了
+        console.error(`❌ [Twitter監控] 所有 ${this.nitterInstances.length} 個Nitter實例都無法使用`);
+        if (lastError) {
+            console.error('❌ [Twitter監控] 最後錯誤:', lastError.message);
         }
         
         return [];
     }
     
-    // 解析Nitter頁面中的推文
-    parseNitterTweets(html) {
+    // 解析Nitter頁面中的推文 - 改進版
+    parseNitterTweets(html, sourceUrl) {
         const tweets = [];
         
         try {
-            // 多種推文容器模式
+            console.log(`🔍 [解析推文] 開始解析來自 ${sourceUrl} 的HTML...`);
+            
+            // 檢查HTML內容是否有效
+            if (html.length < 1000) {
+                console.warn('⚠️ [解析推文] HTML內容過短，可能是錯誤頁面');
+                return [];
+            }
+            
+            // 更精確的推文容器模式
             const tweetPatterns = [
-                // 標準推文容器
-                /<div class="timeline-item[^>]*>([\s\S]*?)<\/div>\s*<div class="timeline-item/gi,
+                // Nitter標準推文格式
+                /<div class="timeline-item[^>]*>([\s\S]*?)<\/div>(?=\s*<div class="timeline-item|$)/gi,
+                // 推文內容容器
+                /<div class="tweet-content[^>]*>([\s\S]*?)<\/div>/gi,
+                // 推文主體
                 /<article[^>]*class="[^"]*tweet[^"]*"[^>]*>([\s\S]*?)<\/article>/gi,
-                /<div[^>]*class="[^"]*tweet-content[^"]*"[^>]*>([\s\S]*?)<\/div>/gi
+                // 通用推文容器
+                /<div[^>]*data-tweet[^>]*>([\s\S]*?)<\/div>/gi
             ];
+            
+            let totalMatches = 0;
             
             for (const pattern of tweetPatterns) {
                 let match;
                 pattern.lastIndex = 0;
+                let patternMatches = 0;
                 
                 while ((match = pattern.exec(html)) !== null && tweets.length < 20) {
+                    patternMatches++;
+                    totalMatches++;
                     const tweetContent = match[1];
                     
                     // 檢查是否包含任何關鍵字
                     let foundKeyword = null;
                     for (const keyword of this.keywords) {
-                        if (tweetContent.includes(keyword)) {
+                        // 使用不區分大小寫的搜索
+                        if (tweetContent.toLowerCase().includes(keyword.toLowerCase())) {
                             foundKeyword = keyword;
                             break;
                         }
                     }
                     
                     if (foundKeyword) {
-                        console.log(`🎯 [Twitter監控] 找到關鍵字 "${foundKeyword}" 的推文`);
+                        console.log(`🎯 [解析推文] 找到關鍵字 "${foundKeyword}" 的推文`);
                         
-                        // 嘗試提取時間信息
+                        // 提取時間和文本
                         const timeInfo = this.extractTweetTime(tweetContent);
+                        const textContent = this.extractTweetText(tweetContent);
                         
-                        if (timeInfo) {
+                        if (timeInfo && textContent) {
                             tweets.push({
                                 date: timeInfo.date,
                                 dateString: timeInfo.dateString,
                                 fullDateTime: timeInfo.fullDateTime,
                                 keyword: foundKeyword,
-                                content: this.extractTweetText(tweetContent),
-                                source: 'twitter'
+                                content: textContent,
+                                source: 'twitter',
+                                sourceUrl: sourceUrl
                             });
                             
-                            console.log(`📅 [Twitter監控] 推文時間: ${timeInfo.fullDateTime}, 關鍵字: ${foundKeyword}`);
+                            console.log(`📅 [解析推文] 推文詳情: ${timeInfo.fullDateTime}, 關鍵字: ${foundKeyword}`);
+                            console.log(`📝 [解析推文] 內容預覽: ${textContent.substring(0, 100)}...`);
                         }
                     }
                 }
                 
-                if (tweets.length > 0) break; // 如果找到推文就停止嘗試其他模式
+                console.log(`📊 [解析推文] 模式匹配: ${patternMatches} 個推文容器`);
+                
+                if (tweets.length > 0) break; // 找到推文就停止
             }
             
+            console.log(`📋 [解析推文] 總共檢查了 ${totalMatches} 個容器，找到 ${tweets.length} 個相關推文`);
+            
+            // 按時間排序（最新的在前）
             return tweets.sort((a, b) => b.date - a.date);
             
         } catch (error) {
-            console.error('❌ [Twitter監控] 推文解析失敗:', error.message);
+            console.error('❌ [解析推文] 解析失敗:', error.message);
             return [];
         }
     }
     
-    // 提取推文時間
+    // 提取推文時間 - 改進版
     extractTweetTime(tweetContent) {
         try {
-            // 多種時間格式模式
             const timePatterns = [
-                // 相對時間 (1h, 2m, 3d 等)
+                // Nitter時間格式
+                /datetime="([^"]+)"/i,
+                /data-time="([^"]+)"/i,
+                /title="([^"]*\d{4}[^"]*)"]/i,
+                // 相對時間
                 /(\d+)([smhd])\s*ago/i,
-                // 絕對時間 (Dec 25, 2023)
-                /(\w{3})\s+(\d{1,2}),?\s+(\d{4})/,
-                // ISO格式
-                /(\d{4})-(\d{2})-(\d{2})[T\s](\d{2}):(\d{2})/,
-                // 日期屬性
-                /datetime="([^"]+)"/,
-                /data-time="([^"]+)"/,
-                /title="([^"]*(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[^"]*)"]/i
+                /(\d+)\s*(second|minute|hour|day)s?\s*ago/i,
+                // 絕對時間
+                /(\w{3})\s+(\d{1,2}),?\s+(\d{4})/i,
+                /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2}),?\s+(\d{4})/i,
+                // 數字日期格式
+                /(\d{1,2})\/(\d{1,2})\/(\d{4})/,
+                /(\d{4})-(\d{2})-(\d{2})/,
+                // 時間標籤內容
+                /<time[^>]*>([^<]+)<\/time>/i
             ];
             
             for (const pattern of timePatterns) {
@@ -213,45 +286,58 @@ class BlogMonitor {
                 if (match) {
                     let tweetDate = null;
                     
-                    if (pattern.source.includes('([smhd])')) {
-                        // 相對時間處理
-                        const value = parseInt(match[1]);
-                        const unit = match[2].toLowerCase();
-                        tweetDate = new Date();
-                        
-                        switch (unit) {
-                            case 's': tweetDate.setSeconds(tweetDate.getSeconds() - value); break;
-                            case 'm': tweetDate.setMinutes(tweetDate.getMinutes() - value); break;
-                            case 'h': tweetDate.setHours(tweetDate.getHours() - value); break;
-                            case 'd': tweetDate.setDate(tweetDate.getDate() - value); break;
+                    try {
+                        if (pattern.source.includes('([smhd])') || pattern.source.includes('(second|minute|hour|day)')) {
+                            // 相對時間處理
+                            const value = parseInt(match[1]);
+                            let unit = match[2];
+                            
+                            // 標準化單位
+                            if (unit.startsWith('s')) unit = 's';
+                            else if (unit.startsWith('m')) unit = 'm';
+                            else if (unit.startsWith('h')) unit = 'h';
+                            else if (unit.startsWith('d')) unit = 'd';
+                            
+                            tweetDate = new Date();
+                            switch (unit) {
+                                case 's': tweetDate.setSeconds(tweetDate.getSeconds() - value); break;
+                                case 'm': tweetDate.setMinutes(tweetDate.getMinutes() - value); break;
+                                case 'h': tweetDate.setHours(tweetDate.getHours() - value); break;
+                                case 'd': tweetDate.setDate(tweetDate.getDate() - value); break;
+                            }
+                        } else if (pattern.source.includes('(\\w{3})') || pattern.source.includes('(Jan|Feb')) {
+                            // 月份格式處理
+                            const months = {
+                                'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+                                'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+                            };
+                            const monthStr = match[1];
+                            const month = months[monthStr] !== undefined ? months[monthStr] : parseInt(monthStr) - 1;
+                            const day = parseInt(match[2]);
+                            const year = parseInt(match[3]);
+                            tweetDate = new Date(year, month, day);
+                        } else {
+                            // 嘗試直接解析
+                            const dateStr = match[1] || match[0];
+                            tweetDate = new Date(dateStr);
                         }
-                    } else if (pattern.source.includes('(\\w{3})')) {
-                        // 月份格式處理
-                        const months = {
-                            'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
-                            'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
-                        };
-                        const month = months[match[1]];
-                        const day = parseInt(match[2]);
-                        const year = parseInt(match[3]);
-                        tweetDate = new Date(year, month, day);
-                    } else {
-                        // 嘗試直接解析
-                        tweetDate = new Date(match[1] || match[0]);
-                    }
-                    
-                    if (tweetDate && !isNaN(tweetDate.getTime())) {
-                        return {
-                            date: tweetDate,
-                            dateString: `${tweetDate.getFullYear()}年${tweetDate.getMonth() + 1}月${tweetDate.getDate()}日`,
-                            fullDateTime: `${tweetDate.getFullYear()}年${tweetDate.getMonth() + 1}月${tweetDate.getDate()}日 ${tweetDate.getHours().toString().padStart(2, '0')}:${tweetDate.getMinutes().toString().padStart(2, '0')}`
-                        };
+                        
+                        if (tweetDate && !isNaN(tweetDate.getTime())) {
+                            return {
+                                date: tweetDate,
+                                dateString: `${tweetDate.getFullYear()}年${tweetDate.getMonth() + 1}月${tweetDate.getDate()}日`,
+                                fullDateTime: `${tweetDate.getFullYear()}年${tweetDate.getMonth() + 1}月${tweetDate.getDate()}日 ${tweetDate.getHours().toString().padStart(2, '0')}:${tweetDate.getMinutes().toString().padStart(2, '0')}`
+                            };
+                        }
+                    } catch (parseError) {
+                        console.warn(`⚠️ [時間解析] 解析錯誤: ${parseError.message}`);
                     }
                 }
             }
             
-            // 如果沒有找到時間，使用當前時間
+            // 如果無法解析時間，使用當前時間
             const now = new Date();
+            console.warn('⚠️ [時間解析] 無法解析推文時間，使用當前時間');
             return {
                 date: now,
                 dateString: `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`,
@@ -259,67 +345,135 @@ class BlogMonitor {
             };
             
         } catch (error) {
-            console.error('❌ [時間解析] 失敗:', error.message);
+            console.error('❌ [時間解析] 嚴重錯誤:', error.message);
             return null;
         }
     }
     
-    // 提取推文文字內容
+    // 提取推文文字內容 - 改進版
     extractTweetText(tweetContent) {
         try {
-            // 移除HTML標籤，提取純文字
-            const textContent = tweetContent
+            // 移除不需要的標籤和內容
+            let textContent = tweetContent
                 .replace(/<script[\s\S]*?<\/script>/gi, '')
                 .replace(/<style[\s\S]*?<\/style>/gi, '')
+                .replace(/<noscript[\s\S]*?<\/noscript>/gi, '')
+                .replace(/<!--[\s\S]*?-->/g, '')
+                .replace(/<svg[\s\S]*?<\/svg>/gi, '')
+                .replace(/<img[^>]*>/gi, ' [圖片] ')
+                .replace(/<a[^>]*href="[^"]*"[^>]*>([^<]*)<\/a>/gi, '$1')
                 .replace(/<[^>]+>/g, ' ')
                 .replace(/&nbsp;/g, ' ')
                 .replace(/&lt;/g, '<')
                 .replace(/&gt;/g, '>')
                 .replace(/&amp;/g, '&')
+                .replace(/&quot;/g, '"')
+                .replace(/&#x27;/g, "'")
+                .replace(/&#x2F;/g, '/')
                 .replace(/\s+/g, ' ')
                 .trim();
             
-            return textContent.substring(0, 200); // 限制長度
+            // 過濾掉太短的內容
+            if (textContent.length < 10) {
+                console.warn('⚠️ [文字提取] 提取的內容過短');
+                return null;
+            }
+            
+            // 限制長度
+            const maxLength = 500;
+            if (textContent.length > maxLength) {
+                textContent = textContent.substring(0, maxLength) + '...';
+            }
+            
+            return textContent;
+            
         } catch (error) {
             console.error('❌ [文字提取] 失敗:', error.message);
             return '無法提取推文內容';
         }
     }
 
-    // 測試網站連接
+    // 搜索包含關鍵字的最新推文
+    async searchLatestTweetWithKeywords() {
+        try {
+            console.log('🔍 [搜索最新推文] 開始搜索包含關鍵字的最新推文...');
+            console.log(`🔍 [搜索最新推文] 目標關鍵字: ${this.keywords.join(', ')}`);
+            
+            const tweets = await this.checkTwitterForUpdates();
+            
+            if (tweets.length === 0) {
+                console.log('📋 [搜索最新推文] 未找到包含關鍵字的推文');
+                return null;
+            }
+            
+            // 返回最新的推文（已按時間排序）
+            const latestTweet = tweets[0];
+            
+            console.log(`✅ [搜索最新推文] 找到最新推文:`);
+            console.log(`   - 時間: ${latestTweet.fullDateTime}`);
+            console.log(`   - 關鍵字: ${latestTweet.keyword}`);
+            console.log(`   - 內容: ${latestTweet.content.substring(0, 100)}...`);
+            
+            return latestTweet;
+            
+        } catch (error) {
+            console.error('❌ [搜索最新推文] 搜索失敗:', error.message);
+            return null;
+        }
+    }
+
+    // 測試網站連接 - 改進版
     async testWebsiteAccess() {
         try {
-            console.log('🔍 [Twitter測試] 測試Twitter連接...');
+            console.log('🔍 [Twitter測試] 測試所有Nitter實例連接...');
             
-            const response = await this.makeRequest(this.twitterUrl);
+            const results = [];
             
-            console.log(`📊 [Twitter測試] HTTP狀態: ${response.statusCode}`);
-            console.log(`📊 [Twitter測試] Content-Type: ${response.headers['content-type'] || '未知'}`);
-            console.log(`📊 [Twitter測試] 內容長度: ${response.data.length} 字元`);
-            
-            if (response.statusCode !== 200) {
-                return {
-                    success: false,
-                    error: `HTTP錯誤: ${response.statusCode}`,
-                    details: response.headers
-                };
+            for (let i = 0; i < Math.min(3, this.nitterInstances.length); i++) {
+                const url = this.nitterInstances[i];
+                try {
+                    console.log(`📊 [Twitter測試] 測試實例 ${i + 1}: ${url}`);
+                    
+                    const response = await this.makeRequest(url);
+                    
+                    const result = {
+                        instance: i + 1,
+                        url: url,
+                        statusCode: response.statusCode,
+                        contentLength: response.data.length,
+                        success: response.statusCode === 200,
+                        hasValidContent: response.data.includes('timeline') || response.data.includes('tweet'),
+                        hasKeywords: this.keywords.some(keyword => 
+                            response.data.toLowerCase().includes(keyword.toLowerCase())
+                        )
+                    };
+                    
+                    results.push(result);
+                    
+                    console.log(`${result.success ? '✅' : '❌'} [Twitter測試] 實例 ${i + 1}: HTTP ${result.statusCode}, ${result.contentLength} 字元`);
+                    
+                    if (result.success) break; // 找到一個可用的就停止
+                    
+                } catch (error) {
+                    results.push({
+                        instance: i + 1,
+                        url: url,
+                        success: false,
+                        error: error.message
+                    });
+                    console.log(`❌ [Twitter測試] 實例 ${i + 1} 失敗: ${error.message}`);
+                }
             }
-
-            const html = response.data;
-            const hasValidContent = html.includes('timeline') || html.includes('tweet');
-            const hasKeywords = this.keywords.some(keyword => html.includes(keyword));
             
-            console.log(`📊 [Twitter測試] 包含推文結構: ${hasValidContent ? '✅' : '❌'}`);
-            console.log(`📊 [Twitter測試] 包含關鍵字: ${hasKeywords ? '✅' : '❌'}`);
+            const successfulResults = results.filter(r => r.success);
             
             return {
-                success: true,
-                statusCode: response.statusCode,
-                contentLength: response.data.length,
-                hasValidContent,
-                hasKeywords,
+                success: successfulResults.length > 0,
+                totalTested: results.length,
+                successfulInstances: successfulResults.length,
+                results: results,
                 keywords: this.keywords,
-                sampleContent: html.substring(0, 500)
+                bestInstance: successfulResults[0] || null
             };
 
         } catch (error) {
@@ -331,10 +485,10 @@ class BlogMonitor {
         }
     }
 
-    // 分析當前內容
+    // 分析當前內容 - 改進版
     async analyzeCurrentContent(showDetails = false) {
         try {
-            console.log('🔍 [Twitter分析] 分析當前推文內容...');
+            console.log('🔍 [Twitter分析] 開始分析當前推文內容...');
             
             const tweets = await this.checkTwitterForUpdates();
             
@@ -346,7 +500,8 @@ class BlogMonitor {
                     latestTweet: null,
                     keywords: this.keywords,
                     analysisTime: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
-                    message: '未找到包含關鍵字的推文'
+                    message: '未找到包含關鍵字的推文',
+                    currentInstance: this.nitterInstances[this.currentInstanceIndex]
                 };
             }
 
@@ -374,19 +529,21 @@ class BlogMonitor {
                 latestTweet: tweets[0],
                 allRecentTweets: recentTweets,
                 keywords: this.keywords,
-                analysisTime: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
+                analysisTime: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
+                currentInstance: this.nitterInstances[this.currentInstanceIndex]
             };
 
         } catch (error) {
             console.error('❌ [Twitter分析] 分析失敗:', error.message);
             return {
                 success: false,
-                error: error.message
+                error: error.message,
+                currentInstance: this.nitterInstances[this.currentInstanceIndex]
             };
         }
     }
 
-    // 主要檢查方法
+    // 主要檢查方法 - 改進版
     async checkForNewArticles(testMode = false) {
         try {
             console.log(`🔍 [Twitter] 檢查新推文... ${testMode ? '(測試模式)' : ''}`);
@@ -404,6 +561,7 @@ class BlogMonitor {
 
             if (testMode) {
                 console.log(`📝 [Twitter測試] 找到最新推文: ${latestTweet.fullDateTime} (關鍵字: ${latestTweet.keyword})`);
+                console.log(`📝 [Twitter測試] 推文內容: ${latestTweet.content.substring(0, 150)}...`);
                 this.lastFoundArticles = tweets.slice(0, 5);
                 return latestTweet;
             }
@@ -432,7 +590,7 @@ class BlogMonitor {
 
 🔍 **關鍵字:** ${article.keyword}
 🗓️ **發布時間:** ${article.fullDateTime}
-📝 **內容:** ${article.content.substring(0, 200)}${article.content.length > 200 ? '...' : ''}
+📝 **內容:** ${article.content.substring(0, 300)}${article.content.length > 300 ? '...' : ''}
 🔗 **Twitter連結:** https://x.com/${this.targetAccount}
 ⏰ **檢測時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
 
@@ -471,6 +629,7 @@ class BlogMonitor {
         this.isMonitoring = true;
         console.log('🚀 [Twitter] 開始Twitter監控 (每小時00分檢查)');
         console.log('🔍 [Twitter] 監控關鍵字:', this.keywords);
+        console.log('🔗 [Twitter] 可用Nitter實例:', this.nitterInstances.length, '個');
         
         const monitorLoop = async () => {
             if (!this.isMonitoring) {
@@ -490,6 +649,7 @@ class BlogMonitor {
                     .toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
                 
                 console.log(`⏰ [Twitter] 下次檢查: ${nextCheckTime} (${Math.round(nextCheckSeconds/60)}分鐘後)`);
+                console.log(`🔗 [Twitter] 當前使用實例: ${this.nitterInstances[this.currentInstanceIndex]}`);
 
                 // 設定下次檢查
                 this.monitoringInterval = setTimeout(monitorLoop, nextCheckSeconds * 1000);
@@ -522,7 +682,7 @@ class BlogMonitor {
         console.log('⏹️ [Twitter] Twitter監控已停止');
     }
 
-    // 獲取狀態
+    // 獲取狀態 - 增強版
     getStatus() {
         return {
             isMonitoring: this.isMonitoring,
@@ -531,9 +691,11 @@ class BlogMonitor {
             lastCheckTime: this.lastCheckTime,
             lastArticleDate: this.lastArticleDate ? this.lastArticleDate.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null,
             nextCheckTime: this.isMonitoring ? new Date(Date.now() + this.calculateNextCheckTime() * 1000).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null,
-            twitterUrl: this.twitterUrl,
+            twitterUrl: this.nitterInstances[this.currentInstanceIndex],
             targetAccount: this.targetAccount,
             keywords: this.keywords,
+            totalInstances: this.nitterInstances.length,
+            currentInstance: this.currentInstanceIndex + 1,
             lastFoundArticles: this.lastFoundArticles.map(tweet => ({
                 date: tweet.fullDateTime,
                 keyword: tweet.keyword,
@@ -557,8 +719,55 @@ class BlogMonitor {
             successfulFinds: this.articlesFound,
             keywords: this.keywords,
             lastCheck: this.lastCheckTime,
-            lastFind: this.lastArticleDate ? this.lastArticleDate.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null
+            lastFind: this.lastArticleDate ? this.lastArticleDate.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null,
+            instanceStats: {
+                total: this.nitterInstances.length,
+                current: this.currentInstanceIndex + 1,
+                currentUrl: this.nitterInstances[this.currentInstanceIndex]
+            }
         };
+    }
+
+    // 切換到下一個Nitter實例
+    switchToNextInstance() {
+        this.currentInstanceIndex = (this.currentInstanceIndex + 1) % this.nitterInstances.length;
+        console.log(`🔄 [Twitter] 切換到實例 ${this.currentInstanceIndex + 1}: ${this.nitterInstances[this.currentInstanceIndex]}`);
+        return this.nitterInstances[this.currentInstanceIndex];
+    }
+
+    // 獲取所有可用實例的狀態
+    async getAllInstancesStatus() {
+        const results = [];
+        
+        for (let i = 0; i < this.nitterInstances.length; i++) {
+            const url = this.nitterInstances[i];
+            try {
+                const startTime = Date.now();
+                const response = await this.makeRequest(url);
+                const responseTime = Date.now() - startTime;
+                
+                results.push({
+                    index: i + 1,
+                    url: url,
+                    status: response.statusCode === 200 ? 'online' : 'error',
+                    statusCode: response.statusCode,
+                    responseTime: responseTime,
+                    contentLength: response.data.length,
+                    hasContent: response.data.length > 1000
+                });
+                
+            } catch (error) {
+                results.push({
+                    index: i + 1,
+                    url: url,
+                    status: 'offline',
+                    error: error.message,
+                    responseTime: null
+                });
+            }
+        }
+        
+        return results;
     }
 }
 

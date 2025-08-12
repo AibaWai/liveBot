@@ -605,72 +605,51 @@ async function handleDiscordCommands(message) {
         await message.reply(statusMsg);
     }
     
-    else if (cmd === '!help') {
-        await message.reply(`🔍 **統一直播監控機器人** (日本時間版)
-
-**Instagram監控命令:**
-\`!ig-start\` - 開始Instagram監控
-\`!ig-stop\` - 停止Instagram監控
-\`!ig-status\` - Instagram監控狀態
-\`!ig-check\` - 手動檢查Instagram
-\`!ig-accounts\` - 檢查帳號狀態
-
-**博客監控命令:**
-\`!blog-status\` - 博客監控狀態
-\`!blog-check\` - 手動檢查博客
-\`!blog-test\` - 測試網站連接
-\`!blog-analyze\` - 分析網站內容
-\`!blog-latest\` - 檢查最新文章
-\`!blog-debug\` - 調試分析
-\`!blog-raw\` - 查看原始HTML
-\`!blog-dynamic\` - 測試動態載入
-
-**系統命令:**
-\`!status\` - 完整系統狀態
-\`!help\` - 顯示此幫助`);
-}
-
-    // 在 handleDiscordCommands 函數中添加/修改博客監控命令
-    else if (cmd === '!blog-status' || cmd === '!twitter-status') {
-        if (blogMonitor) {
-            const blogStatus = blogMonitor.getStatus();
-            const statusMsg = `🐦 **Twitter監控狀態**
-
-**監控狀態:** ${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
-**目標帳號:** @${blogStatus.targetAccount}
-**監控關鍵字:** ${blogStatus.keywords.join(', ')}
-**Twitter網址:** ${blogStatus.twitterUrl}
-**總檢查次數:** ${blogStatus.totalChecks}
-**發現推文數:** ${blogStatus.articlesFound}
-**最後檢查:** ${blogStatus.lastCheckTime || '尚未檢查'}
-**最新推文:** ${blogStatus.lastArticleDate || '無'}
-**下次檢查:** ${blogStatus.nextCheckTime || '未安排'}
-
-⏰ 每小時00分自動檢查`;
-
-            await message.reply(statusMsg);
-        } else {
-            await message.reply('❌ Twitter監控未啟用');
-        }
-    }
-
+    // 更新後的 Twitter 監控命令
     else if (cmd === '!blog-check' || cmd === '!twitter-check') {
         if (blogMonitor) {
-            await message.reply('🔍 執行手動Twitter檢查...');
+            await message.reply('🔍 搜索包含關鍵字的最新推文...');
             try {
-                const newTweet = await blogMonitor.checkForNewArticles(true); // 測試模式
-                if (newTweet) {
-                    await message.reply(`🐦 **發現相關推文!**
+                // 使用新的搜索方法
+                const latestTweet = await blogMonitor.searchLatestTweetWithKeywords();
+                
+                if (latestTweet) {
+                    await message.reply(`🐦 **找到最新相關推文!**
 
-🗓️ **時間:** ${newTweet.fullDateTime}
-🔍 **關鍵字:** ${newTweet.keyword}
-📝 **內容:** ${newTweet.content.substring(0, 300)}${newTweet.content.length > 300 ? '...' : ''}
-🔗 **查看:** https://x.com/${blogMonitor.targetAccount}`);
+🗓️ **發布時間:** ${latestTweet.fullDateTime}
+🔍 **匹配關鍵字:** ${latestTweet.keyword}
+📝 **推文內容:**
+${latestTweet.content}
+
+🔗 **查看完整推文:** https://x.com/${blogMonitor.targetAccount}
+⏰ **搜索時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
+🌐 **數據來源:** ${latestTweet.sourceUrl}
+
+✅ Twitter監控系統運作正常！`);
                 } else {
-                    await message.reply('📋 目前無包含關鍵字的新推文');
+                    const status = blogMonitor.getStatus();
+                    await message.reply(`📋 **未找到包含關鍵字的推文**
+
+🔍 **搜索關鍵字:** ${status.keywords.join(', ')}
+🐦 **目標帳號:** @${status.targetAccount}
+🌐 **當前實例:** ${status.currentInstance}/${status.totalInstances}
+🔗 **實例網址:** ${status.twitterUrl}
+
+**可能原因:**
+• @${status.targetAccount} 最近沒有發布包含這些關鍵字的推文
+• 當前Nitter實例服務不穩定
+• 關鍵字設定需要調整
+
+💡 **建議:** 可以嘗試 \`!twitter-test\` 檢查連接狀態`);
                 }
             } catch (error) {
-                await message.reply(`❌ 檢查失敗: ${error.message}`);
+                await message.reply(`❌ **搜索失敗:** ${error.message}
+
+🔧 **故障排除:**
+1. 檢查網絡連接
+2. 使用 \`!twitter-test\` 測試實例狀態  
+3. 使用 \`!twitter-instances\` 查看所有實例狀態
+4. 稍後再試`);
             }
         } else {
             await message.reply('❌ Twitter監控未啟用');
@@ -679,23 +658,45 @@ async function handleDiscordCommands(message) {
 
     else if (cmd === '!blog-test' || cmd === '!twitter-test') {
         if (blogMonitor) {
-            await message.reply('🔍 執行Twitter連接測試...');
+            await message.reply('🔍 測試Twitter連接...');
             try {
                 const testResult = await blogMonitor.testWebsiteAccess();
+                
                 if (testResult.success) {
+                    const bestInstance = testResult.bestInstance;
                     const testMsg = `✅ **Twitter連接測試成功**
 
-📊 **連接狀態:** HTTP ${testResult.statusCode}
-📄 **內容長度:** ${testResult.contentLength} 字元
-🏗️ **推文結構:** ${testResult.hasValidContent ? '✅ 正常' : '❌ 異常'}
-🔍 **包含關鍵字:** ${testResult.hasKeywords ? '✅ 是' : '❌ 否'}
-📝 **監控關鍵字:** ${testResult.keywords.join(', ')}
+📊 **測試結果:**
+• 測試實例數: ${testResult.totalTested}
+• 成功實例數: ${testResult.successfulInstances}
+• 最佳實例: #${bestInstance.instance}
 
-✅ Twitter頁面可正常訪問並解析！`;
+📄 **最佳實例詳情:**
+• HTTP狀態: ${bestInstance.statusCode}
+• 內容長度: ${bestInstance.contentLength.toLocaleString()} 字元
+• 推文結構: ${bestInstance.hasValidContent ? '✅ 正常' : '❌ 異常'}
+• 包含關鍵字: ${bestInstance.hasKeywords ? '✅ 有' : '❌ 無'}
+• 實例網址: ${bestInstance.url}
+
+🔍 **監控關鍵字:** ${testResult.keywords.join(', ')}
+
+✅ Twitter監控系統可正常運作！`;
                     
                     await message.reply(testMsg);
                 } else {
-                    await message.reply(`❌ **Twitter連接測試失敗**\n\n錯誤: ${testResult.error}`);
+                    await message.reply(`❌ **Twitter連接測試失敗**
+
+📊 **測試結果:**
+• 測試實例數: ${testResult.totalTested}
+• 成功實例數: 0
+• 所有測試的實例都無法連接
+
+🔧 **建議解決方案:**
+1. 稍後再試（Nitter實例可能臨時不可用）
+2. 檢查網絡連接
+3. 使用 \`!twitter-instances\` 查看詳細狀態
+
+錯誤詳情: ${testResult.error || '未知錯誤'}`);
                 }
             } catch (error) {
                 await message.reply(`❌ 測試執行失敗: ${error.message}`);
@@ -710,6 +711,7 @@ async function handleDiscordCommands(message) {
             await message.reply('🔍 分析Twitter當前內容...');
             try {
                 const analysis = await blogMonitor.analyzeCurrentContent(true);
+                
                 if (analysis.success) {
                     const analysisMsg = `📊 **Twitter內容分析結果**
 
@@ -720,23 +722,64 @@ async function handleDiscordCommands(message) {
     `${analysis.latestTweet.fullDateTime} (關鍵字: ${analysis.latestTweet.keyword})` : 
     '無'}
 ⏰ **分析時間:** ${analysis.analysisTime}
+🌐 **當前實例:** ${analysis.currentInstance}
 
 ${analysis.recentTweets > 0 ? 
 `📋 **最近推文列表:**
 ${analysis.allRecentTweets.slice(0, 3).map((tweet, index) => {
-    return `${index + 1}. ${tweet.fullDateTime} - ${tweet.keyword}\n   ${tweet.content.substring(0, 100)}...`;
-}).join('\n')}` : 
+    return `${index + 1}. ${tweet.fullDateTime} - ${tweet.keyword}\n   ${tweet.content.substring(0, 120)}...`;
+}).join('\n\n')}` : 
 '📭 最近7天內無包含關鍵字的推文'}
 
-✅ 分析完成，監控系統能正確解析推文！`;
+✅ 分析完成，監控系統運作正常！`;
                     
                     await message.reply(analysisMsg);
                 } else {
-                    await message.reply(`❌ **內容分析失敗**\n\n錯誤: ${analysis.error}`);
+                    await message.reply(`❌ **內容分析失敗**
+
+🌐 **當前實例:** ${analysis.currentInstance}
+❌ **錯誤:** ${analysis.error}
+
+🔧 **建議:**
+• 使用 \`!twitter-test\` 檢查連接
+• 使用 \`!twitter-switch\` 切換實例`);
                 }
             } catch (error) {
                 await message.reply(`❌ 分析執行失敗: ${error.message}`);
             }
+        } else {
+            await message.reply('❌ Twitter監控未啟用');
+        }
+    }
+
+    else if (cmd === '!blog-status' || cmd === '!twitter-status') {
+        if (blogMonitor) {
+            const blogStatus = blogMonitor.getStatus();
+            const statusMsg = `🐦 **Twitter監控狀態**
+
+**監控狀態:** ${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
+**目標帳號:** @${blogStatus.targetAccount}
+**監控關鍵字:** ${blogStatus.keywords.join(', ')}
+
+**實例狀態:**
+🌐 當前實例: ${blogStatus.currentInstance}/${blogStatus.totalInstances}
+🔗 實例網址: ${blogStatus.twitterUrl}
+
+**監控統計:**
+📊 總檢查次數: ${blogStatus.totalChecks}
+🎯 發現推文數: ${blogStatus.articlesFound}
+⏰ 最後檢查: ${blogStatus.lastCheckTime || '尚未檢查'}
+🗓️ 最新推文: ${blogStatus.lastArticleDate || '無'}
+⏰ 下次檢查: ${blogStatus.nextCheckTime || '未安排'}
+
+💡 **可用命令:**
+\`!twitter-check\` - 搜索最新推文
+\`!twitter-test\` - 測試連接
+\`!twitter-instances\` - 查看所有實例狀態
+
+⏰ 每小時00分自動檢查`;
+
+            await message.reply(statusMsg);
         } else {
             await message.reply('❌ Twitter監控未啟用');
         }
@@ -751,11 +794,17 @@ ${analysis.allRecentTweets.slice(0, 3).map((tweet, index) => {
 **當前關鍵字:** ${keywords.join(', ')}
 **關鍵字數量:** ${keywords.length}
 
-💡 **設定方式:**
-• 環境變數 \`BLOG_KEYWORDS\` 或 \`TWITTER_KEYWORDS\` (逗號分隔)
-• 或使用 \`BLOG_KEYWORD_1\`, \`BLOG_KEYWORD_2\` 等
+💡 **環境變數設定方式:**
+• \`BLOG_KEYWORDS\` 或 \`TWITTER_KEYWORDS\`: 用逗號分隔多個關鍵字
+  例: \`髙木雄也,橋本将生,猪俣周杜\`
+• \`BLOG_KEYWORD_1\`, \`BLOG_KEYWORD_2\` 等: 單獨設定每個關鍵字
 
-🔄 關鍵字已重新載入！`);
+🔄 關鍵字已重新載入！
+
+💡 **使用技巧:**
+• 關鍵字不區分大小寫
+• 支援日文、英文和數字
+• 建議使用具體的人名或特定詞彙`);
             } catch (error) {
                 await message.reply(`❌ 關鍵字載入失敗: ${error.message}`);
             }
@@ -764,42 +813,74 @@ ${analysis.allRecentTweets.slice(0, 3).map((tweet, index) => {
         }
     }
 
-    else if (cmd === '!blog-latest' || cmd === '!twitter-latest') {
+    // 新增命令：切換Nitter實例
+    else if (cmd === '!blog-switch' || cmd === '!twitter-switch') {
         if (blogMonitor) {
-            await message.reply('🔍 檢查最新推文...');
             try {
-                const latestTweet = await blogMonitor.checkForNewArticles(true); // 測試模式
-                if (latestTweet) {
-                    await message.reply(`🐦 **找到最新相關推文!**
+                const newInstance = blogMonitor.switchToNextInstance();
+                const status = blogMonitor.getStatus();
+                
+                await message.reply(`🔄 **已切換Nitter實例**
 
-🗓️ **發布時間:** ${latestTweet.fullDateTime}
-🔍 **匹配關鍵字:** ${latestTweet.keyword}
-📝 **推文內容:**
-${latestTweet.content}
+🌐 **新實例:** ${status.currentInstance}/${status.totalInstances}
+🔗 **實例網址:** ${newInstance}
 
-🔗 **查看完整推文:** https://x.com/${blogMonitor.targetAccount}
-⏰ **檢查時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-
-✅ Twitter監控系統運作正常！`);
-                } else {
-                    await message.reply(`📋 **未找到最近包含關鍵字的推文**
-
-🔍 **監控關鍵字:** ${blogMonitor.keywords.join(', ')}
-🐦 **目標帳號:** @${blogMonitor.targetAccount}
-
-可能原因：
-• 最近確實沒有包含關鍵字的推文
-• Nitter服務臨時不可用
-• 網絡連接問題`);
-                }
+💡 下次檢查推文時將使用新實例
+🔍 可使用 \`!twitter-test\` 測試新實例連接狀態`);
             } catch (error) {
-                await message.reply(`❌ 檢查失敗: ${error.message}`);
+                await message.reply(`❌ 切換實例失敗: ${error.message}`);
             }
         } else {
             await message.reply('❌ Twitter監控未啟用');
         }
     }
 
+    // 新增命令：檢查所有實例狀態  
+    else if (cmd === '!blog-instances' || cmd === '!twitter-instances') {
+        if (blogMonitor) {
+            await message.reply('🔍 檢查所有Nitter實例狀態...');
+            try {
+                const instancesStatus = await blogMonitor.getAllInstancesStatus();
+                
+                let statusMsg = `🌐 **所有Nitter實例狀態**\n\n`;
+                
+                instancesStatus.forEach(instance => {
+                    const statusIcon = instance.status === 'online' ? '✅' : 
+                                     instance.status === 'error' ? '⚠️' : '❌';
+                    const responseTime = instance.responseTime ? `${instance.responseTime}ms` : 'N/A';
+                    
+                    statusMsg += `${statusIcon} **實例 ${instance.index}** ${instance.status.toUpperCase()}\n`;
+                    statusMsg += `   🔗 ${instance.url}\n`;
+                    
+                    if (instance.status === 'online') {
+                        statusMsg += `   ⚡ 響應時間: ${responseTime}\n`;
+                        statusMsg += `   📄 內容長度: ${instance.contentLength.toLocaleString()} 字元\n`;
+                        statusMsg += `   📊 HTTP狀態: ${instance.statusCode}\n`;
+                    } else if (instance.status === 'error') {
+                        statusMsg += `   📊 HTTP狀態: ${instance.statusCode}\n`;
+                    } else {
+                        statusMsg += `   ❌ 錯誤: ${instance.error}\n`;
+                    }
+                    statusMsg += `\n`;
+                });
+                
+                const onlineCount = instancesStatus.filter(i => i.status === 'online').length;
+                statusMsg += `📊 **總結:** ${onlineCount}/${instancesStatus.length} 實例在線\n`;
+                
+                if (onlineCount === 0) {
+                    statusMsg += `\n⚠️ **注意:** 所有實例都不可用，監控可能受影響`;
+                }
+                
+                await message.reply(statusMsg);
+            } catch (error) {
+                await message.reply(`❌ 檢查實例狀態失敗: ${error.message}`);
+            }
+        } else {
+            await message.reply('❌ Twitter監控未啟用');
+        }
+    }
+
+    // 更新幫助命令
     else if (cmd === '!help') {
         await message.reply(`🔍 **統一直播監控機器人** (日本時間版)
 
@@ -812,11 +893,12 @@ ${latestTweet.content}
 
 **Twitter監控命令:**
 \`!twitter-status\` / \`!blog-status\` - Twitter監控狀態
-\`!twitter-check\` / \`!blog-check\` - 手動檢查推文
+\`!twitter-check\` / \`!blog-check\` - 搜索包含關鍵字的最新推文 🆕
 \`!twitter-test\` / \`!blog-test\` - 測試Twitter連接
 \`!twitter-analyze\` / \`!blog-analyze\` - 分析推文內容
-\`!twitter-latest\` / \`!blog-latest\` - 檢查最新推文
 \`!twitter-keywords\` / \`!blog-keywords\` - 查看/重載關鍵字
+\`!twitter-switch\` / \`!blog-switch\` - 切換Nitter實例 🆕
+\`!twitter-instances\` / \`!blog-instances\` - 查看所有實例狀態 🆕
 
 **系統命令:**
 \`!status\` - 完整系統狀態
@@ -824,8 +906,10 @@ ${latestTweet.content}
 
 **Twitter監控說明:**
 🐦 監控目標: @FCweb_info
-🔍 關鍵字: 透過環境變數設定
-⏰ 檢查頻率: 每小時00分自動檢查`);
+🔍 關鍵字: 透過環境變數設定 (支援日文)
+⏰ 檢查頻率: 每小時00分自動檢查
+🌐 多實例: 自動切換可用的Nitter實例
+🎯 智能搜索: 自動找到包含關鍵字的最新推文`);
     }
 
 }
