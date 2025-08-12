@@ -737,6 +737,64 @@ ${analysis.allRecentArticles.slice(0, 5).map((article, index) => {
     }
 }
 
+else if (cmd === '!blog-raw') {
+    if (blogMonitor) {
+        await message.reply('🔍 獲取博客原始HTML內容...');
+        try {
+            const response = await blogMonitor.makeRequest(blogMonitor.blogUrl);
+            if (response.statusCode === 200) {
+                const html = response.data;
+                
+                // 尋找包含 "entry" 或 "time" 的HTML片段
+                const timeTagMatches = html.match(/<time[^>]*>.*?<\/time>/gi) || [];
+                const entryMatches = html.match(/<div[^>]*class="[^"]*entry[^"]*"[^>]*>[\s\S]{0,500}/gi) || [];
+                
+                let debugMsg = `🔍 **博客原始內容調試**
+
+📊 **基本信息:**
+- HTML長度: ${html.length} 字元
+- 找到 <time> 標籤: ${timeTagMatches.length} 個
+- 找到 entry 容器: ${entryMatches.length} 個
+
+`;
+
+                if (timeTagMatches.length > 0) {
+                    debugMsg += `📅 **Time 標籤:**\n`;
+                    timeTagMatches.slice(0, 3).forEach((tag, index) => {
+                        debugMsg += `${index + 1}. \`${tag}\`\n`;
+                    });
+                } else {
+                    debugMsg += `❌ **未找到 time 標籤**\n`;
+                }
+
+                if (entryMatches.length > 0) {
+                    debugMsg += `\n📦 **Entry 容器 (前3個):**\n`;
+                    entryMatches.slice(0, 3).forEach((entry, index) => {
+                        debugMsg += `${index + 1}. \`${entry.substring(0, 200)}...\`\n`;
+                    });
+                }
+
+                // 搜尋包含日期的任何內容
+                const dateContentMatches = html.match(/2025[.\-\/年]0?7[.\-\/月]1?4/gi) || [];
+                if (dateContentMatches.length > 0) {
+                    debugMsg += `\n🗓️ **包含 2025.07.14 的內容:**\n`;
+                    dateContentMatches.slice(0, 3).forEach((match, index) => {
+                        debugMsg += `${index + 1}. ${match}\n`;
+                    });
+                }
+
+                await message.reply(debugMsg);
+            } else {
+                await message.reply(`❌ HTTP錯誤: ${response.statusCode}`);
+            }
+        } catch (error) {
+            await message.reply(`❌ 獲取失敗: ${error.message}`);
+        }
+    } else {
+        await message.reply('❌ 博客監控未啟用');
+    }
+}
+
 else if (cmd === '!blog-latest') {
     if (blogMonitor) {
         await message.reply('🔍 檢查最新文章...');
