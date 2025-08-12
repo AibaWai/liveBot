@@ -262,101 +262,86 @@ class BlogMonitor {
             const html = response.data;
             const allDates = []; // 修復：在函數開始時定義 allDates
             
-            // 專門針對familyclub.jp的time標籤解析 - 更寬松的匹配
+            // 針對實際HTML結構的精確匹配模式
             const timeTagPatterns = [
-                // 原始嚴格模式
+                // 精確匹配實際格式: <time datetime="2025-07-14T19:00" class="entry__posted">2025.07.14 19:00</time>
+                /<time\s+datetime="([^"]+)"\s+class="entry__posted">([^<]+)<\/time>/gi,
+                // 順序調換版本
+                /<time\s+class="entry__posted"\s+datetime="([^"]+)">([^<]+)<\/time>/gi,
+                // 更寬松的匹配（可能有其他屬性）
                 /<time[^>]*datetime="([^"]+)"[^>]*class="entry__posted"[^>]*>([^<]+)<\/time>/gi,
-                // 放寬順序限制
+                // 反向順序
                 /<time[^>]*class="entry__posted"[^>]*datetime="([^"]+)"[^>]*>([^<]+)<\/time>/gi,
-                // 更寬松的匹配
-                /<time[^>]*datetime="([^"]+)"[^>]*>([^<]+)<\/time>/gi,
                 // 最寬松的匹配
-                /<time[^>]*>([^<]*202[45][^<]*)<\/time>/gi
+                /<time[^>]*datetime="([^"]+)"[^>]*>([^<]+)<\/time>/gi
             ];
             
-            console.log('🔍 [Blog分析] 嘗試多種time標籤模式...');
+            console.log('🔍 [Blog分析] 嘗試精確匹配time標籤模式...');
+            console.log('🔍 [Blog分析] 在HTML中搜尋entry__posted類...');
+            
+            // 先檢查HTML中是否包含預期的結構
+            const entryPostedCount = (html.match(/entry__posted/g) || []).length;
+            const timeTagCount = (html.match(/<time[^>]*>/g) || []).length;
+            console.log(`📊 [Blog分析] 找到 entry__posted: ${entryPostedCount} 個, time標籤: ${timeTagCount} 個`);
+            
             
             timeTagPatterns.forEach((pattern, patternIndex) => {
                 pattern.lastIndex = 0;
                 let patternMatch;
                 let matchCount = 0;
                 
+                console.log(`🔍 [Blog分析] 嘗試模式 ${patternIndex + 1}: ${pattern.source.substring(0, 50)}...`);
+                
                 while ((patternMatch = pattern.exec(html)) !== null && matchCount < 20) {
                     matchCount++;
                     
                     let datetimeAttr, displayText;
                     
-                    if (patternIndex === 3) {
-                        // 最寬松模式，只有顯示文本
-                        displayText = patternMatch[1].trim();
-                        datetimeAttr = null;
-                    } else {
-                        datetimeAttr = patternMatch[1];
-                        displayText = patternMatch[2].trim();
-                    }
+                    // 所有模式都應該有 datetime 和 display text
+                    datetimeAttr = patternMatch[1];
+                    displayText = patternMatch[2] ? patternMatch[2].trim() : '';
                     
                     console.log(`📅 [Blog分析] 模式${patternIndex + 1}找到: datetime="${datetimeAttr}", 顯示="${displayText}"`);
                     
-                    // 解析datetime屬性或顯示文本
-                    let parsedDate = null;
-                    
-                    if (datetimeAttr) {
-                        // 解析 datetime 屬性 (ISO格式: 2025-07-14T19:00)
-                        const dateMatch = datetimeAttr.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-                        if (dateMatch) {
-                            const year = parseInt(dateMatch[1]);
-                            const month = parseInt(dateMatch[2]);
-                            const day = parseInt(dateMatch[3]);
-                            const hour = parseInt(dateMatch[4]);
-                            const minute = parseInt(dateMatch[5]);
-                            parsedDate = {
-                                date: new Date(year, month - 1, day, hour, minute),
-                                year, month, day, hour, minute
-                            };
-                        }
-                    } else {
-                        // 解析顯示文本 (2025.07.14 19:00 或其他格式)
-                        const textMatches = [
-                            displayText.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})\s+(\d{1,2}):(\d{2})/),
-                            displayText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日\s+(\d{1,2}):(\d{2})/),
-                            displayText.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/)
-                        ];
+                    // 解析datetime屬性 (ISO格式: 2025-07-14T19:00)
+                    const dateMatch = datetimeAttr.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+                    if (dateMatch) {
+                        const year = parseInt(dateMatch[1]);
+                        const month = parseInt(dateMatch[2]);
+                        const day = parseInt(dateMatch[3]);
+                        const hour = parseInt(dateMatch[4]);
+                        const minute = parseInt(dateMatch[5]);
                         
-                        for (const textMatch of textMatches) {
-                            if (textMatch) {
-                                const year = parseInt(textMatch[1]);
-                                const month = parseInt(textMatch[2]);
-                                const day = parseInt(textMatch[3]);
-                                const hour = textMatch[4] ? parseInt(textMatch[4]) : 0;
-                                const minute = textMatch[5] ? parseInt(textMatch[5]) : 0;
-                                parsedDate = {
-                                    date: new Date(year, month - 1, day, hour, minute),
-                                    year, month, day, hour, minute
-                                };
-                                break;
-                            }
-                        }
-                    }
-                    
-                    if (parsedDate) {
+                        const articleDate = new Date(year, month - 1, day, hour, minute);
                         const now = new Date();
-                        const diffDays = (now - parsedDate.date) / (1000 * 60 * 60 * 24);
+                        const diffDays = (now - articleDate) / (1000 * 60 * 60 * 24);
+                        
+                        console.log(`✅ [Blog分析] 解析成功: ${year}-${month}-${day} ${hour}:${minute} (${Math.floor(diffDays)}天前)`);
                         
                         allDates.push({
                             original: displayText,
                             datetime: datetimeAttr,
-                            date: parsedDate.date,
-                            dateString: `${parsedDate.year}年${parsedDate.month}月${parsedDate.day}日`,
-                            fullDateTime: `${parsedDate.year}年${parsedDate.month}月${parsedDate.day}日 ${parsedDate.hour.toString().padStart(2, '0')}:${parsedDate.minute.toString().padStart(2, '0')}`,
+                            date: articleDate,
+                            dateString: `${year}年${month}月${day}日`,
+                            fullDateTime: `${year}年${month}月${day}日 ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
                             daysAgo: Math.floor(diffDays),
                             isRecent: diffDays >= 0 && diffDays <= 30,
                             patternUsed: patternIndex + 1
                         });
+                    } else {
+                        console.log(`❌ [Blog分析] 無法解析datetime: ${datetimeAttr}`);
                     }
                 }
                 
                 if (matchCount > 0) {
                     console.log(`📊 [Blog分析] 模式${patternIndex + 1}找到 ${matchCount} 個time標籤`);
+                    // 如果找到了匹配，就不需要嘗試其他模式
+                    if (allDates.length > 0) {
+                        console.log(`✅ [Blog分析] 模式${patternIndex + 1}成功，停止嘗試其他模式`);
+                        return; // 跳出forEach
+                    }
+                } else {
+                    console.log(`❌ [Blog分析] 模式${patternIndex + 1}無匹配`);
                 }
             });
 
@@ -521,91 +506,96 @@ class BlogMonitor {
         }
     }
 
-    // 修復的：從HTML解析文章（適應更多日期格式）
+    // 修復的：從HTML解析文章（針對實際HTML結構優化）
     parseArticlesFromHtml(html, testMode = false) {
         const dates = [];
         
-        // 嘗試多種time標籤模式
+        console.log('🔍 [Blog HTML] 開始解析HTML中的文章...');
+        
+        // 精確匹配實際的HTML結構
         const timeTagPatterns = [
+            // 最精確的匹配: <time datetime="2025-07-14T19:00" class="entry__posted">2025.07.14 19:00</time>
+            /<time\s+datetime="([^"]+)"\s+class="entry__posted">([^<]+)<\/time>/g,
+            // 順序可能不同
+            /<time\s+class="entry__posted"\s+datetime="([^"]+)">([^<]+)<\/time>/g,
+            // 包含其他屬性的版本
             /<time[^>]*datetime="([^"]+)"[^>]*class="entry__posted"[^>]*>([^<]+)<\/time>/g,
-            /<time[^>]*class="entry__posted"[^>]*datetime="([^"]+)"[^>]*>([^<]+)<\/time>/g,
-            /<time[^>]*datetime="([^"]+)"[^>]*>([^<]+)<\/time>/g,
-            /<time[^>]*>([^<]*202[45][^<]*)<\/time>/g
+            // 反向順序
+            /<time[^>]*class="entry__posted"[^>]*datetime="([^"]+)"[^>]*>([^<]+)<\/time>/g
         ];
+        
+        // 檢查HTML中是否包含預期的結構
+        const hasEntryPosted = html.includes('entry__posted');
+        const entryPostedCount = (html.match(/entry__posted/g) || []).length;
+        console.log(`📊 [Blog HTML] 找到 entry__posted: ${hasEntryPosted ? '✅' : '❌'} (${entryPostedCount} 個)`);
+        
+        if (!hasEntryPosted) {
+            console.log('❌ [Blog HTML] 未找到預期的entry__posted類，HTML結構可能已改變');
+            // 輸出一些HTML樣本進行調試
+            const timeTagSample = html.match(/<time[^>]*>.*?<\/time>/gi)?.slice(0, 3) || [];
+            console.log('🔍 [Blog HTML] 找到的time標籤範例:', timeTagSample);
+            return dates;
+        }
         
         for (let patternIndex = 0; patternIndex < timeTagPatterns.length; patternIndex++) {
             const pattern = timeTagPatterns[patternIndex];
             let match;
+            let matchCount = 0;
             
-            while ((match = pattern.exec(html)) !== null) {
-                let datetimeAttr, displayText;
+            console.log(`🧪 [Blog HTML] 嘗試模式 ${patternIndex + 1}...`);
+            pattern.lastIndex = 0; // 重置正則表達式
+            
+            while ((match = pattern.exec(html)) !== null && matchCount < 50) {
+                matchCount++;
                 
-                if (patternIndex === 3) {
-                    // 最寬松模式
-                    displayText = match[1].trim();
-                    datetimeAttr = null;
-                } else {
-                    datetimeAttr = match[1];
-                    displayText = match[2].trim();
-                }
+                const datetimeAttr = match[1];
+                const displayText = match[2].trim();
                 
-                let parsedDate = null;
+                console.log(`📅 [Blog HTML] 找到: datetime="${datetimeAttr}", 顯示="${displayText}"`);
                 
-                if (datetimeAttr) {
-                    // 解析 datetime 屬性
-                    const dateMatch = datetimeAttr.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
-                    if (dateMatch) {
-                        const year = parseInt(dateMatch[1]);
-                        const month = parseInt(dateMatch[2]);
-                        const day = parseInt(dateMatch[3]);
-                        const hour = parseInt(dateMatch[4]);
-                        const minute = parseInt(dateMatch[5]);
-                        parsedDate = new Date(year, month - 1, day, hour, minute);
-                    }
-                } else {
-                    // 解析顯示文本
-                    const textMatches = [
-                        displayText.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})\s+(\d{1,2}):(\d{2})/),
-                        displayText.match(/(\d{4})年(\d{1,2})月(\d{1,2})日\s+(\d{1,2}):(\d{2})/),
-                        displayText.match(/(\d{4})[.\-\/](\d{1,2})[.\-\/](\d{1,2})/)
-                    ];
+                // 解析 datetime 屬性 (ISO格式: 2025-07-14T19:00)
+                const dateMatch = datetimeAttr.match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+                if (dateMatch) {
+                    const year = parseInt(dateMatch[1]);
+                    const month = parseInt(dateMatch[2]);
+                    const day = parseInt(dateMatch[3]);
+                    const hour = parseInt(dateMatch[4]);
+                    const minute = parseInt(dateMatch[5]);
                     
-                    for (const textMatch of textMatches) {
-                        if (textMatch) {
-                            const year = parseInt(textMatch[1]);
-                            const month = parseInt(textMatch[2]);
-                            const day = parseInt(textMatch[3]);
-                            const hour = textMatch[4] ? parseInt(textMatch[4]) : 0;
-                            const minute = textMatch[5] ? parseInt(textMatch[5]) : 0;
-                            parsedDate = new Date(year, month - 1, day, hour, minute);
-                            break;
-                        }
-                    }
-                }
-                
-                if (parsedDate) {
+                    const articleDate = new Date(year, month - 1, day, hour, minute);
                     const now = new Date();
-                    const diffDays = (now - parsedDate) / (1000 * 60 * 60 * 24);
+                    const diffDays = (now - articleDate) / (1000 * 60 * 60 * 24);
                     const dayLimit = testMode ? 30 : 7;
+                    
+                    console.log(`📊 [Blog HTML] 解析文章: ${year}-${month}-${day} ${hour}:${minute} (${Math.floor(diffDays)}天前)`);
                     
                     if (diffDays >= 0 && diffDays <= dayLimit) {
                         dates.push({
-                            date: parsedDate,
-                            dateString: `${parsedDate.getFullYear()}年${parsedDate.getMonth() + 1}月${parsedDate.getDate()}日`,
-                            fullDateTime: `${parsedDate.getFullYear()}年${parsedDate.getMonth() + 1}月${parsedDate.getDate()}日 ${parsedDate.getHours().toString().padStart(2, '0')}:${parsedDate.getMinutes().toString().padStart(2, '0')}`,
+                            date: articleDate,
+                            dateString: `${year}年${month}月${day}日`,
+                            fullDateTime: `${year}年${month}月${day}日 ${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`,
                             original: displayText,
                             datetime: datetimeAttr,
                             source: 'html'
                         });
+                        console.log(`✅ [Blog HTML] 文章已加入: ${year}年${month}月${day}日 ${hour}:${minute}`);
+                    } else {
+                        console.log(`⏭️ [Blog HTML] 文章太舊或太新，跳過: ${Math.floor(diffDays)}天前 (限制: ${dayLimit}天)`);
                     }
+                } else {
+                    console.log(`❌ [Blog HTML] 無法解析datetime格式: ${datetimeAttr}`);
                 }
             }
             
+            console.log(`📊 [Blog HTML] 模式 ${patternIndex + 1} 找到 ${matchCount} 個匹配`);
+            
             if (dates.length > 0) {
+                console.log(`✅ [Blog HTML] 成功找到 ${dates.length} 篇文章，停止嘗試其他模式`);
                 break; // 如果找到了文章，就不需要嘗試其他模式
             }
         }
         
+        console.log(`📋 [Blog HTML] 最終結果: 找到 ${dates.length} 篇符合條件的文章`);
         return dates;
     }
 
