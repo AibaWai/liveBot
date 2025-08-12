@@ -99,17 +99,32 @@ class SaferInstagramMonitor {
                 const accountData = process.env[`IG_ACCOUNT_${i}`];
                 if (accountData) {
                     console.log(`🔧 [Debug] 發現帳號配置: IG_ACCOUNT_${i}`);
+                    console.log(`🔧 [Debug] 帳號 ${i} 原始資料長度: ${accountData.length}`);
+                    
                     const parts = accountData.split('|');
+                    console.log(`🔧 [Debug] 帳號 ${i} 分割後部分數: ${parts.length}`);
+                    
                     if (parts.length >= 3) {
-                        accounts.push({
-                            id: `account_${i}`,
-                            sessionId: parts[0].trim(),
-                            csrfToken: parts[1].trim(),
-                            dsUserId: parts[2].trim()
-                        });
-                        console.log(`✅ [Debug] 帳號 ${i} 載入成功`);
+                        const sessionId = parts[0].trim();
+                        const csrfToken = parts[1].trim();
+                        const dsUserId = parts[2].trim();
+                        
+                        console.log(`🔧 [Debug] 帳號 ${i} - SessionID長度: ${sessionId.length}, CSRF長度: ${csrfToken.length}, UserID長度: ${dsUserId.length}`);
+                        
+                        if (sessionId.length > 0 && csrfToken.length > 0 && dsUserId.length > 0) {
+                            accounts.push({
+                                id: `account_${i}`,
+                                sessionId: sessionId,
+                                csrfToken: csrfToken,
+                                dsUserId: dsUserId
+                            });
+                            console.log(`✅ [Debug] 帳號 ${i} 載入成功`);
+                        } else {
+                            console.warn(`⚠️ [Debug] 帳號 ${i} 有空白欄位，跳過`);
+                        }
                     } else {
                         console.warn(`⚠️ [Debug] 帳號 ${i} 格式錯誤，需要3個部分，實際: ${parts.length}`);
+                        console.warn(`⚠️ [Debug] 帳號 ${i} 原始資料: ${accountData.substring(0, 50)}...`);
                     }
                 }
             }
@@ -117,7 +132,7 @@ class SaferInstagramMonitor {
             // 備用：單帳號配置
             if (accounts.length === 0) {
                 console.log('🔧 [Debug] 未找到多帳號配置，檢查單帳號配置...');
-                if (process.env.IG_SESSION_ID) {
+                if (process.env.IG_SESSION_ID && process.env.IG_CSRF_TOKEN && process.env.IG_DS_USER_ID) {
                     accounts.push({
                         id: 'main_account',
                         sessionId: process.env.IG_SESSION_ID,
@@ -125,10 +140,12 @@ class SaferInstagramMonitor {
                         dsUserId: process.env.IG_DS_USER_ID
                     });
                     console.log('✅ [Debug] 單帳號配置載入成功');
+                } else {
+                    console.warn('⚠️ [Debug] 單帳號配置也不完整');
                 }
             }
             
-            console.log(`🔐 [安全監控] 載入 ${accounts.length} 個Instagram帳號`);
+            console.log(`🔐 [安全監控] 最終載入 ${accounts.length} 個Instagram帳號`);
             
             if (accounts.length === 0) {
                 throw new Error('未找到任何有效的Instagram帳號配置');
@@ -408,12 +425,19 @@ ${this.accounts.map(acc => {
             stats.successCount++;
             this.resetCookieStatus(accountId);
             
-            // 模擬old_main.js的成功後間隔調整
+            // 模擬old_main.js的成功後間隔調整（更保守）
             accountSession.consecutiveErrors = 0;
             accountSession.currentInterval = Math.max(
-                accountSession.currentInterval * 0.9, 
+                accountSession.currentInterval * 0.95, // 改為0.95，更保守
                 SAFE_CONFIG.minInterval
             );
+            
+            // 檢查是否需要輪換帳號（每個帳號用5次後輪換）
+            if (stats.dailyRequests % 5 === 0) {
+                console.log(`🔄 [帳號輪換] ${accountId} 已使用5次，下次將輪換到其他帳號`);
+                // 給這個帳號設置短暫冷卻，強制輪換
+                this.setCooldown(accountId, 1); // 1分鐘冷卻
+            }
             
             // 成功時減少冷卻時間
             if (this.cooldownAccounts.has(accountId)) {
@@ -430,7 +454,7 @@ ${this.accounts.map(acc => {
             
             this.checkAndSendCookieAlert(accountId, errorType, statusCode);
             
-            // 模擬old_main.js的錯誤後間隔調整
+            // 模擬old_main.js的錯誤後間隔調整（更激進）
             accountSession.currentInterval = Math.min(
                 accountSession.currentInterval * SAFE_CONFIG.backoffMultiplier,
                 SAFE_CONFIG.maxBackoffInterval
@@ -465,7 +489,7 @@ ${this.accounts.map(acc => {
         const successRate = stats.successCount + stats.errorCount > 0 ? 
             Math.round(stats.successCount / (stats.successCount + stats.errorCount) * 100) : 0;
             
-        console.log(`📊 [統計] ${accountId}: 今日${stats.dailyRequests}次, 成功率${successRate}%, 間隔${Math.round(accountSession.currentInterval)}s`);
+        console.log(`📊 [統計] ${accountId}: 今日${stats.dailyRequests}次, 成功率${successRate}%, 當前間隔${Math.round(accountSession.currentInterval)}s`);
     }
     
     // 設置帳號冷卻
@@ -672,7 +696,7 @@ ${this.accounts.map(acc => {
         }
     }
     
-    // 計算下次檢查間隔（模擬old_main.js的動態調整 + 日本時間）
+    // 計算下次檢查間隔（修復版本）
     calculateNextInterval() {
         const hour = parseInt(this.getJapanHour());
         
@@ -683,32 +707,29 @@ ${this.accounts.map(acc => {
         if (bestAccount) {
             const accountSession = this.accountSessions.get(bestAccount.id);
             baseInterval = accountSession.currentInterval;
+            console.log(`🔧 [間隔Debug] ${bestAccount.id} 當前間隔: ${baseInterval}秒`);
         }
         
-        // 根據日本時間調整間隔（更保守的設定）
+        // 根據日本時間調整間隔（修復版本）
         if (hour >= 2 && hour <= 6) {
-            // 深夜時段 - 15~25分鐘間隔
-            baseInterval = Math.max(baseInterval, 900); // 至少15分鐘
-            baseInterval += Math.random() * 600; // 加0-10分鐘隨機
-            console.log('🌙 [深夜模式] 使用15-25分鐘間隔');
+            // 深夜時段 - 10~15分鐘間隔
+            baseInterval = 600 + Math.random() * 300; // 10-15分鐘
+            console.log('🌙 [深夜模式] 強制使用10-15分鐘間隔');
         } else if (hour >= 0 && hour <= 1) {
-            // 深夜前期 - 5~8分鐘間隔
-            baseInterval = Math.max(baseInterval, 300); // 至少5分鐘
-            baseInterval += Math.random() * 180; // 加0-3分鐘隨機
-            console.log('🌃 [深夜前期] 使用5-8分鐘間隔');
+            // 深夜前期 - 3~5分鐘間隔
+            baseInterval = 180 + Math.random() * 120; // 3-5分鐘
+            console.log('🌃 [深夜前期] 強制使用3-5分鐘間隔');
         } else if (hour >= 7 && hour <= 8) {
-            // 早晨時段 - 4~7分鐘間隔
-            baseInterval = Math.max(baseInterval, 240); // 至少4分鐘
-            baseInterval += Math.random() * 180; // 加0-3分鐘隨機
-            console.log('🌅 [早晨時段] 使用4-7分鐘間隔');
+            // 早晨時段 - 3~5分鐘間隔
+            baseInterval = 180 + Math.random() * 120; // 3-5分鐘
+            console.log('🌅 [早晨時段] 強制使用3-5分鐘間隔');
         } else if (hour >= 9 && hour <= 23) {
-            // 白天活躍時段 - 使用動態間隔，但不低於2分鐘
-            baseInterval = Math.max(baseInterval, 120);
-            baseInterval += Math.random() * 60; // 加0-1分鐘隨機
-            console.log('☀️ [活躍時段] 使用動態間隔 (2-5分鐘)');
+            // 白天活躍時段 - 90~180秒間隔
+            baseInterval = SAFE_CONFIG.minInterval + Math.random() * (SAFE_CONFIG.maxInterval - SAFE_CONFIG.minInterval);
+            console.log('☀️ [活躍時段] 使用90-180秒間隔');
         }
         
-        // 檢查可用帳號數量，如果帳號少則增加間隔
+        // 檢查可用帳號數量調整
         const availableAccounts = this.accounts.filter(account => {
             const stats = this.accountStats.get(account.id);
             const cooldownEnd = this.cooldownAccounts.get(account.id) || 0;
@@ -719,14 +740,18 @@ ${this.accounts.map(acc => {
         }).length;
         
         if (availableAccounts <= 1) {
-            baseInterval = Math.max(baseInterval, SAFE_CONFIG.maxInterval);
-            console.log(`⚠️ [間隔調整] 可用帳號不足，增加間隔至 ${Math.round(baseInterval/60)} 分鐘`);
+            // 只有1個帳號時，使用更長間隔保護帳號
+            baseInterval = Math.max(baseInterval * 1.5, SAFE_CONFIG.maxInterval);
+            console.log(`⚠️ [帳號保護] 只有${availableAccounts}個可用帳號，延長間隔保護帳號`);
         }
         
         // 最小間隔限制
         baseInterval = Math.max(baseInterval, SAFE_CONFIG.minInterval);
         
-        return Math.floor(baseInterval);
+        const finalInterval = Math.floor(baseInterval);
+        console.log(`🎯 [間隔計算] 最終間隔: ${finalInterval}秒 (${Math.round(finalInterval/60)}分${finalInterval%60}秒)`);
+        
+        return finalInterval;
     }
     
     // 啟動監控（模擬old_main.js的啟動邏輯）
