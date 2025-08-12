@@ -10,6 +10,9 @@ const SAFE_CONFIG = {
     accountCooldownMinutes: 20,  // 基礎冷卻20分鐘 (會動態調整)
     maxDailyRequests: 750,       // 全系統每天750次 (充足緩衝)
     cookieAlertCooldown: 3600000, // Cookie失效提醒冷卻 (1小時)
+    // 輪換策略配置
+    rotationThreshold: 8,    // 每個帳號使用8次後強制輪換
+    rotationCooldown: 30,    // 輪換後的冷卻時間(分鐘)
 };
 
 class SimplifiedInstagramMonitor {
@@ -26,6 +29,10 @@ class SimplifiedInstagramMonitor {
         // Cookie失效追蹤
         this.cookieFailureStats = new Map();
         this.lastCookieAlert = new Map(); // 追蹤每個帳號的最後提醒時間
+        
+        // 輪換策略追蹤
+        this.rotationStats = new Map(); // 追蹤每個帳號的連續使用次數
+        this.lastUsedAccount = null;     // 最後使用的帳號
         
         this.initializeStats();
         
@@ -107,6 +114,12 @@ class SimplifiedInstagramMonitor {
                 lastFailureTime: 0,
                 isCurrentlyInvalid: false,
                 invalidSince: null
+            });
+            
+            // 初始化輪換統計
+            this.rotationStats.set(account.id, {
+                consecutiveUses: 0,
+                lastRotationTime: 0
             });
         });
     }
@@ -205,7 +218,7 @@ class SimplifiedInstagramMonitor {
         }
     }
     
-    // 選擇最佳帳號
+    // 選擇最佳帳號 (新的輪換策略)
     selectBestAccount() {
         const now = Date.now();
         
@@ -224,18 +237,55 @@ class SimplifiedInstagramMonitor {
             return null;
         }
         
-        // 選擇使用次數最少的帳號
+        // 檢查當前帳號是否需要強制輪換
+        if (this.lastUsedAccount) {
+            const rotationStats = this.rotationStats.get(this.lastUsedAccount);
+            const shouldRotate = rotationStats.consecutiveUses >= SAFE_CONFIG.rotationThreshold;
+            
+            if (shouldRotate) {
+                console.log(`🔄 [強制輪換] ${this.lastUsedAccount} 已使用${rotationStats.consecutiveUses}次，強制輪換`);
+                
+                // 設置當前帳號冷卻
+                this.setCooldown(this.lastUsedAccount, SAFE_CONFIG.rotationCooldown);
+                
+                // 重置輪換統計
+                rotationStats.consecutiveUses = 0;
+                rotationStats.lastRotationTime = now;
+                
+                // 從可用帳號中排除當前帳號
+                const otherAccounts = availableAccounts.filter(acc => acc.id !== this.lastUsedAccount);
+                if (otherAccounts.length > 0) {
+                    // 選擇使用次數最少的其他帳號
+                    const nextAccount = otherAccounts.reduce((best, current) => {
+                        const bestStats = this.accountStats.get(best.id);
+                        const currentStats = this.accountStats.get(current.id);
+                        return currentStats.dailyRequests < bestStats.dailyRequests ? current : best;
+                    });
+                    
+                    console.log(`🔄 [帳號輪換] 從 ${this.lastUsedAccount} 切換到: ${nextAccount.id}`);
+                    return nextAccount;
+                }
+            }
+        }
+        
+        // 如果不需要強制輪換，選擇使用次數最少的帳號
         const bestAccount = availableAccounts.reduce((best, current) => {
             const bestStats = this.accountStats.get(best.id);
             const currentStats = this.accountStats.get(current.id);
             return currentStats.dailyRequests < bestStats.dailyRequests ? current : best;
         });
         
-        console.log(`🔄 [帳號輪換] 使用: ${bestAccount.id}`);
+        // 如果選擇了不同的帳號，顯示切換信息
+        if (this.lastUsedAccount && this.lastUsedAccount !== bestAccount.id) {
+            console.log(`🔄 [帳號切換] 從 ${this.lastUsedAccount} 切換到: ${bestAccount.id}`);
+        } else if (!this.lastUsedAccount) {
+            console.log(`🔄 [首次選擇] 使用: ${bestAccount.id}`);
+        }
+        
         return bestAccount;
     }
     
-    // 記錄請求結果 (智能冷卻 + Cookie檢查)
+    // 記錄請求結果 (智能冷卻 + Cookie檢查 + 輪換追蹤)
     recordRequest(accountId, success, errorType = null) {
         const stats = this.accountStats.get(accountId);
         if (!stats) return;
@@ -243,6 +293,21 @@ class SimplifiedInstagramMonitor {
         stats.lastUsed = Date.now();
         stats.dailyRequests++;
         this.dailyRequestCount++;
+        
+        // 更新輪換統計
+        const rotationStats = this.rotationStats.get(accountId);
+        if (this.lastUsedAccount === accountId) {
+            // 同一帳號連續使用
+            rotationStats.consecutiveUses++;
+        } else {
+            // 切換到新帳號，重置計數
+            if (this.lastUsedAccount) {
+                const lastRotationStats = this.rotationStats.get(this.lastUsedAccount);
+                lastRotationStats.consecutiveUses = 0;
+            }
+            rotationStats.consecutiveUses = 1;
+        }
+        this.lastUsedAccount = accountId;
         
         if (success) {
             stats.successCount++;
@@ -293,7 +358,7 @@ class SimplifiedInstagramMonitor {
         const successRate = stats.successCount + stats.errorCount > 0 ? 
             Math.round(stats.successCount / (stats.successCount + stats.errorCount) * 100) : 0;
             
-        console.log(`📊 [統計] ${accountId}: 今日${stats.dailyRequests}次, 成功率${successRate}%`);
+        console.log(`📊 [統計] ${accountId}: 今日${stats.dailyRequests}次, 成功率${successRate}%, 連續使用${rotationStats.consecutiveUses}/${SAFE_CONFIG.rotationThreshold}次`);
     }
     
     // 設置帳號冷卻
@@ -328,6 +393,11 @@ class SimplifiedInstagramMonitor {
         this.accountStats.forEach(stats => {
             stats.dailyRequests = 0;
         });
+        // 重置輪換統計
+        this.rotationStats.forEach(rotationStats => {
+            rotationStats.consecutiveUses = 0;
+        });
+        this.lastUsedAccount = null;
         console.log('🌅 [重置] 每日計數器已重置 (日本時間)');
     }
     
@@ -629,6 +699,7 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
         console.log('🚀 [簡化監控] 開始Instagram監控 (日本時間)');
         console.log(`📊 [配置] 間隔: ${SAFE_CONFIG.minInterval}-${SAFE_CONFIG.maxInterval}秒`);
         console.log(`🔐 [帳號] 總數: ${this.accounts.length}`);
+        console.log(`🔄 [輪換策略] 每${SAFE_CONFIG.rotationThreshold}次請求強制輪換，冷卻${SAFE_CONFIG.rotationCooldown}分鐘`);
         console.log(`🕐 [時間] 當前日本時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`);
         
         const monitorLoop = async () => {
@@ -743,7 +814,11 @@ ${this.accounts.map(acc => `• ${acc.id}: ${acc.sessionId.substring(0, 12)}****
                     isDisabled: cookieStats.isCurrentlyInvalid, // 向後兼容
                     cookieStatus: cookieStats.isCurrentlyInvalid ? 'Invalid' : 'Valid',
                     consecutiveFailures: cookieStats.consecutiveFailures,
-                    invalidSince: cookieStats.invalidSince ? new Date(cookieStats.invalidSince).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null
+                    invalidSince: cookieStats.invalidSince ? new Date(cookieStats.invalidSince).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null,
+                    // 新增輪換信息
+                    consecutiveUses: this.rotationStats.get(id)?.consecutiveUses || 0,
+                    rotationThreshold: SAFE_CONFIG.rotationThreshold,
+                    isCurrentlyUsed: this.lastUsedAccount === id
                 };
             })
         };

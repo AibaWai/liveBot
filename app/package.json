@@ -1,24 +1,12 @@
 {
   "name": "unified-live-monitor",
-  "version": "4.0.0",
-  "description": "Unified Instagram + Discord Live monitor with phone notifications",
+  "version": "5.0.0",
+  "description": "Unified Instagram + Discord Live monitor (Template-based)",
   "main": "main.js",
   "scripts": {
     "start": "node main.js",
     "dev": "node main.js"
   },
-  "keywords": [
-    "instagram",
-    "discord",
-    "live",
-    "monitor",
-    "bot",
-    "notification",
-    "pushcall",
-    "unified"
-  ],
-  "author": "",
-  "license": "MIT",
   "dependencies": {
     "discord.js": "^14.14.1",
     "express": "^4.18.2",
@@ -26,9 +14,5 @@
   },
   "engines": {
     "node": ">=18.0.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "your-repo-url"
   }
 }

@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>統一直播監控機器人 (日本時間)</title>
+    <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🤖 統一直播監控機器人</h1>
+            <p>Instagram監控 + Discord頻道監控 + 電話通知</p>
+            <div class="time-display">
+                <div class="japan-time">🕐 日本時間: <span id="japanTime">{{japanTime}}</span></div>
+                <div class="time-slot">{{timeSlot}}</div>
+            </div>
+        </div>
+
+        {{#unless isMonitoring}}
+        <div class="system-warning">
+            ⚠️ Instagram監控系統正在初始化中，請稍等...
+        </div>
+        {{/unless}}
+
+        <div class="live-indicator {{#if isLiveNow}}live-yes{{else}}live-no{{/if}}">
+            {{#if isLiveNow}}
+                🔴 @{{targetUsername}} 正在直播!
+            {{else}}
+                ⚫ @{{targetUsername}} 離線中
+            {{/if}}
+        </div>
+
+        <div class="main-status">
+            <div class="status-card {{#unless botReady}}error{{/unless}}">
+                <div class="card-title">🤖 Bot狀態</div>
+                <div class="status-item">
+                    <span>連線狀態:</span>
+                    <span class="status-value">{{#if botReady}}✅ 在線{{else}}❌ 離線{{/if}}</span>
+                </div>
+                <div class="status-item">
+                    <span>運行時間:</span>
+                    <span class="status-value">{{uptimeHours}}h {{uptimeMinutes}}m</span>
+                </div>
+                <div class="status-item">
+                    <span>日本時間:</span>
+                    <span class="status-value">{{japanHour}}:xx</span>
+                </div>
+                <div class="status-item">
+                    <span>伺服器數:</span>
+                    <span class="status-value">{{guildCount}}</span>
+                </div>
+            </div>
+
+            <div class="status-card {{#unless isMonitoring}}warning{{/unless}}">
+                <div class="card-title">📺 Instagram監控</div>
+                <div class="status-item">
+                    <span>目標用戶:</span>
+                    <span class="status-value">@{{targetUsername}}</span>
+                </div>
+                <div class="status-item">
+                    <span>監控狀態:</span>
+                    <span class="status-value">{{#if isMonitoring}}✅ 運行中{{else}}❌ 已停止{{/if}}</span>
+                </div>
+                <div class="status-item">
+                    <span>可用帳號:</span>
+                    <span class="status-value">{{availableAccounts}}/{{totalAccounts}}</span>
+                </div>
+                <div class="status-item">
+                    <span>失效帳號:</span>
+                    <span class="status-value {{#if invalidCookieAccounts}}error{{/if}}">{{invalidCookieAccounts}}</span>
+                </div>
+                <div class="status-item">
+                    <span>今日請求:</span>
+                    <span class="status-value">{{dailyRequests}}/{{maxDailyRequests}}</span>
+                </div>
+            </div>
+
+            <div class="status-card">
+                <div class="card-title">📋 Discord監控</div>
+                <div class="status-item">
+                    <span>監控頻道:</span>
+                    <span class="status-value">{{discordChannelCount}}</span>
+                </div>
+                <div class="status-item">
+                    <span>處理訊息:</span>
+                    <span class="status-value">{{totalMessagesProcessed}}</span>
+                </div>
+                <div class="status-item">
+                    <span>檢測次數:</span>
+                    <span class="status-value">{{totalDetections}}</span>
+                </div>
+            </div>
+
+            <div class="status-card">
+                <div class="card-title">📞 通知統計</div>
+                <div class="status-item">
+                    <span>Discord訊息:</span>
+                    <span class="status-value">{{discordMessages}}</span>
+                </div>
+                <div class="status-item">
+                    <span>電話通知:</span>
+                    <span class="status-value">{{phoneCallsMade}}</span>
+                </div>
+                <div class="status-item">
+                    <span>最後通知:</span>
+                    <span class="status-value">{{lastNotification}}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">🔑 帳號Cookie狀態 (日本時間)</div>
+            <div id="cookieStatus">
+                {{> cookieStatus}}
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-title">📊 詳細統計</div>
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="stat-number">{{totalRequests}}</div>
+                    <div class="stat-label">Instagram 請求總數</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">{{consecutiveErrors}}</div>
+                    <div class="stat-label">連續錯誤次數</div>
+                </div>
+                <div class="stat-box {{#if invalidCookieAccounts}}error{{/if}}">
+                    <div class="stat-number">{{invalidCookieAccounts}}</div>
+                    <div class="stat-label">失效帳號</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">{{discordChannelCount}}</div>
+                    <div class="stat-label">Discord 頻道數</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">{{apiAccountCount}}</div>
+                    <div class="stat-label">PushCall API 帳號</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">{{japanHour}}</div>
+                    <div class="stat-label">當前日本時間 (時)</div>
+                </div>
+            </div>
+        </div>
+
+        {{#if totalAccounts}}
+        <div class="section">
+            <div class="section-title">🔐 Instagram 帳號狀態 (日本時間)</div>
+            <div class="rotation-info">
+                <div class="rotation-strategy">
+                    🔄 <strong>輪換策略:</strong> 每個帳號使用8次後強制輪換，冷卻30分鐘
+                </div>
+                <div class="current-account">
+                    📍 <strong>當前使用:</strong> {{currentAccount}}
+                </div>
+            </div>
+            <div class="account-grid">
+                {{#each accountDetails}}
+                <div class="account-card {{statusClass}}">
+                    <div class="account-header">
+                        <span class="account-name">{{id}}</span>
+                        <span class="account-status">{{statusText}}</span>
+                    </div>
+                    <div class="account-stats">
+                        <div class="stat-item">
+                            <span>成功率:</span>
+                            <span>{{successRate}}%</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>今日請求:</span>
+                            <span>{{dailyRequests}}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>連續使用:</span>
+                            <span class="{{#if rotationWarning}}rotation-warning{{/if}}">{{consecutiveUses}}/{{rotationThreshold}}</span>
+                        </div>
+                        <div class="stat-item">
+                            <span>最後使用:</span>
+                            <span>{{lastUsed}}</span>
+                        </div>
+                        {{#if consecutiveFailures}}
+                        <div class="stat-item" style="color: #ff9800;">
+                            <span>連續失敗:</span>
+                            <span>{{consecutiveFailures}}</span>
+                        </div>
+                        {{/if}}
+                    </div>
+                </div>
+                {{/each}}
+            </div>
+            {{#if invalidCookieAccounts}}
+            <div class="account-warning">
+                ⚠️ <strong>注意:</strong> 有 {{invalidCookieAccounts}} 個帳號已被停用，可能是cookies失效。
+                請檢查Discord通知獲取詳細修復指引。
+            </div>
+            {{/if}}
+        </div>
+        {{/if}}
+
+        {{#if discordChannelCount}}
+        <div class="section">
+            <div class="section-title">📺 Discord 頻道監控詳情</div>
+            <div class="channel-stats">
+                {{#each channelConfigs}}
+                <div class="channel-card">
+                    <div class="channel-name">{{name}}</div>
+                    <div class="channel-detail">
+                        <span>關鍵字:</span>
+                        <span>{{keywords}}</span>
+                    </div>
+                    <div class="channel-detail">
+                        <span>處理訊息:</span>
+                        <span>{{messagesProcessed}}</span>
+                    </div>
+                    <div class="channel-detail">
+                        <span>檢測次數:</span>
+                        <span>{{keywordsDetected}}</span>
+                    </div>
+                    <div class="channel-detail">
+                        <span>通話次數:</span>
+                        <span>{{callsMade}}</span>
+                    </div>
+                    <div class="channel-detail">
+                        <span>最後檢測:</span>
+                        <span>{{lastDetection}}</span>
+                    </div>
+                </div>
+                {{/each}}
+            </div>
+        </div>
+        {{/if}}
+
+        <div class="section">
+            <div class="section-title">💬 Discord 命令</div>
+            <div class="commands">
+                <div class="command">!ig-start - 開始Instagram監控</div>
+                <div class="command">!ig-stop - 停止Instagram監控</div>
+                <div class="command">!ig-status - Instagram監控狀態</div>
+                <div class="command">!ig-check - 手動檢查Instagram</div>
+                <div class="command">!ig-accounts - 檢查帳號狀態</div>
+                <div class="command">!status - 完整系統狀態</div>
+                <div class="command">!help - 顯示幫助</div>
+            </div>
+        </div>
+
+        <div class="refresh-note">
+            頁面每30秒自動刷新 | 最後更新: <span id="lastUpdate">{{lastUpdate}}</span><br>
+            🕐 當前日本時間: <span id="currentTime">{{japanTime}}</span> | {{timeSlot}}
+        </div>
+    </div>
+
+    <script src="/js/status.js"></script>
+</body>
+</html>
