@@ -211,22 +211,27 @@ class SaferInstagramMonitor {
     }
     
     // 檢查錯誤類型是否為Cookie問題
+    // 同時修改 isCookieError 函數，確保所有認證錯誤都被正確識別
     isCookieError(statusCode, errorMessage) {
+        // 明確的認證錯誤狀態碼
         if (statusCode === 400 || statusCode === 401 || statusCode === 403) {
             return true;
         }
         
+        // 檢查錯誤訊息中的關鍵字
         if (errorMessage && typeof errorMessage === 'string') {
             const lowerMessage = errorMessage.toLowerCase();
             return lowerMessage.includes('unauthorized') || 
-                   lowerMessage.includes('forbidden') || 
-                   lowerMessage.includes('invalid') ||
-                   lowerMessage.includes('authentication');
+                lowerMessage.includes('forbidden') || 
+                lowerMessage.includes('invalid') ||
+                lowerMessage.includes('authentication') ||
+                lowerMessage.includes('login_required') ||
+                lowerMessage.includes('challenge_required');
         }
         
         return false;
     }
-    
+        
     // 檢查並發送Cookie失效提醒
     async checkAndSendCookieAlert(accountId, errorType, statusCode) {
         if (!this.isCookieError(statusCode, errorType)) return;
@@ -241,7 +246,17 @@ class SaferInstagramMonitor {
         
         console.log(`🔑 [Cookie檢查] ${accountId}: 檢測到認證錯誤 (HTTP ${statusCode}), 連續失敗 ${cookieStats.consecutiveFailures} 次`);
         
-        const failureThreshold = statusCode === 400 ? 1 : 2; // 400錯誤1次就失效，其他2次
+        // 修改失效判斷邏輯：403錯誤1次就標記為失效
+        let failureThreshold;
+        if (statusCode === 400) {
+            failureThreshold = 1; // 400錯誤1次就失效
+        } else if (statusCode === 403) {
+            failureThreshold = 1; // 403錯誤也改為1次就失效（原本是2次）
+        } else if (statusCode === 401) {
+            failureThreshold = 1; // 401錯誤1次就失效
+        } else {
+            failureThreshold = 2; // 其他錯誤2次失效
+        }
         
         if (cookieStats.consecutiveFailures >= failureThreshold && !cookieStats.isCurrentlyInvalid) {
             cookieStats.isCurrentlyInvalid = true;
@@ -372,7 +387,7 @@ ${this.accounts.map(acc => {
         }
     }
     
-    // 選擇最佳帳號（模擬old_main.js的輪換策略）
+    // 修改 selectBestAccount 函數，確保失效帳號不會被選擇
     selectBestAccount() {
         const now = Date.now();
         
@@ -381,12 +396,14 @@ ${this.accounts.map(acc => {
             const cooldownEnd = this.cooldownAccounts.get(account.id) || 0;
             const cookieStats = this.cookieFailureStats.get(account.id);
             
+            // 確保失效的Cookie帳號不會被選擇
             return stats.dailyRequests < SAFE_CONFIG.maxRequestsPerAccount && 
-                   now >= cooldownEnd &&
-                   !cookieStats.isCurrentlyInvalid;
+                now >= cooldownEnd &&
+                !cookieStats.isCurrentlyInvalid; // 這個條件很重要
         });
         
         if (availableAccounts.length === 0) {
+            console.log('😴 [帳號選擇] 沒有可用帳號 - 所有帳號都在冷卻或失效');
             return null;
         }
         
@@ -407,7 +424,7 @@ ${this.accounts.map(acc => {
             return best;
         });
         
-        console.log(`🔄 [帳號選擇] 使用: ${bestAccount.id} (錯誤數: ${this.accountSessions.get(bestAccount.id).consecutiveErrors})`);
+        console.log(`🔄 [帳號選擇] 使用: ${bestAccount.id} (錯誤數: ${this.accountSessions.get(bestAccount.id).consecutiveErrors}, 可用帳號數: ${availableAccounts.length})`);
         return bestAccount;
     }
     
