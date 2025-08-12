@@ -615,19 +615,17 @@ async function handleDiscordCommands(message) {
 \`!ig-check\` - 手動檢查Instagram
 \`!ig-accounts\` - 檢查帳號狀態
 
+**博客監控命令:**
+\`!blog-status\` - 博客監控狀態
+\`!blog-check\` - 手動檢查博客
+\`!blog-test\` - 測試網站連接
+\`!blog-analyze\` - 分析網站內容
+\`!blog-latest\` - 檢查最新文章
+
 **系統命令:**
 \`!status\` - 完整系統狀態
-\`!help\` - 顯示此幫助
-
-**功能特色:**
-🕐 日本時間 (JST) 智能調整
-🔒 Instagram安全監控 (90-180s隨機間隔)
-📺 Discord頻道關鍵字監控
-📞 電話通知 (如果配置)
-🛡️ Cookie失效自動停用 + 提醒
-🌙 深夜/早晨時段自動降頻
-🛡️ 自動錯誤處理與恢復`);
-    }
+\`!help\` - 顯示此幫助`);
+}
 
     // 在 handleDiscordCommands 函數中添加
 else if (cmd === '!blog-status') {
@@ -668,6 +666,94 @@ else if (cmd === '!blog-status') {
             await message.reply('❌ 博客監控未啟用');
         }
     }
+
+    // 新增測試命令
+else if (cmd === '!blog-test') {
+    if (blogMonitor) {
+        await message.reply('🔍 執行博客網站測試...');
+        try {
+            const testResult = await blogMonitor.testWebsiteAccess();
+            if (testResult.success) {
+                const testMsg = `✅ **博客網站測試成功**
+
+📊 **連接狀態:** HTTP ${testResult.statusCode}
+📄 **內容長度:** ${testResult.contentLength} 字元
+🏗️ **HTML結構:** ${testResult.hasHtmlStructure ? '✅ 正常' : '❌ 異常'}
+📝 **內容充足:** ${testResult.hasContent ? '✅ 是' : '❌ 否'}
+📅 **找到日期:** ${testResult.dateMatchesCount} 個
+
+**範例日期:** ${testResult.sampleDates.join(', ') || '無'}
+
+✅ 網站可正常訪問並解析！`;
+                
+                await message.reply(testMsg);
+            } else {
+                await message.reply(`❌ **博客網站測試失敗**\n\n錯誤: ${testResult.error}`);
+            }
+        } catch (error) {
+            await message.reply(`❌ 測試執行失敗: ${error.message}`);
+        }
+    } else {
+        await message.reply('❌ 博客監控未啟用');
+    }
+}
+
+else if (cmd === '!blog-analyze') {
+    if (blogMonitor) {
+        await message.reply('🔍 分析博客當前內容...');
+        try {
+            const analysis = await blogMonitor.analyzeCurrentContent(true);
+            if (analysis.success) {
+                const analysisMsg = `📊 **博客內容分析結果**
+
+📅 **總日期數:** ${analysis.totalDates}
+📝 **最近文章:** ${analysis.recentArticles} 篇 (30天內)
+🗓️ **最新文章:** ${analysis.latestArticle ? `${analysis.latestArticle.dateString} (${analysis.latestArticle.daysAgo}天前)` : '無'}
+⏰ **分析時間:** ${analysis.analysisTime}
+
+${analysis.recentArticles > 0 ? 
+`📋 **最近文章列表:**
+${analysis.allRecentArticles.slice(0, 5).map((article, index) => 
+    `${index + 1}. ${article.dateString} (${article.daysAgo}天前)`
+).join('\n')}` : 
+'📭 最近30天內無文章'}
+
+✅ 分析完成，監控系統能正確解析文章！`;
+                
+                await message.reply(analysisMsg);
+            } else {
+                await message.reply(`❌ **內容分析失敗**\n\n錯誤: ${analysis.error}`);
+            }
+        } catch (error) {
+            await message.reply(`❌ 分析執行失敗: ${error.message}`);
+        }
+    } else {
+        await message.reply('❌ 博客監控未啟用');
+    }
+}
+
+else if (cmd === '!blog-latest') {
+    if (blogMonitor) {
+        await message.reply('🔍 檢查最新文章...');
+        try {
+            const latestArticle = await blogMonitor.checkForNewArticles(true); // 測試模式
+            if (latestArticle) {
+                await message.reply(`📝 **找到最新文章:** ${latestArticle.dateString}
+
+🔗 **博客連結:** ${blogMonitor.blogUrl}
+⏰ **檢查時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
+
+✅ 監控系統能正確檢測到文章！`);
+            } else {
+                await message.reply('📋 **未找到最近7天內的文章**\n\n可能原因：\n• 最近確實沒有新文章\n• 網站結構改變\n• 網絡連接問題');
+            }
+        } catch (error) {
+            await message.reply(`❌ 檢查失敗: ${error.message}`);
+        }
+    } else {
+        await message.reply('❌ 博客監控未啟用');
+    }
+}
 }
 
 // 頻道專用API呼叫

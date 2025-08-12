@@ -11,6 +11,7 @@ class BlogMonitor {
         this.totalChecks = 0;
         this.articlesFound = 0;
         this.lastCheckTime = null;
+        this.lastFoundArticles = []; // 存儲最近找到的文章
     }
 
     // 安全HTTP請求
@@ -51,10 +52,146 @@ class BlogMonitor {
         });
     }
 
-    // 解析博客頁面尋找新文章
-    async checkForNewArticles() {
+    // 新增：測試網站連接和內容解析
+    async testWebsiteAccess() {
         try {
-            console.log('🔍 [Blog] 檢查新文章...');
+            console.log('🔍 [Blog測試] 測試網站訪問...');
+            
+            const response = await this.makeRequest(this.blogUrl);
+            
+            console.log(`📊 [Blog測試] HTTP狀態: ${response.statusCode}`);
+            console.log(`📊 [Blog測試] Content-Type: ${response.headers['content-type'] || '未知'}`);
+            console.log(`📊 [Blog測試] 內容長度: ${response.data.length} 字元`);
+            
+            if (response.statusCode !== 200) {
+                return {
+                    success: false,
+                    error: `HTTP錯誤: ${response.statusCode}`,
+                    details: response.headers
+                };
+            }
+
+            // 檢查是否包含預期的HTML結構
+            const html = response.data;
+            const hasHtmlStructure = html.includes('<html') && html.includes('</html>');
+            const hasContent = html.length > 1000; // 至少1KB的內容
+            
+            console.log(`📊 [Blog測試] HTML結構: ${hasHtmlStructure ? '✅' : '❌'}`);
+            console.log(`📊 [Blog測試] 內容充足: ${hasContent ? '✅' : '❌'}`);
+            
+            // 測試日期模式匹配
+            const datePattern = /(\d{4})[年\/\-](\d{1,2})[月\/\-](\d{1,2})[日號]/g;
+            const dateMatches = [...html.matchAll(datePattern)];
+            
+            console.log(`📊 [Blog測試] 找到日期模式: ${dateMatches.length} 個`);
+            
+            if (dateMatches.length > 0) {
+                dateMatches.slice(0, 5).forEach((match, index) => {
+                    console.log(`   ${index + 1}. ${match[0]} (${match[1]}年${match[2]}月${match[3]}日)`);
+                });
+            }
+
+            return {
+                success: true,
+                statusCode: response.statusCode,
+                contentLength: response.data.length,
+                hasHtmlStructure,
+                hasContent,
+                dateMatchesCount: dateMatches.length,
+                sampleDates: dateMatches.slice(0, 5).map(match => match[0])
+            };
+
+        } catch (error) {
+            console.error('❌ [Blog測試] 測試失敗:', error.message);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    // 新增：詳細分析當前網站內容
+    async analyzeCurrentContent(showDetails = false) {
+        try {
+            console.log('🔍 [Blog分析] 分析當前網站內容...');
+            
+            const response = await this.makeRequest(this.blogUrl);
+            
+            if (response.statusCode !== 200) {
+                return {
+                    success: false,
+                    error: `HTTP錯誤: ${response.statusCode}`
+                };
+            }
+
+            const html = response.data;
+            
+            // 尋找所有日期模式
+            const datePattern = /(\d{4})[年\/\-](\d{1,2})[月\/\-](\d{1,2})[日號]/g;
+            const allDates = [];
+            let match;
+            
+            while ((match = datePattern.exec(html)) !== null) {
+                const year = parseInt(match[1]);
+                const month = parseInt(match[2]);
+                const day = parseInt(match[3]);
+                
+                const articleDate = new Date(year, month - 1, day);
+                const now = new Date();
+                const diffDays = (now - articleDate) / (1000 * 60 * 60 * 24);
+                
+                allDates.push({
+                    original: match[0],
+                    date: articleDate,
+                    dateString: `${year}年${month}月${day}日`,
+                    daysAgo: Math.floor(diffDays),
+                    isRecent: diffDays >= 0 && diffDays <= 30 // 30天內
+                });
+            }
+
+            // 按日期排序，最新的在前
+            allDates.sort((a, b) => b.date - a.date);
+
+            // 過濾最近的文章
+            const recentArticles = allDates.filter(article => article.isRecent);
+            
+            console.log(`📊 [Blog分析] 總共找到 ${allDates.length} 個日期`);
+            console.log(`📊 [Blog分析] 最近30天內的文章: ${recentArticles.length} 個`);
+
+            if (allDates.length > 0) {
+                const latest = allDates[0];
+                console.log(`📅 [Blog分析] 最新文章: ${latest.dateString} (${latest.daysAgo}天前)`);
+                
+                if (showDetails && recentArticles.length > 0) {
+                    console.log('📋 [Blog分析] 最近文章列表:');
+                    recentArticles.slice(0, 10).forEach((article, index) => {
+                        console.log(`   ${index + 1}. ${article.dateString} (${article.daysAgo}天前)`);
+                    });
+                }
+            }
+
+            return {
+                success: true,
+                totalDates: allDates.length,
+                recentArticles: recentArticles.length,
+                latestArticle: allDates.length > 0 ? allDates[0] : null,
+                allRecentArticles: recentArticles,
+                analysisTime: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
+            };
+
+        } catch (error) {
+            console.error('❌ [Blog分析] 分析失敗:', error.message);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    // 解析博客頁面尋找新文章（增強版）
+    async checkForNewArticles(testMode = false) {
+        try {
+            console.log(`🔍 [Blog] 檢查新文章... ${testMode ? '(測試模式)' : ''}`);
             this.totalChecks++;
             this.lastCheckTime = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
 
@@ -68,7 +205,7 @@ class BlogMonitor {
             // 簡單的HTML解析尋找文章日期模式
             const html = response.data;
             
-            // 尋找最新文章的日期模式 (需要根據實際網站結構調整)
+            // 尋找最新文章的日期模式
             const datePattern = /(\d{4})[年\/\-](\d{1,2})[月\/\-](\d{1,2})[日號]/g;
             const dates = [];
             let match;
@@ -96,6 +233,13 @@ class BlogMonitor {
                 const latestArticle = dates.reduce((latest, current) => 
                     current.date > latest.date ? current : latest
                 );
+
+                // 在測試模式下，總是顯示找到的文章
+                if (testMode) {
+                    console.log(`📝 [Blog測試] 找到最新文章: ${latestArticle.dateString}`);
+                    this.lastFoundArticles = dates.slice(0, 5); // 保存最近5篇
+                    return latestArticle;
+                }
 
                 // 檢查是否為新文章
                 if (!this.lastArticleDate || latestArticle.date > this.lastArticleDate) {
@@ -211,7 +355,7 @@ class BlogMonitor {
         console.log('⏹️ [Blog] 博客監控已停止');
     }
 
-    // 獲取狀態
+    // 獲取狀態（增強版）
     getStatus() {
         return {
             isMonitoring: this.isMonitoring,
@@ -220,7 +364,8 @@ class BlogMonitor {
             lastCheckTime: this.lastCheckTime,
             lastArticleDate: this.lastArticleDate ? this.lastArticleDate.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null,
             nextCheckTime: this.isMonitoring ? new Date(Date.now() + this.calculateNextCheckTime() * 1000).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null,
-            blogUrl: this.blogUrl
+            blogUrl: this.blogUrl,
+            lastFoundArticles: this.lastFoundArticles.map(article => article.dateString) // 最近找到的文章
         };
     }
 }
