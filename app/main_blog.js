@@ -335,17 +335,18 @@ client.once('ready', () => {
 
 **Instagram監控:** @${config.TARGET_USERNAME}
 **Discord頻道監控:** ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道
-**博客監控:** ${config.BLOG_NOTIFICATION_CHANNEL_ID ? '✅ Family Club F2017 (真正API模式)' : '❌ 未配置'}
+**博客監控:** ${config.BLOG_NOTIFICATION_CHANNEL_ID ? '✅ Family Club 高木雄也 (官方API)' : '❌ 未配置'}
 **電話通知:** ${config.PUSHCALL_API_KEY ? '✅ 已配置' : '❌ 未配置'}
 **時區:** 🕐 日本時間 (JST)
 
 **博客監控特色:**
-🎯 使用真正的API端點 (diarkiji_list)
-📡 直接獲取文章ID和發布時間
+🎯 使用Family Club官方API端點
+📡 直接獲取文章代碼和發布時間
 🔍 精確比較檢測新文章
-⚡ 輕量級，適合 Koyeb
+📅 智能時程：日本時間12:00-24:00每小時檢查
+⚡ 輕量級設計，適合Koyeb等雲端平台
 
-**智能間隔調整:**
+**Instagram智能間隔調整:**
 🌙 深夜 (02-06): 10-15分鐘間隔
 🌅 早晨 (07-08): 3-5分鐘間隔
 ☀️ 活躍 (09-24): 90-180秒間隔
@@ -358,6 +359,8 @@ client.once('ready', () => {
 \`!blog-status\` - 博客監控狀態
 \`!blog-latest\` - 查看最新文章列表 🆕
 \`!blog-test\` - 測試API連接
+\`!blog-check\` - 手動檢查新文章
+\`!blog-restart\` - 重新啟動博客監控
 \`!status\` - 完整系統狀態
 \`!help\` - 顯示幫助
 
@@ -577,26 +580,36 @@ async function handleDiscordCommands(message) {
             const blogStatus = blogMonitor.getStatus();
             const latestRecord = blogMonitor.getLatestRecord();
             
-            const statusMsg = `📝 **Family Club 博客監控狀態** (API探測模式)
+            const statusMsg = `📝 **Family Club 博客監控狀態** (高木雄也)
 
-**監控狀態:** ${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
-**監控方式:** 🕵️ 智能API端點探測 + HTML回退
-**目標網址:** ${blogStatus.blogUrl}
-**發現的API端點:** ${blogStatus.foundApiEndpoint || '❌ 未找到，使用HTML回退'}
-**總檢查次數:** ${blogStatus.totalChecks}
-**發現新文章:** ${blogStatus.articlesFound} 篇
-**最後檢查:** ${blogStatus.lastCheckTime || '尚未檢查'}
-**下次檢查:** ${blogStatus.nextCheckTime || '未安排'}
+    **監控狀態:** ${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
+    **目標藝人:** ${blogStatus.artistName} (${blogStatus.artistCode})
+    **API端點:** Family Club 官方API
+    **博客網址:** ${blogStatus.blogUrl}
 
-**當前記錄的最新文章:**
-${latestRecord ? `📄 文章ID: ${latestRecord.articleId || '未知'}
-🗓️ 發布時間: ${latestRecord.datetime}
-📝 標題: ${latestRecord.title}
-${latestRecord.url ? `🔗 連結: ${latestRecord.url}` : ''}
-⏰ 記錄更新: ${latestRecord.lastUpdated}` : '❌ 尚未建立記錄'}
+    **檢查統計:**
+    • 總檢查次數: ${blogStatus.totalChecks}
+    • 發現新文章: ${blogStatus.articlesFound} 篇
+    • 最後檢查: ${blogStatus.lastCheckTime || '尚未檢查'}
+    • 下次檢查: ${blogStatus.nextCheckTime || '未安排'}
 
-⏰ 每小時00分自動檢查
-🕵️ 自動探測最佳數據源`;
+    **監控時程:**
+    • 活躍時段: ${blogStatus.activeTimeSchedule}
+    • 當前是活躍時段: ${blogStatus.currentActiveTime ? '✅ 是' : '❌ 否'}
+    • 日本時間: ${blogStatus.japanTime}
+
+    **當前記錄的最新文章:**
+    ${latestRecord ? `📄 文章代碼: ${latestRecord.articleCode}
+    🗓️ 發布時間: ${latestRecord.datetime}
+    📝 標題: ${latestRecord.title}
+    📝 Diary名稱: ${latestRecord.diaryName}
+    ${latestRecord.url ? `🔗 連結: ${latestRecord.url}` : ''}
+    ⏰ 記錄更新: ${latestRecord.lastUpdated}` : '❌ 尚未建立記錄'}
+
+    💡 **監控邏輯:**
+    • 日本時間12:00-23:59每小時00分檢查
+    • 比較文章代碼和發布時間
+    • 發現新文章自動發送通知`;
 
             await message.reply(statusMsg);
         } else {
@@ -605,91 +618,154 @@ ${latestRecord.url ? `🔗 連結: ${latestRecord.url}` : ''}
     }
 
     else if (cmd === '!blog-latest') {
-    if (blogMonitor) {
-        await message.reply('🔍 獲取最新博客文章...');
-        try {
-            const latestArticles = await blogMonitor.getLatestArticles(1); // 只顯示最新一篇
-            
-            if (latestArticles.length > 0) {
-                const article = latestArticles[0];
-                let responseMsg = `📝 **Family Club 最新文章** (真正API)
+        if (blogMonitor) {
+            await message.reply('🔍 獲取最新博客文章...');
+            try {
+                const latestArticles = await blogMonitor.getLatestArticles(3); // 顯示最新3篇
+                
+                if (latestArticles.length > 0) {
+                    let responseMsg = `📝 **Family Club 最新文章** (高木雄也)
 
-📡 **API端點:** diarkiji_list
-🎨 **藝人代碼:** F2017
-⏰ **查詢時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
+    📡 **API端點:** Family Club 官方API
+    🎨 **藝人代碼:** ${blogMonitor.artistCode}
+    ⏰ **查詢時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
 
-🆕 **最新文章:**
-📄 **ID:** ${article.id}
-📝 **標題:** ${article.title}
-📅 **發布時間:** ${article.datetime}${article.dateEstimated ? ' (估計)' : ''}`;
+    📋 **最新 ${latestArticles.length} 篇文章:**\n`;
 
-                if (article.url) {
-                    responseMsg += `\n🔗 **連結:** ${article.url}`;
+                    latestArticles.forEach((article, index) => {
+                        responseMsg += `
+    **${index + 1}. ${article.title}**
+    📄 代碼: ${article.code}
+    📝 Diary: ${article.diaryName}
+    📅 發布: ${article.datetime}
+    ${article.url ? `🔗 [閱讀文章](${article.url})` : ''}
+    `;
+                    });
+
+                    responseMsg += `\n💡 **檢測原理:**
+    • 按發布時間排序，最新的在前
+    • 每小時00分檢查 (活躍時段12:00-24:00)
+    • 比較文章代碼和時間來檢測新文章`;
+
+                    await message.reply(responseMsg);
+                } else {
+                    await message.reply(`❌ **無法獲取文章**
+
+    可能原因：
+    • API端點無響應
+    • JSON解析失敗
+    • 網絡連接問題
+
+    🔧 **故障排除:**
+    • 使用 \`!blog-test\` 檢查API連接`);
                 }
-
-                responseMsg += `\n\n💡 **檢測原理:**
-• 系統記錄ID最大的文章作為"最新"
-• 每小時00分檢查，發現更大ID就是新文章
-• 自動發送新文章通知`;
-
-                await message.reply(responseMsg);
-            } else {
-                await message.reply(`❌ **無法獲取文章**
-
-可能原因：
-• API端點無響應
-• JSON解析失敗
-• 網絡連接問題
-
-🔧 **故障排除:**
-• 使用 \`!blog-test\` 檢查API連接`);
+            } catch (error) {
+                await message.reply(`❌ 獲取最新文章失敗: ${error.message}`);
             }
-        } catch (error) {
-            await message.reply(`❌ 獲取最新文章失敗: ${error.message}`);
+        } else {
+            await message.reply('❌ 博客監控未啟用');
         }
-    } else {
-        await message.reply('❌ 博客監控未啟用');
     }
-}
 
     else if (cmd === '!blog-test') {
         if (blogMonitor) {
-            await message.reply('🔍 執行博客網站連接測試（API探測模式）...');
+            await message.reply('🔍 執行博客API連接測試...');
             try {
                 const testResult = await blogMonitor.testWebsiteAccess();
                 
                 if (testResult.success) {
-                    const testMsg = `✅ **博客網站連接測試成功**
+                    const testMsg = `✅ **博客API連接測試成功**
 
-🔧 **檢測方式:** ${testResult.method}
-🕵️ **探測到的端點:** ${testResult.detectedEndpoints} 個
-📡 **有效JSON端點:** ${testResult.validJsonEndpoints} 個
-📰 **包含文章數據的端點:** ${testResult.endpointsWithArticles} 個
-🎯 **使用的API端點:** ${testResult.foundApiEndpoint || '無，使用HTML回退'}
-📄 **找到文章:** ${testResult.articlesFound} 篇
+    🔧 **檢測方式:** ${testResult.method}
+    📡 **API端點:** ${testResult.endpoint}
+    📰 **找到文章:** ${testResult.articlesFound} 篇
 
-${testResult.sampleArticles && testResult.sampleArticles.length > 0 ? `📋 **範例文章:**
-${testResult.sampleArticles.map((article, index) => 
-    `${index + 1}. ID: ${article.id || 'N/A'} | 時間: ${article.time} | 標題: ${article.title}`
-).join('\n')}` : ''}
+    📋 **API參數:**
+    • 藝人代碼: ${testResult.apiParameters.code}
+    • 排序方式: ${testResult.apiParameters.so}
+    • 頁數: ${testResult.apiParameters.page}
 
-✅ 博客API探測系統運行正常！`;
+    ${testResult.sampleArticles && testResult.sampleArticles.length > 0 ? `📝 **範例文章:**
+    ${testResult.sampleArticles.map((article, index) => 
+        `${index + 1}. 代碼: ${article.code} | 時間: ${article.time} | 標題: ${article.title}${article.diaryName ? ` | Diary: ${article.diaryName}` : ''}`
+    ).join('\n')}` : ''}
+
+    ✅ Family Club API系統運行正常！`;
                     
                     await message.reply(testMsg);
                 } else {
-                    await message.reply(`❌ **博客網站連接測試失敗**
+                    await message.reply(`❌ **博客API連接測試失敗**
 
-🔧 **檢測方式:** ${testResult.method}
-錯誤: ${testResult.error}
+    🔧 **檢測方式:** ${testResult.method}
+    📡 **API端點:** ${testResult.endpoint}
+    ❌ **錯誤:** ${testResult.error}
 
-🔧 **故障排除建議:**
-• 檢查網絡連接
-• 確認網站是否正常運行
-• 嘗試使用 \`!blog-detect\` 重新探測API
-• 稍後再試`);
+    🔧 **故障排除建議:**
+    • 檢查網絡連接
+    • 確認Family Club網站是否正常運行
+    • 稍後再試`);
                 }
             } catch (error) {
                 await message.reply(`❌ 測試執行失敗: ${error.message}`);
+            }
+        } else {
+            await message.reply('❌ 博客監控未啟用');
+        }
+    }
+
+    else if (cmd === '!blog-check') {
+        if (blogMonitor) {
+            await message.reply('🔍 執行手動博客檢查...');
+            try {
+                const newArticle = await blogMonitor.checkForNewArticles(true); // 測試模式
+                
+                if (newArticle) {
+                    const checkMsg = `📊 **手動檢查結果**
+
+    🆕 **當前最新文章:**
+    📄 **代碼:** ${newArticle.code}
+    📝 **標題:** ${newArticle.title}
+    📝 **Diary名稱:** ${newArticle.diaryName}
+    📅 **發布時間:** ${newArticle.datetimeString}
+    ${newArticle.url ? `🔗 **連結:** ${newArticle.url}` : ''}
+
+    🕐 **檢查時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
+    📊 **當前記錄:** ${blogMonitor.getLatestRecord()?.articleCode || '無'}
+    🎯 **API狀態:** 正常運行`;
+
+                    await message.reply(checkMsg);
+                } else {
+                    await message.reply(`❌ **手動檢查失敗**
+
+    無法獲取文章信息，請檢查：
+    • 網絡連接
+    • API端點狀態
+    • 使用 \`!blog-test\` 進行詳細診斷`);
+                }
+            } catch (error) {
+                await message.reply(`❌ 手動檢查失敗: ${error.message}`);
+            }
+        } else {
+            await message.reply('❌ 博客監控未啟用');
+        }
+    }
+
+    else if (cmd === '!blog-restart') {
+        if (blogMonitor) {
+            await message.reply('🔄 重新啟動博客監控...');
+            try {
+                blogMonitor.stopMonitoring();
+                await new Promise(resolve => setTimeout(resolve, 2000)); // 等待2秒
+                
+                const success = await blogMonitor.reinitialize();
+                if (success) {
+                    blogMonitor.startMonitoring();
+                    await message.reply('✅ **博客監控重新啟動成功！**\n\n📊 已重新初始化最新文章記錄\n⏰ 恢復定期檢查排程');
+                } else {
+                    await message.reply('❌ **博客監控重新啟動失敗**\n\n無法重新初始化，請檢查API連接');
+                }
+            } catch (error) {
+                await message.reply(`❌ 重新啟動失敗: ${error.message}`);
             }
         } else {
             await message.reply('❌ 博客監控未啟用');
@@ -708,14 +784,22 @@ ${testResult.sampleArticles.map((article, index) =>
     \`!ig-check\` - 手動檢查Instagram
     \`!ig-accounts\` - 檢查帳號狀態
 
-    **博客監控命令:**
+    **博客監控命令:** (Family Club - 高木雄也)
     \`!blog-status\` - 博客監控狀態
-    \`!blog-latest\` - 查看最新文章列表 🆕
+    \`!blog-latest\` - 查看最新文章列表
     \`!blog-test\` - 測試API連接
+    \`!blog-check\` - 手動檢查新文章
+    \`!blog-restart\` - 重新啟動博客監控
 
     **系統命令:**
     \`!status\` - 完整系統狀態
-    \`!help\` - 顯示此幫助`);
+    \`!help\` - 顯示此幫助
+
+    **博客監控特色:**
+    🎯 使用Family Club官方API
+    📅 智能時程：日本時間12:00-24:00每小時檢查
+    🔍 精確檢測：比較文章代碼和發布時間
+    ⚡ 輕量級設計，適合雲端部署`);
     }
 }
 

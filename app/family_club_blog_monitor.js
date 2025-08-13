@@ -5,29 +5,30 @@ class FamilyClubBlogMonitor {
         this.notificationCallback = notificationCallback;
         this.isMonitoring = false;
         this.monitoringInterval = null;
-        this.checkIntervalMinutes = 60;
+        this.checkIntervalMinutes = 60; // 每小時檢查一次
         this.totalChecks = 0;
         this.articlesFound = 0;
         this.lastCheckTime = null;
         
-        // 基於你發現的真正API端點
+        // Family Club API 端點
         this.apiEndpoint = 'https://web.familyclub.jp/s/jwb/api/list/diarkiji_list';
-        this.artistCode = 'F2017';
+        this.artistCode = 'F2017'; // 高木雄也
         this.baseUrl = 'https://web.familyclub.jp';
         
-        // 記錄最新文章信息
+        // 記錄最新文章信息 - 使用正確的字段
         this.latestRecord = {
-            articleId: null,
-            datetime: null,
-            datetimeString: null,
+            articleCode: null,          // 使用 code 而不是隨機ID
+            datetime: null,             // Date 對象
+            datetimeString: null,       // 格式化的時間字符串
             title: null,
             url: null,
+            diaryName: null,            // diary_name
             lastUpdated: null
         };
         
         console.log('📝 [博客監控] Family Club 博客監控已初始化');
-        console.log('🎯 [博客監控] 使用真正的API端點:', this.apiEndpoint);
-        console.log('🎨 [博客監控] 目標藝人:', this.artistCode);
+        console.log('🎯 [博客監控] 使用API端點:', this.apiEndpoint);
+        console.log('🎨 [博客監控] 目標藝人:', this.artistCode, '(高木雄也)');
     }
 
     // 安全HTTP請求
@@ -78,12 +79,11 @@ class FamilyClubBlogMonitor {
         });
     }
 
-    // 從真正的API獲取文章列表
+    // 從API獲取文章列表
     async fetchArticlesFromAPI() {
         try {
-            console.log('📡 [API獲取] 從真正的API端點獲取文章列表');
+            console.log('📡 [API獲取] 從Family Club API獲取文章列表');
             
-            // 構建API URL - 基於你發現的真實端點
             const apiUrl = `${this.apiEndpoint}?code=${this.artistCode}&so=JW5&page=0`;
             console.log('🔗 [API獲取] 請求URL:', apiUrl);
             
@@ -94,24 +94,23 @@ class FamilyClubBlogMonitor {
             }
             
             console.log(`📊 [API獲取] 成功獲取響應，長度: ${response.data.length} 字元`);
-            console.log(`📋 [API獲取] Content-Type: ${response.contentType}`);
             
-            // 顯示響應的前500字符以供調試
-            console.log('📄 [API響應] 前500字符:', response.data.substring(0, 500));
-            
-            let articles = [];
-            
-            // 嘗試解析JSON響應
-            if (response.contentType.includes('application/json') || this.isValidJSON(response.data)) {
-                console.log('✅ [API解析] 響應是JSON格式');
-                const jsonData = JSON.parse(response.data);
-                articles = this.parseJSONArticles(jsonData);
-            } else {
-                console.log('📄 [API解析] 響應不是JSON，嘗試HTML解析');
-                articles = this.parseHTMLResponse(response.data);
+            let jsonData;
+            try {
+                jsonData = JSON.parse(response.data);
+            } catch (parseError) {
+                throw new Error(`JSON解析失敗: ${parseError.message}`);
             }
             
+            console.log('📄 [API解析] JSON結構:', Object.keys(jsonData));
+            
+            if (!jsonData.list || !Array.isArray(jsonData.list)) {
+                throw new Error('API響應中沒有找到文章列表');
+            }
+            
+            const articles = this.parseArticleList(jsonData.list);
             console.log(`📝 [API獲取] 成功解析 ${articles.length} 篇文章`);
+            
             return articles;
             
         } catch (error) {
@@ -120,237 +119,98 @@ class FamilyClubBlogMonitor {
         }
     }
 
-    // 檢查是否為有效JSON
-    isValidJSON(str) {
-        try {
-            JSON.parse(str);
-            return true;
-        } catch (e) {
-            return false;
-        }
-    }
-
-    // 解析JSON格式的文章
-    parseJSONArticles(data) {
+    // 解析文章列表
+    parseArticleList(articleList) {
         const articles = [];
         
-        try {
-            console.log('📄 [JSON解析] 開始解析JSON文章數據');
-            console.log('📊 [JSON結構] 頂層keys:', Object.keys(data));
-            
-            // 檢查多種可能的JSON結構
-            let articleArray = [];
-            
-            if (Array.isArray(data)) {
-                console.log('📋 [JSON解析] 數據是頂層陣列');
-                articleArray = data;
-            } else if (data.items && Array.isArray(data.items)) {
-                console.log('📋 [JSON解析] 找到 data.items 陣列');
-                articleArray = data.items;
-            } else if (data.list && Array.isArray(data.list)) {
-                console.log('📋 [JSON解析] 找到 data.list 陣列');
-                articleArray = data.list;
-            } else if (data.articles && Array.isArray(data.articles)) {
-                console.log('📋 [JSON解析] 找到 data.articles 陣列');
-                articleArray = data.articles;
-            } else if (data.entries && Array.isArray(data.entries)) {
-                console.log('📋 [JSON解析] 找到 data.entries 陣列');
-                articleArray = data.entries;
-            } else if (data.diary && Array.isArray(data.diary)) {
-                console.log('📋 [JSON解析] 找到 data.diary 陣列');
-                articleArray = data.diary;
-            } else if (data.data) {
-                if (Array.isArray(data.data)) {
-                    console.log('📋 [JSON解析] 找到 data.data 陣列');
-                    articleArray = data.data;
-                } else if (data.data.items && Array.isArray(data.data.items)) {
-                    console.log('📋 [JSON解析] 找到 data.data.items 陣列');
-                    articleArray = data.data.items;
-                } else if (data.data.list && Array.isArray(data.data.list)) {
-                    console.log('📋 [JSON解析] 找到 data.data.list 陣列');
-                    articleArray = data.data.list;
+        articleList.forEach((item, index) => {
+            try {
+                if (!item || typeof item !== 'object') {
+                    console.log(`⚠️ [文章解析] 項目 ${index} 不是有效對象`);
+                    return;
                 }
-            } else {
-                // 搜索所有可能包含文章的屬性
-                console.log('🔍 [JSON解析] 搜索所有可能的文章陣列');
-                Object.keys(data).forEach(key => {
-                    if (Array.isArray(data[key]) && data[key].length > 0) {
-                        const firstItem = data[key][0];
-                        if (firstItem && typeof firstItem === 'object') {
-                            console.log(`🔍 [JSON解析] 檢查 ${key} 陣列:`, Object.keys(firstItem));
-                            // 檢查是否包含文章相關的欄位
-                            const hasArticleFields = Object.keys(firstItem).some(field => 
-                                ['id', 'title', 'subject', 'content', 'date', 'created', 'url', 'link'].includes(field.toLowerCase())
-                            );
-                            if (hasArticleFields) {
-                                console.log(`✅ [JSON解析] ${key} 看起來像文章陣列`);
-                                articleArray = data[key];
-                            }
-                        }
-                    }
-                });
-            }
-            
-            console.log(`📊 [JSON解析] 找到 ${articleArray.length} 個潛在文章項目`);
-            
-            if (articleArray.length > 0) {
-                console.log('📝 [JSON解析] 第一個項目的結構:', Object.keys(articleArray[0]));
-            }
-            
-            articleArray.forEach((item, index) => {
-                try {
-                    if (!item || typeof item !== 'object') {
-                        console.log(`⚠️ [JSON解析] 項目 ${index} 不是有效對象`);
-                        return;
-                    }
-                    
-                    // 嘗試多種可能的欄位名稱
-                    const article = {
-                        id: item.id || item.articleId || item.diary_id || item.entryId || item.kiji_id || (Date.now() + index),
-                        title: item.title || item.subject || item.headline || item.name || item.kiji_title || '未知標題',
-                        content: item.content || item.body || item.text || item.description || item.kiji_content || '',
-                        url: item.url || item.link || item.permalink || item.kiji_url || null,
-                        dateString: item.date || item.created || item.published || item.createdAt || 
-                                   item.updatedAt || item.datetime || item.kiji_date || item.post_date || null,
-                        author: item.author || item.writer || item.user || null
-                    };
-                    
-                    // 解析日期
-                    const timeInfo = this.parseDateTime(article.dateString);
-                    if (timeInfo) {
-                        article.date = timeInfo.date;
-                        article.datetimeString = timeInfo.datetimeString;
-                    } else {
-                        // 如果沒有有效日期，使用當前時間但標記為估計
-                        const now = new Date();
-                        article.date = now;
-                        article.datetimeString = now.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
-                        article.dateEstimated = true;
-                    }
-                    
-                    // 處理URL
-                    if (article.url && !article.url.startsWith('http')) {
-                        article.url = this.baseUrl + (article.url.startsWith('/') ? '' : '/') + article.url;
-                    }
-                    
-                    articles.push(article);
-                    console.log(`📝 [JSON解析] 文章 ${index + 1}: ID=${article.id}, 標題="${article.title.substring(0, 30)}..."`);
-                    
-                } catch (error) {
-                    console.error(`❌ [JSON解析] 解析文章 ${index + 1} 失敗:`, error.message);
+                
+                // 解析日期 - API返回格式: "2025-07-14T19:00"
+                const dateTime = this.parseDateTime(item.date);
+                if (!dateTime) {
+                    console.warn(`⚠️ [文章解析] 無法解析日期: ${item.date}`);
+                    return; // 跳過無法解析日期的文章
                 }
-            });
-            
-            console.log(`✅ [JSON解析] 成功解析 ${articles.length} 篇文章`);
-            
-        } catch (error) {
-            console.error('❌ [JSON解析] JSON文章提取失敗:', error.message);
-        }
+                
+                // 構建文章URL
+                let articleUrl = null;
+                if (item.link) {
+                    articleUrl = item.link.startsWith('http') ? item.link : this.baseUrl + item.link;
+                } else if (item.code) {
+                    // 使用code構建URL
+                    articleUrl = `${this.baseUrl}/s/jwb/diary/${this.artistCode}/detail/${item.code}?ima=0947`;
+                }
+                
+                const article = {
+                    code: item.code,                    // 使用真正的文章代碼
+                    title: item.title || '未知標題',
+                    diaryName: item.diary_name || '',
+                    artistName: item.artist_name || '',
+                    date: dateTime.date,
+                    datetimeString: dateTime.datetimeString,
+                    labelDate: item.label_date || '',   // API提供的格式化日期
+                    url: articleUrl,
+                    image: item.diary_image || null
+                };
+                
+                articles.push(article);
+                console.log(`📝 [文章解析] 文章 ${index + 1}: Code=${article.code}, 日期=${article.datetimeString}, 標題="${article.title.substring(0, 30)}..."`);
+                
+            } catch (error) {
+                console.error(`❌ [文章解析] 解析文章 ${index + 1} 失敗:`, error.message);
+            }
+        });
         
         return articles;
     }
 
-    // HTML解析作為回退
-    parseHTMLResponse(html) {
-        const articles = [];
-        
-        try {
-            console.log('📄 [HTML解析] 開始HTML回退解析');
-            
-            // 尋找文章標題
-            const titleMatches = html.match(/<h[1-4][^>]*>([^<]{5,100})<\/h[1-4]>/gi) || [];
-            const dateMatches = html.match(/(\d{4})[年\/\-](\d{1,2})[月\/\-](\d{1,2})[日]?/g) || [];
-            const linkMatches = html.match(/href="([^"]*diary[^"]*)"/gi) || [];
-            
-            console.log(`📊 [HTML解析] 找到 ${titleMatches.length} 個標題, ${dateMatches.length} 個日期, ${linkMatches.length} 個連結`);
-            
-            titleMatches.forEach((titleMatch, index) => {
-                const titleText = titleMatch.replace(/<[^>]*>/g, '').trim();
-                if (titleText && titleText.length > 3 && 
-                    !titleText.includes('ログイン') && 
-                    !titleText.includes('TOP') && 
-                    !titleText.includes('MENU')) {
-                    
-                    const article = {
-                        id: Date.now() + index,
-                        title: titleText,
-                        content: '',
-                        url: linkMatches[index] ? linkMatches[index].match(/href="([^"]*)"/)[1] : null,
-                        dateString: dateMatches[index] || null
-                    };
-                    
-                    const timeInfo = this.parseDateTime(article.dateString);
-                    if (timeInfo) {
-                        article.date = timeInfo.date;
-                        article.datetimeString = timeInfo.datetimeString;
-                    } else {
-                        const now = new Date();
-                        article.date = now;
-                        article.datetimeString = now.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
-                        article.dateEstimated = true;
-                    }
-                    
-                    if (article.url && !article.url.startsWith('http')) {
-                        article.url = this.baseUrl + (article.url.startsWith('/') ? '' : '/') + article.url;
-                    }
-                    
-                    articles.push(article);
-                }
-            });
-            
-            console.log(`📊 [HTML解析] HTML回退解析找到 ${articles.length} 篇文章`);
-            
-        } catch (error) {
-            console.error('❌ [HTML解析] HTML解析失敗:', error.message);
-        }
-        
-        return articles;
-    }
-
-    // 解析日期時間
+    // 解析日期時間 - 處理Family Club API的日期格式
     parseDateTime(dateString) {
         try {
             if (!dateString) return null;
-
-            let date = null;
-
-            // 日文日期格式
-            const jpPatterns = [
-                /(\d{4})[年](\d{1,2})[月](\d{1,2})[日]\s*(\d{1,2}):(\d{2})/,
-                /(\d{4})\.(\d{1,2})\.(\d{1,2})\s+(\d{1,2}):(\d{2})/,
-                /(\d{4})[年](\d{1,2})[月](\d{1,2})[日]/,
-                /(\d{4})\.(\d{1,2})\.(\d{1,2})/,
-                /(\d{4})\/(\d{1,2})\/(\d{1,2})/,
-                /(\d{4})-(\d{1,2})-(\d{1,2})/
-            ];
             
-            for (const pattern of jpPatterns) {
-                const match = dateString.match(pattern);
-                if (match) {
-                    const year = parseInt(match[1]);
-                    const month = parseInt(match[2]) - 1;
-                    const day = parseInt(match[3]);
-                    const hour = match[4] ? parseInt(match[4]) : 0;
-                    const minute = match[5] ? parseInt(match[5]) : 0;
-                    
-                    date = new Date(year, month, day, hour, minute);
-                    break;
+            // Family Club API格式: "2025-07-14T19:00"
+            const isoMatch = dateString.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+            if (isoMatch) {
+                const [, year, month, day, hour, minute] = isoMatch;
+                const date = new Date(
+                    parseInt(year),
+                    parseInt(month) - 1, // JavaScript月份從0開始
+                    parseInt(day),
+                    parseInt(hour),
+                    parseInt(minute)
+                );
+                
+                if (!isNaN(date.getTime())) {
+                    return {
+                        date: date,
+                        datetimeString: `${year}年${month}月${day}日 ${hour}:${minute}`
+                    };
                 }
             }
             
-            // ISO格式和其他標準格式
-            if (!date && (dateString.includes('T') || dateString.includes('-'))) {
-                date = new Date(dateString);
+            // 回退: 嘗試直接解析
+            const date = new Date(dateString);
+            if (!isNaN(date.getTime())) {
+                return {
+                    date: date,
+                    datetimeString: date.toLocaleString('ja-JP', { 
+                        timeZone: 'Asia/Tokyo',
+                        year: 'numeric',
+                        month: 'long', 
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    })
+                };
             }
             
-            if (!date || isNaN(date.getTime())) {
-                return null;
-            }
-            
-            return {
-                date: date,
-                datetimeString: `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
-            };
+            return null;
             
         } catch (error) {
             console.error('❌ [日期解析] 失敗:', error.message);
@@ -358,42 +218,32 @@ class FamilyClubBlogMonitor {
         }
     }
 
-    // 找出最新文章 - 修復排序問題
+    // 找出最新文章 - 按時間排序
     findLatestArticle(articles) {
         if (articles.length === 0) {
             return null;
         }
         
-        console.log('🔍 [最新文章] 所有文章ID:', articles.map(a => a.id).join(', '));
+        console.log('🔍 [最新文章] 分析文章時間順序...');
         
-        // 強制按數字ID排序（ID越大越新）
-        const articlesWithId = articles.filter(a => a.id && !isNaN(a.id));
-        if (articlesWithId.length > 0) {
-            console.log('📊 [最新文章] 按數字ID排序查找最新文章');
-            
-            // 轉換為數字進行比較，確保正確排序
-            const sortedArticles = articlesWithId.sort((a, b) => {
-                const numA = parseInt(a.id);
-                const numB = parseInt(b.id);
-                console.log(`🔍 [排序] 比較 ${numA} vs ${numB}`);
-                return numB - numA; // 大的在前
-            });
-            
-            console.log('📊 [最新文章] 排序後ID順序:', sortedArticles.slice(0, 5).map(a => a.id).join(', '));
-            console.log('✅ [最新文章] 選擇最新文章 ID:', sortedArticles[0].id);
-            return sortedArticles[0];
-        }
+        // 按日期排序，最新的在前
+        const sortedArticles = articles.sort((a, b) => b.date - a.date);
         
-        // 回退到時間排序
-        console.log('📊 [最新文章] 回退到時間排序');
-        return articles.sort((a, b) => b.date - a.date)[0];
+        console.log('📊 [最新文章] 最新5篇文章:');
+        sortedArticles.slice(0, 5).forEach((article, index) => {
+            console.log(`   ${index + 1}. Code: ${article.code}, 時間: ${article.datetimeString}, 標題: ${article.title.substring(0, 30)}...`);
+        });
+        
+        const latestArticle = sortedArticles[0];
+        console.log(`✅ [最新文章] 選擇最新文章: Code=${latestArticle.code}, 時間=${latestArticle.datetimeString}`);
+        
+        return latestArticle;
     }
 
     // 初始化
     async initialize() {
         try {
             console.log('🚀 [博客監控] 正在初始化Family Club博客監控...');
-            console.log('🔗 [博客監控] 使用真正的API端點進行初始化');
             
             const articles = await this.fetchArticlesFromAPI();
             
@@ -405,21 +255,22 @@ class FamilyClubBlogMonitor {
             const latestArticle = this.findLatestArticle(articles);
             
             this.latestRecord = {
-                articleId: latestArticle.id,
+                articleCode: latestArticle.code,
                 datetime: latestArticle.date,
                 datetimeString: latestArticle.datetimeString,
                 title: latestArticle.title,
                 url: latestArticle.url,
+                diaryName: latestArticle.diaryName,
                 lastUpdated: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
             };
             
             console.log('✅ [博客監控] 初始化完成，建立基準記錄:');
-            console.log(`   📄 文章ID: ${this.latestRecord.articleId}`);
+            console.log(`   📄 文章Code: ${this.latestRecord.articleCode}`);
             console.log(`   🗓️ 發佈時間: ${this.latestRecord.datetimeString}`);
             console.log(`   📝 標題: ${this.latestRecord.title}`);
+            console.log(`   📝 Diary名稱: ${this.latestRecord.diaryName}`);
             console.log(`   🔗 URL: ${this.latestRecord.url}`);
             console.log(`   📊 總文章數: ${articles.length}`);
-            console.log(`   🎯 使用真正的API: ${this.apiEndpoint}`);
             
             return true;
             
@@ -432,9 +283,11 @@ class FamilyClubBlogMonitor {
     // 檢查是否有新文章
     async checkForNewArticles(testMode = false) {
         try {
-            console.log(`🔍 [檢查更新] 檢查新文章（真正API模式）... ${testMode ? '(測試模式)' : ''}`);
+            const japanTime = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+            console.log(`🔍 [檢查更新] 檢查新文章... ${testMode ? '(測試模式)' : ''} - ${japanTime}`);
+            
             this.totalChecks++;
-            this.lastCheckTime = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+            this.lastCheckTime = japanTime;
 
             const articles = await this.fetchArticlesFromAPI();
             
@@ -446,7 +299,7 @@ class FamilyClubBlogMonitor {
             const latestArticle = this.findLatestArticle(articles);
             
             if (testMode) {
-                console.log(`📝 [測試模式] 當前最新文章: ID=${latestArticle.id}, 時間=${latestArticle.datetimeString}`);
+                console.log(`📝 [測試模式] 當前最新文章: Code=${latestArticle.code}, 時間=${latestArticle.datetimeString}`);
                 console.log(`📊 [測試模式] 總文章數: ${articles.length}`);
                 return latestArticle;
             }
@@ -455,44 +308,44 @@ class FamilyClubBlogMonitor {
             let hasUpdate = false;
             let updateReason = '';
             
-            if (!this.latestRecord.articleId && !this.latestRecord.datetime) {
+            if (!this.latestRecord.articleCode) {
                 hasUpdate = true;
                 updateReason = '初始化記錄';
             } else {
-                // ID比較
-                if (latestArticle.id && this.latestRecord.articleId && 
-                    Number(latestArticle.id) > Number(this.latestRecord.articleId)) {
+                // 首先比較文章代碼
+                if (latestArticle.code !== this.latestRecord.articleCode) {
                     hasUpdate = true;
-                    updateReason = `新文章ID: ${latestArticle.id} > ${this.latestRecord.articleId}`;
+                    updateReason = `新文章代碼: ${latestArticle.code} != ${this.latestRecord.articleCode}`;
                 }
                 
-                // 時間比較
-                if (!hasUpdate && latestArticle.date && this.latestRecord.datetime && 
-                    latestArticle.date > this.latestRecord.datetime) {
+                // 如果代碼相同，比較時間
+                if (!hasUpdate && latestArticle.date > this.latestRecord.datetime) {
                     hasUpdate = true;
                     updateReason = `新發佈時間: ${latestArticle.datetimeString} > ${this.latestRecord.datetimeString}`;
-                }
-                
-                // 標題變化（作為額外檢查）
-                if (!hasUpdate && latestArticle.title !== this.latestRecord.title) {
-                    hasUpdate = true;
-                    updateReason = `標題變化: "${latestArticle.title}" != "${this.latestRecord.title}"`;
                 }
             }
             
             if (hasUpdate) {
                 console.log(`📝 [檢查更新] 發現新文章! 原因: ${updateReason}`);
                 
+                // 更新記錄
+                const previousRecord = { ...this.latestRecord };
                 this.latestRecord = {
-                    articleId: latestArticle.id,
+                    articleCode: latestArticle.code,
                     datetime: latestArticle.date,
                     datetimeString: latestArticle.datetimeString,
                     title: latestArticle.title,
                     url: latestArticle.url,
-                    lastUpdated: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
+                    diaryName: latestArticle.diaryName,
+                    lastUpdated: japanTime
                 };
                 
                 this.articlesFound++;
+                
+                console.log(`📊 [檢查更新] 記錄已更新:`);
+                console.log(`   舊: Code=${previousRecord.articleCode}, 時間=${previousRecord.datetimeString}`);
+                console.log(`   新: Code=${latestArticle.code}, 時間=${latestArticle.datetimeString}`);
+                
                 return latestArticle;
             }
             
@@ -508,19 +361,20 @@ class FamilyClubBlogMonitor {
     // 測試API連接
     async testWebsiteAccess() {
         try {
-            console.log('🔍 [測試連接] 測試真正的API連接...');
+            console.log('🔍 [測試連接] 測試Family Club API連接...');
             
             const articles = await this.fetchArticlesFromAPI();
             
             return {
                 success: true,
-                method: 'Real API Endpoint',
+                method: 'Family Club Official API',
                 endpoint: this.apiEndpoint,
                 articlesFound: articles.length,
                 sampleArticles: articles.slice(0, 3).map(a => ({
-                    id: a.id,
+                    code: a.code,
                     time: a.datetimeString,
-                    title: a.title.substring(0, 50) + (a.title.length > 50 ? '...' : '')
+                    title: a.title.substring(0, 50) + (a.title.length > 50 ? '...' : ''),
+                    diaryName: a.diaryName
                 })),
                 apiParameters: {
                     code: this.artistCode,
@@ -534,7 +388,7 @@ class FamilyClubBlogMonitor {
             return {
                 success: false,
                 error: error.message,
-                method: 'Real API Endpoint',
+                method: 'Family Club Official API',
                 endpoint: this.apiEndpoint
             };
         }
@@ -544,16 +398,17 @@ class FamilyClubBlogMonitor {
     async sendNewArticleNotification(article) {
         if (!this.notificationCallback) return;
 
-        const notificationMessage = `📝 **Family Club 新文章發布!** (真正API)
+        const notificationMessage = `📝 **Family Club 新文章發布!** (高木雄也)
 
-📄 **文章ID:** ${article.id || '未知'}
-🗓️ **發布時間:** ${article.datetimeString}${article.dateEstimated ? ' (估計)' : ''}
-📝 **標題:** ${article.title || '未知標題'}
+📄 **文章代碼:** ${article.code}
+🗓️ **發布時間:** ${article.datetimeString}
+📝 **標題:** ${article.title}
+📝 **Diary名稱:** ${article.diaryName}
 ${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
-${article.author ? `✍️ **作者:** ${article.author}` : ''}
+👤 **藝人:** ${article.artistName}
 🌐 **博客首頁:** https://web.familyclub.jp/s/jwb/diary/F2017?ima=3047
 ⏰ **檢測時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-🎯 **檢測方式:** 真正的API端點 (diarkiji_list)
+🎯 **檢測方式:** Family Club 官方API
 
 🎉 快去看看新內容吧！`;
 
@@ -565,17 +420,46 @@ ${article.author ? `✍️ **作者:** ${article.author}` : ''}
         }
     }
 
-    // 計算下次檢查時間
+    // 計算下次檢查時間 - 日本時間12:00-24:00每小時00分檢查
     calculateNextCheckTime() {
         const now = new Date();
-        const nextCheck = new Date(now);
+        const japanNow = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
+        const currentHour = japanNow.getHours();
         
-        nextCheck.setHours(now.getHours() + 1);
-        nextCheck.setMinutes(0);
-        nextCheck.setSeconds(0);
-        nextCheck.setMilliseconds(0);
-
-        const waitTime = nextCheck.getTime() - now.getTime();
+        // 檢查是否在活躍時段 (12:00-23:59)
+        const isActiveTime = currentHour >= 12 && currentHour <= 23;
+        
+        let nextCheck = new Date(japanNow);
+        
+        if (isActiveTime) {
+            // 活躍時段：下一個整點
+            nextCheck.setHours(currentHour + 1);
+            nextCheck.setMinutes(0);
+            nextCheck.setSeconds(0);
+            nextCheck.setMilliseconds(0);
+        } else {
+            // 非活躍時段：等到12:00
+            if (currentHour < 12) {
+                // 當天12:00
+                nextCheck.setHours(12);
+            } else {
+                // 明天12:00
+                nextCheck.setDate(nextCheck.getDate() + 1);
+                nextCheck.setHours(12);
+            }
+            nextCheck.setMinutes(0);
+            nextCheck.setSeconds(0);
+            nextCheck.setMilliseconds(0);
+        }
+        
+        // 轉換回UTC時間來計算等待時間
+        const utcNow = new Date();
+        const utcNext = new Date(nextCheck.getTime() - (9 * 60 * 60 * 1000)); // 減去9小時時差
+        const waitTime = Math.max(0, utcNext.getTime() - utcNow.getTime());
+        
+        console.log(`⏰ [計算時間] 日本當前時間: ${japanNow.toLocaleString()}, 活躍時段: ${isActiveTime}`);
+        console.log(`⏰ [計算時間] 下次檢查: ${nextCheck.toLocaleString()}, 等待: ${Math.round(waitTime/1000/60)}分鐘`);
+        
         return Math.floor(waitTime / 1000);
     }
 
@@ -587,8 +471,8 @@ ${article.author ? `✍️ **作者:** ${article.author}` : ''}
         }
 
         this.isMonitoring = true;
-        console.log('🚀 [監控] 開始Family Club博客監控 (使用真正API端點)');
-        console.log('⏰ [監控] 每小時00分檢查一次');
+        console.log('🚀 [監控] 開始Family Club博客監控');
+        console.log('⏰ [監控] 活躍時段: 日本時間12:00-24:00，每小時00分檢查');
         
         const monitorLoop = async () => {
             if (!this.isMonitoring) {
@@ -646,34 +530,48 @@ ${article.author ? `✍️ **作者:** ${article.author}` : ''}
 
     // 獲取狀態
     getStatus() {
+        const nextCheckSeconds = this.isMonitoring ? this.calculateNextCheckTime() : 0;
+        const nextCheckTime = this.isMonitoring ? 
+            new Date(Date.now() + nextCheckSeconds * 1000).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : 
+            null;
+            
+        const japanNow = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+        const currentHour = new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo", hour: '2-digit', hour12: false });
+        const isActiveTime = parseInt(currentHour) >= 12 && parseInt(currentHour) <= 23;
+        
         return {
             isMonitoring: this.isMonitoring,
             totalChecks: this.totalChecks,
             articlesFound: this.articlesFound,
             lastCheckTime: this.lastCheckTime,
-            nextCheckTime: this.isMonitoring ? new Date(Date.now() + this.calculateNextCheckTime() * 1000).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null,
-            method: 'Real API Endpoint',
+            nextCheckTime: nextCheckTime,
+            method: 'Family Club Official API',
             endpoint: this.apiEndpoint,
             artistCode: this.artistCode,
+            artistName: '高木雄也',
             blogUrl: 'https://web.familyclub.jp/s/jwb/diary/F2017?ima=3047',
+            activeTimeSchedule: '日本時間12:00-24:00 (每小時00分檢查)',
+            currentActiveTime: isActiveTime,
+            japanTime: japanNow,
             latestRecord: {
                 ...this.latestRecord,
-                hasRecord: !!(this.latestRecord.articleId || this.latestRecord.datetime)
+                hasRecord: !!(this.latestRecord.articleCode || this.latestRecord.datetime)
             }
         };
     }
 
     // 獲取當前最新記錄
     getLatestRecord() {
-        if (!this.latestRecord.articleId && !this.latestRecord.datetime) {
+        if (!this.latestRecord.articleCode && !this.latestRecord.datetime) {
             return null;
         }
         
         return {
-            articleId: this.latestRecord.articleId,
+            articleCode: this.latestRecord.articleCode,
             datetime: this.latestRecord.datetimeString,
             title: this.latestRecord.title,
             url: this.latestRecord.url,
+            diaryName: this.latestRecord.diaryName,
             lastUpdated: this.latestRecord.lastUpdated
         };
     }
@@ -694,20 +592,17 @@ ${article.author ? `✍️ **作者:** ${article.author}` : ''}
                 return [];
             }
             
-            // 按ID或時間排序，返回最新的幾篇
-            const sortedArticles = articles.sort((a, b) => {
-                if (a.id && b.id && !isNaN(a.id) && !isNaN(b.id)) {
-                    return Number(b.id) - Number(a.id);
-                }
-                return b.date - a.date;
-            });
+            // 按時間排序，返回最新的幾篇
+            const sortedArticles = articles.sort((a, b) => b.date - a.date);
             
             return sortedArticles.slice(0, limit).map(article => ({
-                id: article.id,
+                code: article.code,
                 title: article.title,
+                diaryName: article.diaryName,
                 datetime: article.datetimeString,
+                labelDate: article.labelDate,
                 url: article.url,
-                dateEstimated: article.dateEstimated || false
+                artistName: article.artistName
             }));
             
         } catch (error) {
