@@ -838,6 +838,50 @@ ${testResult.sampleArticles.map((article, index) =>
         }
     }
 
+    // 在現有命令後添加
+    else if (cmd === '!blog-deep') {
+        await message.reply('🔍 執行深度內容分析，專門尋找 "ブログ記事一覧" 中的真實文章...');
+        try {
+            const DeepContentAnalyzer = require('./deep_content_analyzer');
+            const analyzer = new DeepContentAnalyzer();
+            const results = await analyzer.executeDeepAnalysis();
+            
+            if (results.success) {
+                let resultMsg = `🔍 **深度內容分析結果**
+
+    📊 **總覽:**
+    - 總文章數: ${results.totalArticles}
+    - JSON來源: ${results.analysis.jsonArticles} 篇
+    - HTML來源: ${results.analysis.htmlArticles} 篇
+
+    📝 **發現的文章:**`;
+
+                if (results.articles.length > 0) {
+                    results.articles.slice(0, 5).forEach((article, index) => {
+                        resultMsg += `\n${index + 1}. **${article.title || 'ID: ' + article.id}**`;
+                        if (article.date) resultMsg += `\n   📅 ${article.date}`;
+                        if (article.url) resultMsg += `\n   🔗 ${article.url}`;
+                        if (article.source) resultMsg += `\n   📍 來源: ${article.source}`;
+                        resultMsg += '\n';
+                    });
+                    
+                    if (results.articles.length > 5) {
+                        resultMsg += `\n...還有 ${results.articles.length - 5} 篇文章`;
+                    }
+                } else {
+                    resultMsg += '\n❌ 未找到真實文章';
+                }
+
+                await message.reply(resultMsg);
+            } else {
+                await message.reply(`❌ 深度分析失敗: ${results.error}`);
+            }
+            
+        } catch (error) {
+            await message.reply(`❌ 深度分析執行失敗: ${error.message}`);
+        }
+    }
+
     else if (cmd === '!blog-init') {
         if (blogMonitor) {
             await message.reply('🔄 執行手動初始化（API探測模式）...');
