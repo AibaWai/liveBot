@@ -132,16 +132,18 @@ class BlogMonitor {
         try {
             console.log('🔍 [解析文章] 開始解析網頁中的文章...');
             
-            // 尋找文章容器的多種模式
+            // 尋找文章容器的多種模式 - 針對 Family Club 優化
             const articlePatterns = [
-                // 標準文章容器
-                /<article[^>]*>([\s\S]*?)<\/article>/gi,
-                // 日記條目容器
-                /<div[^>]*class="[^"]*entry[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
-                // 通用文章容器
+                // 日記條目容器 - 放在前面優先匹配
                 /<div[^>]*class="[^"]*diary[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
-                // 列表項目
-                /<li[^>]*class="[^"]*entry[^"]*"[^>]*>([\s\S]*?)<\/li>/gi
+                /<li[^>]*class="[^"]*diary[^"]*"[^>]*>([\s\S]*?)<\/li>/gi,
+                // Entry 相關容器
+                /<div[^>]*class="[^"]*entry[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
+                /<li[^>]*class="[^"]*entry[^"]*"[^>]*>([\s\S]*?)<\/li>/gi,
+                // 通用容器
+                /<article[^>]*>([\s\S]*?)<\/article>/gi,
+                // 更寬泛的 diary 匹配
+                /<[^>]*diary[^>]*>([\s\S]*?)<\/[^>]*>/gi
             ];
             
             for (const pattern of articlePatterns) {
@@ -264,16 +266,20 @@ class BlogMonitor {
     // 提取時間信息
     extractDateTime(html) {
         try {
-            // 多種時間格式模式
+            // 多種時間格式模式 - 針對日文網站優化
             const timePatterns = [
-                // 標準 datetime 屬性
+                // 日文日期格式 - 放在前面優先匹配
+                /(\d{4})[年](\d{1,2})[月](\d{1,2})[日]/,
+                /(\d{4})\.(\d{1,2})\.(\d{1,2})/,
+                /(\d{4})\/(\d{1,2})\/(\d{1,2})/,
+                /(\d{4})-(\d{1,2})-(\d{1,2})/,
+                // 包含時間的格式
+                /(\d{4})[年](\d{1,2})[月](\d{1,2})[日]\s*(\d{1,2}):(\d{2})/,
+                /(\d{4})\.(\d{1,2})\.(\d{1,2})\s+(\d{1,2}):(\d{2})/,
+                // 標準屬性
                 /datetime="([^"]+)"/i,
-                // data-time 屬性
                 /data-time="([^"]+)"/i,
-                // time 標籤內容
                 /<time[^>]*>([^<]+)<\/time>/i,
-                // 日期格式
-                /(\d{4})[年\-\/](\d{1,2})[月\-\/](\d{1,2})[日號]/,
                 // ISO格式
                 /(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/
             ];
@@ -300,6 +306,37 @@ class BlogMonitor {
     parseDateTime(dateString) {
         try {
             let date = null;
+
+            // 優先處理日文日期格式
+            const jpPatterns = [
+                // YYYY年MM月DD日 HH:MM
+                /(\d{4})[年](\d{1,2})[月](\d{1,2})[日]\s*(\d{1,2}):(\d{2})/,
+                // YYYY.MM.DD HH:MM  
+                /(\d{4})\.(\d{1,2})\.(\d{1,2})\s+(\d{1,2}):(\d{2})/,
+                // YYYY年MM月DD日
+                /(\d{4})[年](\d{1,2})[月](\d{1,2})[日]/,
+                // YYYY.MM.DD
+                /(\d{4})\.(\d{1,2})\.(\d{1,2})/,
+                // YYYY/MM/DD
+                /(\d{4})\/(\d{1,2})\/(\d{1,2})/,
+                // YYYY-MM-DD
+                /(\d{4})-(\d{1,2})-(\d{1,2})/
+            ];
+            
+            for (const pattern of jpPatterns) {
+                const match = dateString.match(pattern);
+                if (match) {
+                    const year = parseInt(match[1]);
+                    const month = parseInt(match[2]) - 1; // 月份從0開始
+                    const day = parseInt(match[3]);
+                    const hour = match[4] ? parseInt(match[4]) : 0;
+                    const minute = match[5] ? parseInt(match[5]) : 0;
+                    
+                    date = new Date(year, month, day, hour, minute);
+                    console.log(`🗓️ [日期解析] 日文格式解析成功: ${dateString} -> ${date}`);
+                    break;
+                }
+            }
             
             // 嘗試直接解析ISO格式
             if (dateString.includes('T') || dateString.includes('-')) {
