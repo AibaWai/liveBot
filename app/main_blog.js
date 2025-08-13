@@ -882,6 +882,75 @@ ${testResult.sampleArticles.map((article, index) =>
         }
     }
 
+    // 在現有命令後添加
+    else if (cmd === '!blog-js') {
+        await message.reply('🔍 執行JavaScript代碼分析，尋找Ajax調用和API端點...');
+        try {
+            const JavaScriptAnalyzer = require('./javascript_analyzer');
+            const analyzer = new JavaScriptAnalyzer();
+            const results = await analyzer.executeJavaScriptAnalysis();
+            
+            if (results.success) {
+                let resultMsg = `🔍 **JavaScript代碼分析結果**
+
+    📊 **總覽:**
+    - JavaScript代碼段: ${results.summary.scriptsFound}
+    - Ajax調用: ${results.summary.ajaxCallsFound}
+    - API端點: ${results.summary.apiEndpointsFound}
+    - 文章加載器: ${results.summary.articleLoadersFound}
+    - 測試端點: ${results.summary.endpointsTested}
+    - 工作端點: ${results.summary.workingEndpoints}
+
+    🔍 **發現的Ajax調用:**`;
+
+                if (results.analysis.ajaxCalls.length > 0) {
+                    results.analysis.ajaxCalls.slice(0, 3).forEach((call, index) => {
+                        resultMsg += `\n${index + 1}. **${call.type}**`;
+                        resultMsg += `\n   URL: ${call.url}`;
+                        if (call.context) {
+                            resultMsg += `\n   Context: ${call.context.substring(0, 100)}...`;
+                        }
+                    });
+                } else {
+                    resultMsg += '\n❌ 未發現Ajax調用';
+                }
+
+                resultMsg += '\n\n🎯 **發現的API端點:**';
+                if (results.analysis.apiEndpoints.length > 0) {
+                    results.analysis.apiEndpoints.slice(0, 3).forEach((endpoint, index) => {
+                        resultMsg += `\n${index + 1}. **${endpoint.type}**`;
+                        resultMsg += `\n   URL: ${endpoint.url}`;
+                    });
+                } else {
+                    resultMsg += '\n❌ 未發現API端點';
+                }
+
+                resultMsg += '\n\n✅ **測試結果:**';
+                if (results.testResults.length > 0) {
+                    const workingEndpoints = results.testResults.filter(r => r.statusCode === 200 && !r.error);
+                    if (workingEndpoints.length > 0) {
+                        workingEndpoints.slice(0, 3).forEach((result, index) => {
+                            resultMsg += `\n${index + 1}. ${result.url}`;
+                            resultMsg += `\n   Status: ${result.statusCode}, Type: ${result.contentType}`;
+                            resultMsg += `\n   JSON: ${result.isJson ? '✅' : '❌'}, Articles: ${result.hasArticleData ? '✅' : '❌'}`;
+                        });
+                    } else {
+                        resultMsg += '\n❌ 無工作端點';
+                    }
+                } else {
+                    resultMsg += '\n⚠️ 未測試端點';
+                }
+
+                await message.reply(resultMsg);
+            } else {
+                await message.reply(`❌ JavaScript分析失敗: ${results.error}`);
+            }
+            
+        } catch (error) {
+            await message.reply(`❌ JavaScript分析執行失敗: ${error.message}`);
+        }
+    }
+
     else if (cmd === '!blog-init') {
         if (blogMonitor) {
             await message.reply('🔄 執行手動初始化（API探測模式）...');
