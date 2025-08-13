@@ -574,17 +574,19 @@ async function handleDiscordCommands(message) {
         await message.reply(statusMsg);
     }
     
-    // 博客監控命令
-    else if (cmd === '!blog-status') {
-        if (blogMonitor) {
-            const blogStatus = blogMonitor.getStatus();
-            const latestRecord = blogMonitor.getLatestRecord();
-            
-            const statusMsg = `📝 **Family Club 博客監控狀態** (${blogStatus.artistName})
+
+    // 博客監控命令處理（簡化版）
+    async function handleBlogCommands(message, cmd) {
+        // !blog-status - 博客監控狀態
+        if (cmd === '!blog-status') {
+            if (blogMonitor) {
+                const blogStatus = blogMonitor.getStatus();
+                const latestRecord = blogMonitor.getLatestRecord();
+                
+                const statusMsg = `📝 **Family Club 博客監控狀態** (${blogStatus.artistName})
 
     **監控狀態:** ${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
     **目標藝人:** ${blogStatus.artistName} (${blogStatus.artistCode})
-    **API端點:** Family Club 官方API
     **博客網址:** ${blogStatus.blogUrl}
 
     **檢查統計:**
@@ -604,77 +606,56 @@ async function handleDiscordCommands(message) {
     📝 標題: ${latestRecord.title}
     📝 Diary名稱: ${latestRecord.diaryName}
     ${latestRecord.url ? `🔗 連結: ${latestRecord.url}` : ''}
-    ⏰ 記錄更新: ${latestRecord.lastUpdated}` : '❌ 尚未建立記錄'}
+    ⏰ 記錄更新: ${latestRecord.lastUpdated}` : '❌ 尚未建立記錄'}`;
 
-    💡 **監控邏輯:**
-    • 日本時間12:00-23:59每小時00分檢查
-    • 比較文章代碼和發布時間
-    • 發現新文章自動發送通知`;
-
-            await message.reply(statusMsg);
-        } else {
-            await message.reply('❌ 博客監控未啟用');
-        }
-    }
-
-    else if (cmd === '!blog-test') {
-        if (blogMonitor) {
-            await message.reply('🔍 執行博客API連接測試...');
-            try {
-                const testResult = await blogMonitor.testWebsiteAccess();
-                
-                if (testResult.success) {
-                    const testMsg = `✅ **博客API連接測試成功**
-
-    🔧 **檢測方式:** ${testResult.method}
-    🎭 **目標藝人:** ${testResult.artistName} (${testResult.artistCode})
-    📡 **API端點:** ${testResult.endpoint}
-    📰 **找到文章:** ${testResult.articlesFound} 篇
-
-    📋 **API參數:**
-    • 藝人代碼: ${testResult.apiParameters.code}
-    • 排序方式: ${testResult.apiParameters.so}
-    • 頁數: ${testResult.apiParameters.page}
-
-    ${testResult.sampleArticles && testResult.sampleArticles.length > 0 ? `📝 **範例文章:**
-    ${testResult.sampleArticles.map((article, index) => 
-        `${index + 1}. 代碼: ${article.code} | 時間: ${article.time} | 標題: ${article.title}${article.diaryName ? ` | Diary: ${article.diaryName}` : ''}`
-    ).join('\n')}` : ''}
-
-    ✅ Family Club API系統運行正常！`;
-                    
-                    await message.reply(testMsg);
-                } else {
-                    await message.reply(`❌ **博客API連接測試失敗**
-
-    🔧 **檢測方式:** ${testResult.method}
-    🎭 **目標藝人代碼:** ${testResult.artistCode}
-    📡 **API端點:** ${testResult.endpoint}
-    ❌ **錯誤:** ${testResult.error}
-
-    🔧 **故障排除建議:**
-    • 檢查網絡連接
-    • 確認藝人代碼是否正確
-    • 確認Family Club網站是否正常運行
-    • 稍後再試`);
-                }
-            } catch (error) {
-                await message.reply(`❌ 測試執行失敗: ${error.message}`);
+                await message.reply(statusMsg);
+            } else {
+                await message.reply('❌ 博客監控未啟用');
             }
-        } else {
-            await message.reply('❌ 博客監控未啟用');
         }
-    }
 
-    else if (cmd === '!blog-check') {
-        if (blogMonitor) {
-            await message.reply('🔍 執行手動博客檢查...');
-            try {
-                // 調用測試模式檢查
-                const newArticle = await blogMonitor.checkForNewArticles(true);
-                
-                if (newArticle) {
-                    const checkMsg = `📊 **手動檢查結果**
+        // !blog-latest - 查看最新文章列表（新功能）
+        else if (cmd === '!blog-latest') {
+            if (blogMonitor) {
+                await message.reply('🔍 獲取最新文章列表...');
+                try {
+                    const latestArticles = await blogMonitor.getLatestArticles(5);
+                    
+                    if (latestArticles.length === 0) {
+                        await message.reply('❌ 無法獲取文章列表，請稍後再試');
+                        return;
+                    }
+
+                    const articlesMsg = `📝 **Family Club 最新文章列表** (${blogMonitor.artistName})
+
+    ${latestArticles.map((article, index) => `**${index + 1}. ${article.title}**
+    📄 代碼: ${article.code}
+    🗓️ 時間: ${article.datetime}
+    📝 Diary: ${article.diaryName}
+    ${article.url ? `🔗 連結: ${article.url}` : ''}
+    👤 藝人: ${article.artistName}`).join('\n\n')}
+
+    🕐 獲取時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
+    🌐 博客首頁: https://web.familyclub.jp/s/jwb/diary/${blogMonitor.artistCode}`;
+
+                    await message.reply(articlesMsg);
+                } catch (error) {
+                    await message.reply(`❌ 獲取文章列表失敗: ${error.message}`);
+                }
+            } else {
+                await message.reply('❌ 博客監控未啟用');
+            }
+        }
+
+        // !blog-check - 手動檢查新文章
+        else if (cmd === '!blog-check') {
+            if (blogMonitor) {
+                await message.reply('🔍 執行手動博客檢查...');
+                try {
+                    const newArticle = await blogMonitor.checkForNewArticles(true);
+                    
+                    if (newArticle) {
+                        const checkMsg = `📊 **手動檢查結果**
 
     🆕 **當前最新文章:**
     📄 **代碼:** ${newArticle.code}
@@ -685,64 +666,59 @@ async function handleDiscordCommands(message) {
     ${newArticle.url ? `🔗 **連結:** ${newArticle.url}` : ''}
 
     🕐 **檢查時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-    📊 **當前記錄:** ${blogMonitor.getLatestRecord()?.articleCode || '無'}
-    🎯 **API狀態:** 正常運行`;
+    📊 **當前記錄:** ${blogMonitor.getLatestRecord()?.articleCode || '無'}`;
 
-                    await message.reply(checkMsg);
-                } else {
-                    // 如果沒有返回文章，嘗試獲取狀態信息
-                    const status = blogMonitor.getStatus();
-                    await message.reply(`❌ **手動檢查完成但無法獲取詳細信息**
-
-    📊 **基本狀態:**
-    • 監控狀態: ${status.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
-    • 檢查次數: ${status.totalChecks}
-    • 發現文章: ${status.articlesFound}
-    • 最後檢查: ${status.lastCheckTime || '尚未檢查'}
-
-    🔧 **故障排除:**
-    • 使用 \`!blog-test\` 檢查API連接
-    • 使用 \`!blog-status\` 查看詳細狀態`);
-                }
-            } catch (error) {
-                await message.reply(`❌ 手動檢查失敗: ${error.message}
+                        await message.reply(checkMsg);
+                    } else {
+                        await message.reply(`❌ **手動檢查失敗**
 
     🔧 **故障排除建議:**
     • 檢查網絡連接
     • 確認藝人代碼配置 (ARTIST_CODE)
-    • 使用 \`!blog-test\` 進行詳細診斷
     • 使用 \`!blog-restart\` 重新啟動監控`);
+                    }
+                } catch (error) {
+                    await message.reply(`❌ 手動檢查失敗: ${error.message}
+
+    🔧 **故障排除建議:**
+    • 檢查網絡連接
+    • 確認藝人代碼配置 (ARTIST_CODE)
+    • 使用 \`!blog-restart\` 重新啟動監控`);
+                }
+            } else {
+                await message.reply('❌ 博客監控未啟用');
             }
-        } else {
-            await message.reply('❌ 博客監控未啟用');
         }
+
+        // !blog-restart - 重新啟動博客監控
+        else if (cmd === '!blog-restart') {
+            if (blogMonitor) {
+                await message.reply('🔄 重新啟動博客監控...');
+                try {
+                    blogMonitor.stopMonitoring();
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    
+                    const success = await blogMonitor.reinitialize();
+                    if (success) {
+                        blogMonitor.startMonitoring();
+                        await message.reply('✅ **博客監控重新啟動成功！**\n\n📊 已重新初始化最新文章記錄\n⏰ 恢復定期檢查排程');
+                    } else {
+                        await message.reply('❌ **博客監控重新啟動失敗**\n\n無法重新初始化，請檢查API連接和藝人代碼');
+                    }
+                } catch (error) {
+                    await message.reply(`❌ 重新啟動失敗: ${error.message}`);
+                }
+            } else {
+                await message.reply('❌ 博客監控未啟用');
+            }
+        }
+
+        // 移除 !blog-test 命令，因為 !blog-check 已經提供了足夠的測試功能
     }
 
-    else if (cmd === '!blog-restart') {
-        if (blogMonitor) {
-            await message.reply('🔄 重新啟動博客監控...');
-            try {
-                blogMonitor.stopMonitoring();
-                await new Promise(resolve => setTimeout(resolve, 2000)); // 等待2秒
-                
-                const success = await blogMonitor.reinitialize();
-                if (success) {
-                    blogMonitor.startMonitoring();
-                    await message.reply('✅ **博客監控重新啟動成功！**\n\n📊 已重新初始化最新文章記錄\n⏰ 恢復定期檢查排程');
-                } else {
-                    await message.reply('❌ **博客監控重新啟動失敗**\n\n無法重新初始化，請檢查API連接和藝人代碼');
-                }
-            } catch (error) {
-                await message.reply(`❌ 重新啟動失敗: ${error.message}`);
-            }
-        } else {
-            await message.reply('❌ 博客監控未啟用');
-        }
-    }
-    
-    // 更新幫助命令
-    else if (cmd === '!help') {
-        await message.reply(`🔍 **輕量級統一直播監控機器人** (日本時間版)
+    // 更新後的 !help 命令內容
+    function getUpdatedHelpMessage() {
+        return `🔍 **輕量級統一直播監控機器人** (日本時間版)
 
     **Instagram監控命令:**
     \`!ig-start\` - 開始Instagram監控
@@ -753,7 +729,7 @@ async function handleDiscordCommands(message) {
 
     **博客監控命令:** (Family Club)
     \`!blog-status\` - 博客監控狀態
-    \`!blog-test\` - 測試API連接
+    \`!blog-latest\` - 查看最新文章列表 🆕
     \`!blog-check\` - 手動檢查新文章
     \`!blog-restart\` - 重新啟動博客監控
 
@@ -766,7 +742,7 @@ async function handleDiscordCommands(message) {
     📅 智能時程：日本時間12:00-24:00每小時檢查
     🔍 精確檢測：比較文章代碼和發布時間
     ⚡ 輕量級設計，適合雲端部署
-    🎭 支持環境變數切換藝人 (ARTIST_CODE)`);
+    🎭 支持環境變數切換藝人 (ARTIST_CODE)`;
     }
 }
 
