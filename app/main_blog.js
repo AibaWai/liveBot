@@ -253,9 +253,10 @@ async function startBlogMonitoring() {
     }
 
     try {
-        const JSONPBlogMonitor = require('./jsonp_blog_monitor');
+        // 使用新的真正API監控器
+        const FamilyClubBlogMonitor = require('./family_club_blog_monitor');
         
-        blogMonitor = new JSONPBlogMonitor(async (message, type, source) => {
+        blogMonitor = new FamilyClubBlogMonitor(async (message, type, source) => {
             try {
                 const channel = await client.channels.fetch(BLOG_NOTIFICATION_CHANNEL_ID);
                 await channel.send(message);
@@ -266,9 +267,10 @@ async function startBlogMonitoring() {
         });
         
         blogMonitor.startMonitoring();
-        console.log('🚀 [Blog] Family Club JSONP博客監控已啟動');
-        console.log('🎯 [Blog] 監控模式: JSONP API (發現的最佳端點)');
-        console.log('🔗 [Blog] API端點: https://web.familyclub.jp/s/jwb/diary/F2017?ima=3047&callback=jsonp');
+        console.log('🚀 [Blog] Family Club 博客監控已啟動');
+        console.log('🎯 [Blog] 監控模式: 真正的API端點 (diarkiji_list)');
+        console.log('🔗 [Blog] API端點: https://web.familyclub.jp/s/jwb/api/list/diarkiji_list?code=F2017&so=JW5&page=0');
+        console.log('⏰ [Blog] 檢查頻率: 每小時00分');
         
     } catch (error) {
         console.error('❌ [Blog] 博客監控啟動失敗:', error.message);
@@ -333,14 +335,14 @@ client.once('ready', () => {
 
 **Instagram監控:** @${config.TARGET_USERNAME}
 **Discord頻道監控:** ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道
-**博客監控:** ${config.BLOG_NOTIFICATION_CHANNEL_ID ? '✅ Family Club F2017 (API探測模式)' : '❌ 未配置'}
+**博客監控:** ${config.BLOG_NOTIFICATION_CHANNEL_ID ? '✅ Family Club F2017 (真正API模式)' : '❌ 未配置'}
 **電話通知:** ${config.PUSHCALL_API_KEY ? '✅ 已配置' : '❌ 未配置'}
 **時區:** 🕐 日本時間 (JST)
 
 **博客監控特色:**
-🕵️ 智能API端點探測
-📡 自動尋找最佳數據源
-🔄 HTML解析回退機制
+🎯 使用真正的API端點 (diarkiji_list)
+📡 直接獲取文章ID和發布時間
+🔍 精確比較檢測新文章
 ⚡ 輕量級，適合 Koyeb
 
 **智能間隔調整:**
@@ -354,8 +356,9 @@ client.once('ready', () => {
 \`!ig-stop\` - 停止Instagram監控
 \`!ig-status\` - Instagram監控狀態
 \`!blog-status\` - 博客監控狀態
-\`!blog-detect\` - 手動API端點探測 🆕
-\`!blog-test\` - 測試博客連接
+\`!blog-latest\` - 查看最新文章列表 🆕
+\`!blog-check\` - 測試新文章檢測 🆕
+\`!blog-test\` - 測試API連接
 \`!status\` - 完整系統狀態
 \`!help\` - 顯示幫助
 
@@ -996,32 +999,31 @@ ${latestRecord.url ? `• 連結: ${latestRecord.url}` : ''}
     else if (cmd === '!help') {
         await message.reply(`🔍 **輕量級統一直播監控機器人** (日本時間版)
 
-**Instagram監控命令:**
-\`!ig-start\` - 開始Instagram監控
-\`!ig-stop\` - 停止Instagram監控
-\`!ig-status\` - Instagram監控狀態
-\`!ig-check\` - 手動檢查Instagram
-\`!ig-accounts\` - 檢查帳號狀態
+    **Instagram監控命令:**
+    \`!ig-start\` - 開始Instagram監控
+    \`!ig-stop\` - 停止Instagram監控
+    \`!ig-status\` - Instagram監控狀態
+    \`!ig-check\` - 手動檢查Instagram
+    \`!ig-accounts\` - 檢查帳號狀態
 
-**博客監控命令 (API探測模式):**
-\`!blog-status\` - 博客監控狀態
-\`!blog-latest\` - 顯示當前記錄的最新文章
-\`!blog-check\` - 手動檢查博客文章
-\`!blog-test\` - 測試網站連接和API探測
-\`!blog-detect\` - 手動執行API端點探測 🆕
-\`!blog-init\` - 手動初始化/重新建立基準記錄
+    **博客監控命令 (真正API模式):**
+    \`!blog-status\` - 博客監控狀態
+    \`!blog-latest\` - 查看最新文章列表 🆕
+    \`!blog-check\` - 測試新文章檢測功能 🆕
+    \`!blog-test\` - 測試API連接
+    \`!blog-init\` - 手動初始化記錄
 
-**系統命令:**
-\`!status\` - 完整系統狀態
-\`!help\` - 顯示此幫助
+    **系統命令:**
+    \`!status\` - 完整系統狀態
+    \`!help\` - 顯示此幫助
 
-**博客監控說明 (API探測模式):**
-🌐 監控目標: Family Club F2017 日記
-🕵️ 監控方式: 智能API端點探測 + HTML回退
-📊 檢測方式: 文章ID和發布時間比較
-⏰ 檢查頻率: 每小時00分自動檢查
-🎯 智能記錄: 自動記錄最新文章作為比較基準
-⚡ 輕量級: 適合 Koyeb 等輕量級部署平台`);
+    **博客監控說明 (真正API模式):**
+    🌐 監控目標: Family Club F2017 日記
+    🎯 API端點: diarkiji_list (真正的後端API)
+    📊 檢測方式: 文章ID和發布時間精確比較
+    ⏰ 檢查頻率: 每小時00分自動檢查
+    🎯 智能檢測: 只有真正的新文章才會觸發通知
+    ⚡ 輕量級: 專為 Koyeb 優化，高效穩定`);
     }
 }
 

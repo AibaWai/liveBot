@@ -11,6 +11,7 @@ RUN npm install --only=production && \
 
 # Copy application files
 COPY app/main_blog.js main_blog.js
+COPY app/family_club_blog_monitor.js family_club_blog_monitor.js
 COPY app/javascript_analyzer.js javascript_analyzer.js
 COPY app/deep_content_analyzer.js deep_content_analyzer.js
 COPY app/jsonp_blog_monitor.js jsonp_blog_monitor.js
