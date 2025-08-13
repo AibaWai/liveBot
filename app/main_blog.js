@@ -253,9 +253,9 @@ async function startBlogMonitoring() {
     }
 
     try {
-        const EnhancedAPIBlogMonitor = require('./enhanced_api_blog_monitor');
+        const JSONPBlogMonitor = require('./jsonp_blog_monitor');
         
-        blogMonitor = new EnhancedAPIBlogMonitor(async (message, type, source) => {
+        blogMonitor = new JSONPBlogMonitor(async (message, type, source) => {
             try {
                 const channel = await client.channels.fetch(BLOG_NOTIFICATION_CHANNEL_ID);
                 await channel.send(message);
