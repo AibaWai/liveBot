@@ -43,7 +43,7 @@ class FamilyClubBlogMonitor {
                     'Accept-Encoding': 'gzip, deflate, br',
                     'Cache-Control': 'no-cache',
                     'Pragma': 'no-cache',
-                    'Referer': 'https://web.familyclub.jp/s/jwb/diary/F2017?ima=3047',
+                    'Referer': 'https://web.familyclub.jp/s/jwb/diary/F2017',
                     'X-Requested-With': 'XMLHttpRequest',
                     ...options.headers
                 },
@@ -143,7 +143,7 @@ class FamilyClubBlogMonitor {
                     articleUrl = item.link.startsWith('http') ? item.link : this.baseUrl + item.link;
                 } else if (item.code) {
                     // 使用code構建URL
-                    articleUrl = `${this.baseUrl}/s/jwb/diary/${this.artistCode}/detail/${item.code}?ima=0947`;
+                    articleUrl = `${this.baseUrl}/s/jwb/diary/${this.artistCode}/detail/${item.code}`;
                 }
                 
                 const article = {
@@ -406,7 +406,7 @@ class FamilyClubBlogMonitor {
 📝 **Diary名稱:** ${article.diaryName}
 ${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
 👤 **藝人:** ${article.artistName}
-🌐 **博客首頁:** https://web.familyclub.jp/s/jwb/diary/F2017?ima=3047
+🌐 **博客首頁:** https://web.familyclub.jp/s/jwb/diary/F2017
 ⏰ **檢測時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
 🎯 **檢測方式:** Family Club 官方API
 
@@ -563,7 +563,7 @@ ${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
             endpoint: this.apiEndpoint,
             artistCode: this.artistCode,
             artistName: '高木雄也',
-            blogUrl: 'https://web.familyclub.jp/s/jwb/diary/F2017?ima=3047',
+            blogUrl: 'https://web.familyclub.jp/s/jwb/diary/F2017',
             activeTimeSchedule: '日本時間12:00-24:00 (每小時00分檢查)',
             currentActiveTime: isActiveTime,
             japanTime: japanNow,
