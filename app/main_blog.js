@@ -266,9 +266,9 @@ async function startBlogMonitoring() {
         });
         
         blogMonitor.startMonitoring();
-        console.log('🚀 [Blog] Family Club API探測博客監控已啟動');
-        console.log('🕵️ [Blog] 監控模式: 智能API端點探測 + HTML回退');
-        console.log('🔗 [Blog] 監控網址: https://web.familyclub.jp/s/jwb/diary/F2017?ima=3047');
+        console.log('🚀 [Blog] Family Club JSONP博客監控已啟動');
+        console.log('🎯 [Blog] 監控模式: JSONP API (發現的最佳端點)');
+        console.log('🔗 [Blog] API端點: https://web.familyclub.jp/s/jwb/diary/F2017?ima=3047&callback=jsonp');
         
     } catch (error) {
         console.error('❌ [Blog] 博客監控啟動失敗:', error.message);
