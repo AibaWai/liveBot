@@ -7,13 +7,6 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 在現有的環境變數檢查後添加
-const BLOG_NOTIFICATION_CHANNEL_ID = process.env.BLOG_NOTIFICATION_CHANNEL_ID;
-if (BLOG_NOTIFICATION_CHANNEL_ID) {
-    console.log('📝 博客監控已啟用');
-} else {
-    console.log('📝 博客監控未配置 (BLOG_NOTIFICATION_CHANNEL_ID 未設定)');
-}
 
 console.log('🚀 統一直播監控機器人啟動中...');
 console.log('📺 Instagram 監控 + Discord 頻道監控 + 電話通知');
@@ -86,7 +79,7 @@ if (missingVars.length > 0) {
     process.exit(1);
 }
 
-// === 配置整合 ===
+
 // === 配置整合 ===
 const config = {
     // Discord Bot 基本配置
@@ -237,7 +230,7 @@ async function startInstagramMonitoring() {
     }
 }
 
-// 停止Instagram監控
+
 // 停止Instagram監控
 function stopInstagramMonitoring() {
     if (instagramMonitor) {
@@ -283,6 +276,7 @@ function getInstagramStatus() {
 }
 
 // 在 Instagram 監控後添加
+// 在 Instagram 監控後添加
 let blogMonitor = null;
 
 async function startBlogMonitoring() {
@@ -305,7 +299,8 @@ async function startBlogMonitoring() {
         });
         
         blogMonitor.startMonitoring();
-        console.log('🚀 [Blog] 博客監控已啟動');
+        console.log('🚀 [Blog] Family Club 博客監控已啟動');
+        console.log('🔗 [Blog] 監控網址: https://web.familyclub.jp/s/jwb/diary/F2017?ima=3047');
         
     } catch (error) {
         console.error('❌ [Blog] 博客監控啟動失敗:', error.message);
@@ -358,6 +353,7 @@ async function makePhoneCall(message, source = 'system') {
 }
 
 // 修改 Discord ready 事件處理
+// 更新 Discord ready 事件處理中的啟動通知
 client.once('ready', () => {
     unifiedState.botReady = true;
     startBlogMonitoring();
@@ -371,6 +367,7 @@ client.once('ready', () => {
 
 **Instagram監控:** @${config.TARGET_USERNAME}
 **Discord頻道監控:** ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道
+**博客監控:** ${config.BLOG_NOTIFICATION_CHANNEL_ID ? '✅ Family Club F2017' : '❌ 未配置'}
 **電話通知:** ${config.PUSHCALL_API_KEY ? '✅ 已配置' : '❌ 未配置'}
 **時區:** 🕐 日本時間 (JST)
 
@@ -380,12 +377,17 @@ client.once('ready', () => {
 ☀️ 活躍 (09-24): 90-180秒間隔
 🌃 深夜前期 (00-02): 3-5分鐘間隔
 
+**博客監控功能:**
+📊 智能文章ID和時間檢測
+⏰ 每小時00分自動檢查
+🎯 基準記錄自動建立和更新
+
 📋 **可用命令:**
 \`!ig-start\` - 開始Instagram監控
 \`!ig-stop\` - 停止Instagram監控
 \`!ig-status\` - Instagram監控狀態
-\`!ig-check\` - 手動檢查Instagram
-\`!ig-accounts\` - 檢查帳號狀態
+\`!blog-status\` - 博客監控狀態
+\`!blog-latest\` - 顯示最新文章記錄
 \`!status\` - 完整系統狀態
 \`!help\` - 顯示幫助
 
@@ -393,14 +395,12 @@ client.once('ready', () => {
     
     // 自動開始Instagram監控
     startInstagramMonitoring().then(() => {
-        // Instagram監控啟動後，等待更長時間確保所有組件都已初始化
         setTimeout(() => {
             console.log('🔄 [Web面板] 開始初始化狀態面板...');
             initializeWebStatusPanel();
-        }, 5000); // 增加到5秒
+        }, 5000);
     }).catch(error => {
         console.error('❌ [Instagram] 監控啟動失敗:', error.message);
-        // 即使Instagram監控失敗，也要初始化Web面板
         setTimeout(initializeWebStatusPanel, 3000);
     });
 });
@@ -577,309 +577,273 @@ async function handleDiscordCommands(message) {
     else if (cmd === '!status') {
         const runtime = Math.round((Date.now() - unifiedState.startTime) / 60000);
         const igStatus = getInstagramStatus();
+        const blogStatus = blogMonitor ? blogMonitor.getStatus() : { isMonitoring: false };
+        const latestRecord = blogMonitor ? blogMonitor.getLatestRecord() : null;
         
         const statusMsg = `📊 **統一監控系統狀態** (日本時間)
 
-**系統運行時間:** ${runtime} 分鐘
-**Bot狀態:** ${unifiedState.botReady ? '✅ 在線' : '❌ 離線'}
-**當前日本時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
+    **系統運行時間:** ${runtime} 分鐘
+    **Bot狀態:** ${unifiedState.botReady ? '✅ 在線' : '❌ 離線'}
+    **當前日本時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
 
-**Instagram監控:**
-• 目標: @${config.TARGET_USERNAME}
-• 狀態: ${unifiedState.instagram.isLiveNow ? '🔴 直播中' : '⚫ 離線'}
-• 監控: ${unifiedState.instagram.isMonitoring ? '✅ 運行中' : '❌ 停止'}
-• 可用帳號: ${igStatus.availableAccounts}/${igStatus.totalAccounts}
-• 已停用帳號: ${igStatus.disabledAccounts || 0}
-• 成功率: ${igStatus.successRate}%
+    **Instagram監控:**
+    • 目標: @${config.TARGET_USERNAME}
+    • 狀態: ${unifiedState.instagram.isLiveNow ? '🔴 直播中' : '⚫ 離線'}
+    • 監控: ${unifiedState.instagram.isMonitoring ? '✅ 運行中' : '❌ 停止'}
+    • 可用帳號: ${igStatus.availableAccounts}/${igStatus.totalAccounts}
+    • 已停用帳號: ${igStatus.disabledAccounts || 0}
+    • 成功率: ${igStatus.successRate}%
 
-**Discord頻道監控:**
-• 監控頻道數: ${Object.keys(config.CHANNEL_CONFIGS).length}
-• 處理訊息數: ${unifiedState.discord.totalMessagesProcessed}
-• 檢測次數: ${unifiedState.discord.lastDetections.length}
+    **博客監控:**
+    • 目標: Family Club F2017
+    • 狀態: ${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 停止'}
+    • 檢查次數: ${blogStatus.totalChecks}
+    • 發現新文章: ${blogStatus.articlesFound}
+    • 最新記錄: ${latestRecord ? `${latestRecord.datetime} (ID: ${latestRecord.articleId})` : '未建立'}
 
-**通知統計:**
-• Discord訊息: ${unifiedState.notifications.discordMessages}
-• 電話通知: ${unifiedState.notifications.phoneCallsMade}
-• 最後通知: ${unifiedState.notifications.lastNotification || '無'}`;
+    **Discord頻道監控:**
+    • 監控頻道數: ${Object.keys(config.CHANNEL_CONFIGS).length}
+    • 處理訊息數: ${unifiedState.discord.totalMessagesProcessed}
+    • 檢測次數: ${unifiedState.discord.lastDetections.length}
+
+    **通知統計:**
+    • Discord訊息: ${unifiedState.notifications.discordMessages}
+    • 電話通知: ${unifiedState.notifications.phoneCallsMade}
+    • 最後通知: ${unifiedState.notifications.lastNotification || '無'}`;
 
         await message.reply(statusMsg);
     }
     
-    // 更新後的 Twitter 監控命令
-    else if (cmd === '!blog-check' || cmd === '!twitter-check') {
-        if (blogMonitor) {
-            await message.reply('🔍 搜索包含關鍵字的最新推文...');
-            try {
-                // 使用新的搜索方法
-                const latestTweet = await blogMonitor.searchLatestTweetWithKeywords();
-                
-                if (latestTweet) {
-                    await message.reply(`🐦 **找到最新相關推文!**
-
-🗓️ **發布時間:** ${latestTweet.fullDateTime}
-🔍 **匹配關鍵字:** ${latestTweet.keyword}
-📝 **推文內容:**
-${latestTweet.content}
-
-🔗 **查看完整推文:** https://x.com/${blogMonitor.targetAccount}
-⏰ **搜索時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-🌐 **數據來源:** ${latestTweet.sourceUrl}
-
-✅ Twitter監控系統運作正常！`);
-                } else {
-                    const status = blogMonitor.getStatus();
-                    await message.reply(`📋 **未找到包含關鍵字的推文**
-
-🔍 **搜索關鍵字:** ${status.keywords.join(', ')}
-🐦 **目標帳號:** @${status.targetAccount}
-🌐 **當前實例:** ${status.currentInstance}/${status.totalInstances}
-🔗 **實例網址:** ${status.twitterUrl}
-
-**可能原因:**
-• @${status.targetAccount} 最近沒有發布包含這些關鍵字的推文
-• 當前Nitter實例服務不穩定
-• 關鍵字設定需要調整
-
-💡 **建議:** 可以嘗試 \`!twitter-test\` 檢查連接狀態`);
-                }
-            } catch (error) {
-                await message.reply(`❌ **搜索失敗:** ${error.message}
-
-🔧 **故障排除:**
-1. 檢查網絡連接
-2. 使用 \`!twitter-test\` 測試實例狀態  
-3. 使用 \`!twitter-instances\` 查看所有實例狀態
-4. 稍後再試`);
-            }
-        } else {
-            await message.reply('❌ Twitter監控未啟用');
-        }
-    }
-
-    else if (cmd === '!blog-test' || cmd === '!twitter-test') {
-        if (blogMonitor) {
-            await message.reply('🔍 測試Twitter連接...');
-            try {
-                const testResult = await blogMonitor.testWebsiteAccess();
-                
-                if (testResult.success) {
-                    const bestInstance = testResult.bestInstance;
-                    const testMsg = `✅ **Twitter連接測試成功**
-
-📊 **測試結果:**
-• 測試實例數: ${testResult.totalTested}
-• 成功實例數: ${testResult.successfulInstances}
-• 最佳實例: #${bestInstance.instance}
-
-📄 **最佳實例詳情:**
-• HTTP狀態: ${bestInstance.statusCode}
-• 內容長度: ${bestInstance.contentLength.toLocaleString()} 字元
-• 推文結構: ${bestInstance.hasValidContent ? '✅ 正常' : '❌ 異常'}
-• 包含關鍵字: ${bestInstance.hasKeywords ? '✅ 有' : '❌ 無'}
-• 實例網址: ${bestInstance.url}
-
-🔍 **監控關鍵字:** ${testResult.keywords.join(', ')}
-
-✅ Twitter監控系統可正常運作！`;
-                    
-                    await message.reply(testMsg);
-                } else {
-                    await message.reply(`❌ **Twitter連接測試失敗**
-
-📊 **測試結果:**
-• 測試實例數: ${testResult.totalTested}
-• 成功實例數: 0
-• 所有測試的實例都無法連接
-
-🔧 **建議解決方案:**
-1. 稍後再試（Nitter實例可能臨時不可用）
-2. 檢查網絡連接
-3. 使用 \`!twitter-instances\` 查看詳細狀態
-
-錯誤詳情: ${testResult.error || '未知錯誤'}`);
-                }
-            } catch (error) {
-                await message.reply(`❌ 測試執行失敗: ${error.message}`);
-            }
-        } else {
-            await message.reply('❌ Twitter監控未啟用');
-        }
-    }
-
-    else if (cmd === '!blog-analyze' || cmd === '!twitter-analyze') {
-        if (blogMonitor) {
-            await message.reply('🔍 分析Twitter當前內容...');
-            try {
-                const analysis = await blogMonitor.analyzeCurrentContent(true);
-                
-                if (analysis.success) {
-                    const analysisMsg = `📊 **Twitter內容分析結果**
-
-🔍 **監控關鍵字:** ${analysis.keywords.join(', ')}
-📊 **總相關推文:** ${analysis.totalTweets}
-📝 **最近推文:** ${analysis.recentTweets} 篇 (7天內)
-🗓️ **最新推文:** ${analysis.latestTweet ? 
-    `${analysis.latestTweet.fullDateTime} (關鍵字: ${analysis.latestTweet.keyword})` : 
-    '無'}
-⏰ **分析時間:** ${analysis.analysisTime}
-🌐 **當前實例:** ${analysis.currentInstance}
-
-${analysis.recentTweets > 0 ? 
-`📋 **最近推文列表:**
-${analysis.allRecentTweets.slice(0, 3).map((tweet, index) => {
-    return `${index + 1}. ${tweet.fullDateTime} - ${tweet.keyword}\n   ${tweet.content.substring(0, 120)}...`;
-}).join('\n\n')}` : 
-'📭 最近7天內無包含關鍵字的推文'}
-
-✅ 分析完成，監控系統運作正常！`;
-                    
-                    await message.reply(analysisMsg);
-                } else {
-                    await message.reply(`❌ **內容分析失敗**
-
-🌐 **當前實例:** ${analysis.currentInstance}
-❌ **錯誤:** ${analysis.error}
-
-🔧 **建議:**
-• 使用 \`!twitter-test\` 檢查連接
-• 使用 \`!twitter-switch\` 切換實例`);
-                }
-            } catch (error) {
-                await message.reply(`❌ 分析執行失敗: ${error.message}`);
-            }
-        } else {
-            await message.reply('❌ Twitter監控未啟用');
-        }
-    }
-
-    else if (cmd === '!blog-status' || cmd === '!twitter-status') {
+        // 新的博客監控命令
+    else if (cmd === '!blog-status') {
         if (blogMonitor) {
             const blogStatus = blogMonitor.getStatus();
-            const statusMsg = `🐦 **Twitter監控狀態**
+            const latestRecord = blogMonitor.getLatestRecord();
+            
+            const statusMsg = `📝 **Family Club 博客監控狀態**
 
 **監控狀態:** ${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
-**目標帳號:** @${blogStatus.targetAccount}
-**監控關鍵字:** ${blogStatus.keywords.join(', ')}
+**目標網址:** ${blogStatus.blogUrl}
+**總檢查次數:** ${blogStatus.totalChecks}
+**發現新文章:** ${blogStatus.articlesFound} 篇
+**最後檢查:** ${blogStatus.lastCheckTime || '尚未檢查'}
+**下次檢查:** ${blogStatus.nextCheckTime || '未安排'}
 
-**實例狀態:**
-🌐 當前實例: ${blogStatus.currentInstance}/${blogStatus.totalInstances}
-🔗 實例網址: ${blogStatus.twitterUrl}
-
-**監控統計:**
-📊 總檢查次數: ${blogStatus.totalChecks}
-🎯 發現推文數: ${blogStatus.articlesFound}
-⏰ 最後檢查: ${blogStatus.lastCheckTime || '尚未檢查'}
-🗓️ 最新推文: ${blogStatus.lastArticleDate || '無'}
-⏰ 下次檢查: ${blogStatus.nextCheckTime || '未安排'}
-
-💡 **可用命令:**
-\`!twitter-check\` - 搜索最新推文
-\`!twitter-test\` - 測試連接
-\`!twitter-instances\` - 查看所有實例狀態
+**當前記錄的最新文章:**
+${latestRecord ? `📄 文章ID: ${latestRecord.articleId || '未知'}
+🗓️ 發布時間: ${latestRecord.datetime}
+📝 標題: ${latestRecord.title}
+${latestRecord.url ? `🔗 連結: ${latestRecord.url}` : ''}
+⏰ 記錄更新: ${latestRecord.lastUpdated}` : '❌ 尚未建立記錄'}
 
 ⏰ 每小時00分自動檢查`;
 
             await message.reply(statusMsg);
         } else {
-            await message.reply('❌ Twitter監控未啟用');
+            await message.reply('❌ 博客監控未啟用');
         }
     }
 
-    else if (cmd === '!blog-keywords' || cmd === '!twitter-keywords') {
+    else if (cmd === '!blog-latest') {
         if (blogMonitor) {
-            try {
-                const keywords = blogMonitor.reloadKeywords();
-                await message.reply(`🔍 **Twitter監控關鍵字**
+            const latestRecord = blogMonitor.getLatestRecord();
+            
+            if (latestRecord) {
+                await message.reply(`📄 **當前記錄中的最新文章**
 
-**當前關鍵字:** ${keywords.join(', ')}
-**關鍵字數量:** ${keywords.length}
+📄 **文章ID:** ${latestRecord.articleId || '未知'}
+🗓️ **發布時間:** ${latestRecord.datetime}
+📝 **文章標題:** ${latestRecord.title}
+${latestRecord.url ? `🔗 **文章連結:** ${latestRecord.url}` : ''}
+⏰ **記錄時間:** ${latestRecord.lastUpdated}
 
-💡 **環境變數設定方式:**
-• \`BLOG_KEYWORDS\` 或 \`TWITTER_KEYWORDS\`: 用逗號分隔多個關鍵字
-  例: \`髙木雄也,橋本将生,猪俣周杜\`
-• \`BLOG_KEYWORD_1\`, \`BLOG_KEYWORD_2\` 等: 單獨設定每個關鍵字
+💡 這是系統當前記錄的最新文章信息，用於比較檢測新文章`);
+            } else {
+                await message.reply(`📋 **尚未建立文章記錄**
 
-🔄 關鍵字已重新載入！
+原因可能是：
+• 系統剛啟動，尚未完成初始化
+• 網站連接失敗
+• 網頁解析出現問題
 
-💡 **使用技巧:**
-• 關鍵字不區分大小寫
-• 支援日文、英文和數字
-• 建議使用具體的人名或特定詞彙`);
-            } catch (error) {
-                await message.reply(`❌ 關鍵字載入失敗: ${error.message}`);
+🔧 建議操作：
+• 使用 \`!blog-test\` 測試網站連接
+• 使用 \`!blog-init\` 手動初始化
+• 檢查網絡連接狀態`);
             }
         } else {
-            await message.reply('❌ Twitter監控未啟用');
+            await message.reply('❌ 博客監控未啟用');
         }
     }
 
-    // 新增命令：切換Nitter實例
-    else if (cmd === '!blog-switch' || cmd === '!twitter-switch') {
+    else if (cmd === '!blog-check') {
         if (blogMonitor) {
+            await message.reply('🔍 執行手動博客檢查...');
             try {
-                const newInstance = blogMonitor.switchToNextInstance();
-                const status = blogMonitor.getStatus();
+                const newArticle = await blogMonitor.checkForNewArticles(true); // 測試模式
                 
-                await message.reply(`🔄 **已切換Nitter實例**
+                if (newArticle) {
+                    await message.reply(`📝 **找到文章信息**
 
-🌐 **新實例:** ${status.currentInstance}/${status.totalInstances}
-🔗 **實例網址:** ${newInstance}
+📄 **文章ID:** ${newArticle.id || '未知'}
+🗓️ **發布時間:** ${newArticle.datetimeString}
+📝 **文章標題:** ${newArticle.title}
+${newArticle.url ? `🔗 **文章連結:** ${newArticle.url}` : ''}
+⏰ **檢查時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
 
-💡 下次檢查推文時將使用新實例
-🔍 可使用 \`!twitter-test\` 測試新實例連接狀態`);
-            } catch (error) {
-                await message.reply(`❌ 切換實例失敗: ${error.message}`);
-            }
-        } else {
-            await message.reply('❌ Twitter監控未啟用');
-        }
-    }
-
-    // 新增命令：檢查所有實例狀態  
-    else if (cmd === '!blog-instances' || cmd === '!twitter-instances') {
-        if (blogMonitor) {
-            await message.reply('🔍 檢查所有Nitter實例狀態...');
-            try {
-                const instancesStatus = await blogMonitor.getAllInstancesStatus();
-                
-                let statusMsg = `🌐 **所有Nitter實例狀態**\n\n`;
-                
-                instancesStatus.forEach(instance => {
-                    const statusIcon = instance.status === 'online' ? '✅' : 
-                                     instance.status === 'error' ? '⚠️' : '❌';
-                    const responseTime = instance.responseTime ? `${instance.responseTime}ms` : 'N/A';
-                    
-                    statusMsg += `${statusIcon} **實例 ${instance.index}** ${instance.status.toUpperCase()}\n`;
-                    statusMsg += `   🔗 ${instance.url}\n`;
-                    
-                    if (instance.status === 'online') {
-                        statusMsg += `   ⚡ 響應時間: ${responseTime}\n`;
-                        statusMsg += `   📄 內容長度: ${instance.contentLength.toLocaleString()} 字元\n`;
-                        statusMsg += `   📊 HTTP狀態: ${instance.statusCode}\n`;
-                    } else if (instance.status === 'error') {
-                        statusMsg += `   📊 HTTP狀態: ${instance.statusCode}\n`;
-                    } else {
-                        statusMsg += `   ❌ 錯誤: ${instance.error}\n`;
-                    }
-                    statusMsg += `\n`;
-                });
-                
-                const onlineCount = instancesStatus.filter(i => i.status === 'online').length;
-                statusMsg += `📊 **總結:** ${onlineCount}/${instancesStatus.length} 實例在線\n`;
-                
-                if (onlineCount === 0) {
-                    statusMsg += `\n⚠️ **注意:** 所有實例都不可用，監控可能受影響`;
+💡 這是網站上當前最新的文章`);
+                } else {
+                    await message.reply('📋 目前無法找到文章或解析失敗');
                 }
-                
-                await message.reply(statusMsg);
             } catch (error) {
-                await message.reply(`❌ 檢查實例狀態失敗: ${error.message}`);
+                await message.reply(`❌ 檢查失敗: ${error.message}`);
             }
         } else {
-            await message.reply('❌ Twitter監控未啟用');
+            await message.reply('❌ 博客監控未啟用');
         }
     }
 
+    else if (cmd === '!blog-test') {
+        if (blogMonitor) {
+            await message.reply('🔍 執行博客網站連接測試...');
+            try {
+                const testResult = await blogMonitor.testWebsiteAccess();
+                
+                if (testResult.success) {
+                    const testMsg = `✅ **博客網站連接測試成功**
+
+📊 **連接狀態:** HTTP ${testResult.statusCode}
+📄 **內容長度:** ${testResult.contentLength.toLocaleString()} 字元
+🏗️ **包含time標籤:** ${testResult.hasTimeTag ? '✅ 是' : '❌ 否'}
+📰 **找到文章:** ${testResult.articlesFound} 篇
+
+${testResult.sampleArticles.length > 0 ? `📋 **範例文章:**
+${testResult.sampleArticles.map((article, index) => 
+    `${index + 1}. ID: ${article.id || 'N/A'} | 時間: ${article.time} | 標題: ${article.title}`
+).join('\n')}` : ''}
+
+✅ 網站可正常訪問並解析文章！`;
+                    
+                    await message.reply(testMsg);
+                } else {
+                    await message.reply(`❌ **博客網站連接測試失敗**
+
+錯誤: ${testResult.error}
+
+🔧 **故障排除建議:**
+• 檢查網絡連接
+• 確認網站是否正常運行
+• 稍後再試`);
+                }
+            } catch (error) {
+                await message.reply(`❌ 測試執行失敗: ${error.message}`);
+            }
+        } else {
+            await message.reply('❌ 博客監控未啟用');
+        }
+    }
+
+    else if (cmd === '!blog-init') {
+        if (blogMonitor) {
+            await message.reply('🔄 執行手動初始化...');
+            try {
+                const success = await blogMonitor.reinitialize();
+                
+                if (success) {
+                    const latestRecord = blogMonitor.getLatestRecord();
+                    await message.reply(`✅ **初始化成功！**
+
+📄 **基準文章已記錄:**
+• 文章ID: ${latestRecord.articleId || '未知'}
+• 發布時間: ${latestRecord.datetime}
+• 標題: ${latestRecord.title}
+${latestRecord.url ? `• 連結: ${latestRecord.url}` : ''}
+
+🎯 系統將以此為基準檢測新文章`);
+                } else {
+                    await message.reply(`❌ **初始化失敗**
+
+可能原因：
+• 網站連接問題
+• 網頁結構解析失敗
+• 未找到有效文章
+
+🔧 建議先使用 \`!blog-test\` 檢查網站狀態`);
+                }
+            } catch (error) {
+                await message.reply(`❌ 初始化失敗: ${error.message}`);
+            }
+        } else {
+            await message.reply('❌ 博客監控未啟用');
+        }
+    }
+
+    else if (cmd === '!blog-debug') {
+        if (blogMonitor) {
+            await message.reply('🔍 執行博客調試分析...');
+            try {
+                const response = await blogMonitor.makeRequest(blogMonitor.blogUrl);
+                
+                if (response.statusCode === 200) {
+                    const html = response.data;
+                    
+                    // 分析HTML結構
+                    const hasTimeTag = html.includes('<time');
+                    const timeTagCount = (html.match(/<time[^>]*>/g) || []).length;
+                    const hasEntry = html.includes('entry');
+                    const hasDiary = html.includes('diary');
+                    const hasArticle = html.includes('<article');
+                    
+                    // 尋找可能的文章容器
+                    const containerPatterns = [
+                        'entry',
+                        'diary', 
+                        'article',
+                        'post',
+                        'content'
+                    ];
+                    
+                    let containerInfo = '';
+                    containerPatterns.forEach(pattern => {
+                        const count = (html.match(new RegExp(pattern, 'gi')) || []).length;
+                        if (count > 0) {
+                            containerInfo += `• ${pattern}: ${count} 個\n`;
+                        }
+                    });
+                    
+                    // 尋找時間標籤範例
+                    const timeTagSamples = html.match(/<time[^>]*>.*?<\/time>/gi)?.slice(0, 3) || [];
+                    
+                    await message.reply(`🔍 **博客HTML結構分析**
+
+📊 **基本信息:**
+• HTML長度: ${html.length.toLocaleString()} 字元
+• HTTP狀態: ${response.statusCode}
+
+🏗️ **結構元素:**
+• Time標籤: ${hasTimeTag ? '✅' : '❌'} (${timeTagCount} 個)
+• Entry元素: ${hasEntry ? '✅' : '❌'}
+• Diary元素: ${hasDiary ? '✅' : '❌'}
+• Article標籤: ${hasArticle ? '✅' : '❌'}
+
+📦 **容器統計:**
+${containerInfo || '未找到常見容器'}
+
+${timeTagSamples.length > 0 ? `⏰ **Time標籤範例:**
+${timeTagSamples.map((tag, i) => `${i+1}. \`${tag}\``).join('\n')}` : '❌ 未找到time標籤'}
+
+💡 這些信息有助於調試文章解析邏輯`);
+                } else {
+                    await message.reply(`❌ 獲取網頁失敗: HTTP ${response.statusCode}`);
+                }
+            } catch (error) {
+                await message.reply(`❌ 調試分析失敗: ${error.message}`);
+            }
+        } else {
+            await message.reply('❌ 博客監控未啟用');
+        }
+    }
+    
     // 更新幫助命令
     else if (cmd === '!help') {
         await message.reply(`🔍 **統一直播監控機器人** (日本時間版)
@@ -891,27 +855,24 @@ ${analysis.allRecentTweets.slice(0, 3).map((tweet, index) => {
 \`!ig-check\` - 手動檢查Instagram
 \`!ig-accounts\` - 檢查帳號狀態
 
-**Twitter監控命令:**
-\`!twitter-status\` / \`!blog-status\` - Twitter監控狀態
-\`!twitter-check\` / \`!blog-check\` - 搜索包含關鍵字的最新推文 🆕
-\`!twitter-test\` / \`!blog-test\` - 測試Twitter連接
-\`!twitter-analyze\` / \`!blog-analyze\` - 分析推文內容
-\`!twitter-keywords\` / \`!blog-keywords\` - 查看/重載關鍵字
-\`!twitter-switch\` / \`!blog-switch\` - 切換Nitter實例 🆕
-\`!twitter-instances\` / \`!blog-instances\` - 查看所有實例狀態 🆕
+**博客監控命令:**
+\`!blog-status\` - 博客監控狀態
+\`!blog-latest\` - 顯示當前記錄的最新文章 🆕
+\`!blog-check\` - 手動檢查博客文章 🆕
+\`!blog-test\` - 測試網站連接和解析
+\`!blog-init\` - 手動初始化/重新建立基準記錄 🆕
+\`!blog-debug\` - 調試分析網頁結構
 
 **系統命令:**
 \`!status\` - 完整系統狀態
 \`!help\` - 顯示此幫助
 
-**Twitter監控說明:**
-🐦 監控目標: @FCweb_info
-🔍 關鍵字: 透過環境變數設定 (支援日文)
+**博客監控說明:**
+🌐 監控目標: Family Club F2017 日記
+📊 檢測方式: 文章ID和發布時間比較
 ⏰ 檢查頻率: 每小時00分自動檢查
-🌐 多實例: 自動切換可用的Nitter實例
-🎯 智能搜索: 自動找到包含關鍵字的最新推文`);
+🎯 智能記錄: 自動記錄最新文章作為比較基準`);
     }
-
 }
 
 // 頻道專用API呼叫

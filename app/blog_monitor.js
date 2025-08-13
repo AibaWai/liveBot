@@ -3,83 +3,48 @@ const https = require('https');
 class BlogMonitor {
     constructor(notificationCallback = null) {
         this.notificationCallback = notificationCallback;
-        this.lastArticleDate = null;
         this.isMonitoring = false;
         this.monitoringInterval = null;
         this.checkIntervalMinutes = 60; // 每小時檢查一次
         this.totalChecks = 0;
         this.articlesFound = 0;
         this.lastCheckTime = null;
-        this.lastFoundArticles = []; // 存儲最近找到的文章
         
-        // Twitter監控配置 - 使用更多可靠的Nitter實例
-        this.nitterInstances = [
-            'https://nitter.poast.org/FCweb_info',
-            'https://nitter.net/FCweb_info', 
-            'https://nitter.it/FCweb_info',
-            'https://nitter.privacydev.net/FCweb_info',
-            'https://nitter.1d4.us/FCweb_info',
-            'https://nitter.kavin.rocks/FCweb_info'
-        ];
-        this.targetAccount = 'FCweb_info'; // Twitter帳號
-        this.currentInstanceIndex = 0; // 當前使用的實例索引
+        // 博客監控配置
+        this.blogUrl = 'https://web.familyclub.jp/s/jwb/diary/F2017?ima=3047';
         
-        // 從環境變數讀取關鍵字
-        this.keywords = this.loadKeywords();
-        console.log('🔍 [Twitter Monitor] 監控關鍵字:', this.keywords);
-        console.log('🔗 [Twitter Monitor] 可用Nitter實例:', this.nitterInstances.length, '個');
+        // 記錄最新文章信息
+        this.latestRecord = {
+            articleId: null,        // 最大的文章ID
+            datetime: null,         // 最近期的發佈時間 (Date對象)
+            datetimeString: null,   // 發佈時間字符串
+            title: null,            // 文章標題
+            url: null,              // 文章URL
+            lastUpdated: null       // 記錄更新時間
+        };
+        
+        console.log('🔍 [Blog Monitor] Family Club 博客監控已初始化');
+        console.log('🔗 [Blog Monitor] 目標網址:', this.blogUrl);
     }
 
-    // 從環境變數載入關鍵字
-    loadKeywords() {
-        const keywords = [];
-        
-        // 從環境變數讀取關鍵字 (支持多種格式)
-        const keywordEnv = process.env.BLOG_KEYWORDS || process.env.TWITTER_KEYWORDS || '';
-        
-        if (keywordEnv) {
-            // 支持逗號分隔或分號分隔
-            const parsed = keywordEnv.split(/[,;]/).map(k => k.trim()).filter(k => k.length > 0);
-            keywords.push(...parsed);
-        }
-        
-        // 支持編號的環境變數 (BLOG_KEYWORD_1, BLOG_KEYWORD_2 等)
-        for (let i = 1; i <= 10; i++) {
-            const keyword = process.env[`BLOG_KEYWORD_${i}`] || process.env[`TWITTER_KEYWORD_${i}`];
-            if (keyword && keyword.trim()) {
-                keywords.push(keyword.trim());
-            }
-        }
-        
-        // 如果沒有設定關鍵字，使用預設值
-        if (keywords.length === 0) {
-            console.warn('⚠️ [Twitter Monitor] 未設定監控關鍵字，使用預設關鍵字');
-            keywords.push('髙木雄也');
-        }
-        
-        return keywords;
-    }
-
-    // 安全HTTP請求 - 增加更多選項
+    // 安全HTTP請求
     makeRequest(url, options = {}) {
         return new Promise((resolve, reject) => {
             const req = https.request(url, {
                 method: 'GET',
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.9,ja;q=0.8',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+                    'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
                     'Accept-Encoding': 'gzip, deflate, br',
                     'DNT': '1',
                     'Connection': 'keep-alive',
                     'Upgrade-Insecure-Requests': '1',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'none',
-                    'Cache-Control': 'max-age=0',
+                    'Cache-Control': 'no-cache',
+                    'Pragma': 'no-cache',
                     ...options.headers
                 },
-                timeout: 15000 // 減少超時時間
+                timeout: 30000
             }, (res) => {
                 let data = '';
                 
@@ -95,489 +60,420 @@ class BlogMonitor {
                     resolve({ 
                         statusCode: res.statusCode, 
                         data: data,
-                        headers: res.headers,
-                        url: url
+                        headers: res.headers
                     });
                 });
                 stream.on('error', reject);
             });
             
-            req.on('error', (err) => {
-                console.error(`❌ [Request Error] ${url}:`, err.message);
-                reject(err);
-            });
+            req.on('error', reject);
             req.on('timeout', () => {
                 req.destroy();
-                reject(new Error(`Request timeout for ${url}`));
+                reject(new Error('Request timeout'));
             });
             
             req.end();
         });
     }
 
-    // Twitter監控方法（使用多個Nitter實例）
-    async checkTwitterForUpdates() {
-        let lastError = null;
-        
-        // 嘗試所有可用的Nitter實例
-        for (let i = 0; i < this.nitterInstances.length; i++) {
-            const instanceIndex = (this.currentInstanceIndex + i) % this.nitterInstances.length;
-            const url = this.nitterInstances[instanceIndex];
-            
-            try {
-                console.log(`🐦 [Twitter監控] 嘗試實例 ${instanceIndex + 1}/${this.nitterInstances.length}: ${url}...`);
-                
-                const response = await this.makeRequest(url);
-                
-                if (response.statusCode === 200) {
-                    console.log(`✅ [Twitter監控] 實例 ${instanceIndex + 1} 連接成功`);
-                    console.log(`📊 [Twitter監控] HTML長度: ${response.data.length} 字元`);
-                    
-                    // 更新當前使用的實例
-                    this.currentInstanceIndex = instanceIndex;
-                    
-                    // 解析推文
-                    const tweets = this.parseNitterTweets(response.data, url);
-                    
-                    if (tweets.length > 0) {
-                        console.log(`🎯 [Twitter監控] 從實例 ${instanceIndex + 1} 找到 ${tweets.length} 個相關推文`);
-                        return tweets;
-                    } else {
-                        console.log(`📋 [Twitter監控] 實例 ${instanceIndex + 1} 未找到包含關鍵字的推文`);
-                        // 如果沒有找到推文但連接成功，仍然返回空數組（而不是繼續嘗試其他實例）
-                        return [];
-                    }
-                } else if (response.statusCode === 403) {
-                    console.warn(`⚠️ [Twitter監控] 實例 ${instanceIndex + 1} 返回403禁止訪問，嘗試下一個實例`);
-                    lastError = new Error(`HTTP 403 from ${url}`);
-                } else if (response.statusCode === 429) {
-                    console.warn(`⚠️ [Twitter監控] 實例 ${instanceIndex + 1} 返回429限制請求，嘗試下一個實例`);
-                    lastError = new Error(`HTTP 429 from ${url}`);
-                } else {
-                    console.warn(`⚠️ [Twitter監控] 實例 ${instanceIndex + 1} HTTP錯誤: ${response.statusCode}`);
-                    lastError = new Error(`HTTP ${response.statusCode} from ${url}`);
-                }
-                
-            } catch (error) {
-                console.warn(`⚠️ [Twitter監控] 實例 ${instanceIndex + 1} 連接失敗: ${error.message}`);
-                lastError = error;
-            }
-        }
-        
-        // 所有實例都失敗了
-        console.error(`❌ [Twitter監控] 所有 ${this.nitterInstances.length} 個Nitter實例都無法使用`);
-        if (lastError) {
-            console.error('❌ [Twitter監控] 最後錯誤:', lastError.message);
-        }
-        
-        return [];
-    }
-    
-    // 解析Nitter頁面中的推文 - 改進版
-    parseNitterTweets(html, sourceUrl) {
-        const tweets = [];
-        
+    // 初始化 - 首次讀取網頁並建立基準記錄
+    async initialize() {
         try {
-            console.log(`🔍 [解析推文] 開始解析來自 ${sourceUrl} 的HTML...`);
+            console.log('🚀 [Blog Monitor] 正在初始化，讀取網頁建立基準記錄...');
             
-            // 檢查HTML內容是否有效
-            if (html.length < 1000) {
-                console.warn('⚠️ [解析推文] HTML內容過短，可能是錯誤頁面');
-                return [];
+            const response = await this.makeRequest(this.blogUrl);
+            
+            if (response.statusCode !== 200) {
+                throw new Error(`HTTP錯誤: ${response.statusCode}`);
             }
             
-            // 更精確的推文容器模式
-            const tweetPatterns = [
-                // Nitter標準推文格式
-                /<div class="timeline-item[^>]*>([\s\S]*?)<\/div>(?=\s*<div class="timeline-item|$)/gi,
-                // 推文內容容器
-                /<div class="tweet-content[^>]*>([\s\S]*?)<\/div>/gi,
-                // 推文主體
-                /<article[^>]*class="[^"]*tweet[^"]*"[^>]*>([\s\S]*?)<\/article>/gi,
-                // 通用推文容器
-                /<div[^>]*data-tweet[^>]*>([\s\S]*?)<\/div>/gi
-            ];
+            const html = response.data;
+            console.log(`📊 [Blog Monitor] 成功獲取網頁，HTML長度: ${html.length} 字元`);
             
-            let totalMatches = 0;
+            // 解析網頁中的所有文章
+            const articles = this.parseArticles(html);
             
-            for (const pattern of tweetPatterns) {
-                let match;
-                pattern.lastIndex = 0;
-                let patternMatches = 0;
-                
-                while ((match = pattern.exec(html)) !== null && tweets.length < 20) {
-                    patternMatches++;
-                    totalMatches++;
-                    const tweetContent = match[1];
-                    
-                    // 檢查是否包含任何關鍵字
-                    let foundKeyword = null;
-                    for (const keyword of this.keywords) {
-                        // 使用不區分大小寫的搜索
-                        if (tweetContent.toLowerCase().includes(keyword.toLowerCase())) {
-                            foundKeyword = keyword;
-                            break;
-                        }
-                    }
-                    
-                    if (foundKeyword) {
-                        console.log(`🎯 [解析推文] 找到關鍵字 "${foundKeyword}" 的推文`);
-                        
-                        // 提取時間和文本
-                        const timeInfo = this.extractTweetTime(tweetContent);
-                        const textContent = this.extractTweetText(tweetContent);
-                        
-                        if (timeInfo && textContent) {
-                            tweets.push({
-                                date: timeInfo.date,
-                                dateString: timeInfo.dateString,
-                                fullDateTime: timeInfo.fullDateTime,
-                                keyword: foundKeyword,
-                                content: textContent,
-                                source: 'twitter',
-                                sourceUrl: sourceUrl
-                            });
-                            
-                            console.log(`📅 [解析推文] 推文詳情: ${timeInfo.fullDateTime}, 關鍵字: ${foundKeyword}`);
-                            console.log(`📝 [解析推文] 內容預覽: ${textContent.substring(0, 100)}...`);
-                        }
-                    }
-                }
-                
-                console.log(`📊 [解析推文] 模式匹配: ${patternMatches} 個推文容器`);
-                
-                if (tweets.length > 0) break; // 找到推文就停止
+            if (articles.length === 0) {
+                console.warn('⚠️ [Blog Monitor] 未找到任何文章，可能需要調整解析邏輯');
+                return false;
             }
             
-            console.log(`📋 [解析推文] 總共檢查了 ${totalMatches} 個容器，找到 ${tweets.length} 個相關推文`);
+            // 找出最新文章（最大ID或最近時間）
+            const latestArticle = this.findLatestArticle(articles);
             
-            // 按時間排序（最新的在前）
-            return tweets.sort((a, b) => b.date - a.date);
+            // 更新記錄
+            this.latestRecord = {
+                articleId: latestArticle.id,
+                datetime: latestArticle.date,
+                datetimeString: latestArticle.datetimeString,
+                title: latestArticle.title,
+                url: latestArticle.url,
+                lastUpdated: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
+            };
+            
+            console.log('✅ [Blog Monitor] 初始化完成，建立基準記錄:');
+            console.log(`   📄 文章ID: ${this.latestRecord.articleId}`);
+            console.log(`   🗓️  發佈時間: ${this.latestRecord.datetimeString}`);
+            console.log(`   📝 標題: ${this.latestRecord.title}`);
+            console.log(`   🔗 URL: ${this.latestRecord.url}`);
+            
+            return true;
             
         } catch (error) {
-            console.error('❌ [解析推文] 解析失敗:', error.message);
+            console.error('❌ [Blog Monitor] 初始化失敗:', error.message);
+            return false;
+        }
+    }
+
+    // 解析網頁中的文章
+    parseArticles(html) {
+        const articles = [];
+        
+        try {
+            console.log('🔍 [解析文章] 開始解析網頁中的文章...');
+            
+            // 尋找文章容器的多種模式
+            const articlePatterns = [
+                // 標準文章容器
+                /<article[^>]*>([\s\S]*?)<\/article>/gi,
+                // 日記條目容器
+                /<div[^>]*class="[^"]*entry[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
+                // 通用文章容器
+                /<div[^>]*class="[^"]*diary[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
+                // 列表項目
+                /<li[^>]*class="[^"]*entry[^"]*"[^>]*>([\s\S]*?)<\/li>/gi
+            ];
+            
+            for (const pattern of articlePatterns) {
+                let match;
+                pattern.lastIndex = 0;
+                
+                while ((match = pattern.exec(html)) !== null) {
+                    const articleHTML = match[1];
+                    const article = this.parseIndividualArticle(articleHTML, match[0]);
+                    
+                    if (article && article.id && article.date) {
+                        articles.push(article);
+                        console.log(`📄 [解析文章] 找到文章: ID=${article.id}, 時間=${article.datetimeString}`);
+                    }
+                }
+                
+                if (articles.length > 0) {
+                    console.log(`✅ [解析文章] 使用模式成功，找到 ${articles.length} 篇文章`);
+                    break; // 找到文章就停止嘗試其他模式
+                }
+            }
+            
+            // 如果沒找到文章，嘗試更寬泛的搜索
+            if (articles.length === 0) {
+                console.log('🔍 [解析文章] 嘗試尋找 time 標籤...');
+                articles.push(...this.findTimeBasedArticles(html));
+            }
+            
+            console.log(`📊 [解析文章] 總共找到 ${articles.length} 篇文章`);
+            return articles;
+            
+        } catch (error) {
+            console.error('❌ [解析文章] 解析失敗:', error.message);
             return [];
         }
     }
-    
-    // 提取推文時間 - 改進版
-    extractTweetTime(tweetContent) {
+
+    // 解析單個文章
+    parseIndividualArticle(articleHTML, fullHTML) {
         try {
+            // 提取文章ID - 多種可能的模式
+            const idPatterns = [
+                /data-id="(\d+)"/i,
+                /id="entry_(\d+)"/i,
+                /id="diary_(\d+)"/i,
+                /\/diary\/(\d+)/i,
+                /entry[_-]?(\d+)/i,
+                /article[_-]?(\d+)/i
+            ];
+            
+            let articleId = null;
+            for (const pattern of idPatterns) {
+                const match = fullHTML.match(pattern);
+                if (match) {
+                    articleId = parseInt(match[1]);
+                    break;
+                }
+            }
+            
+            // 提取時間信息
+            const timeInfo = this.extractDateTime(articleHTML);
+            if (!timeInfo) {
+                return null;
+            }
+            
+            // 提取標題
+            const title = this.extractTitle(articleHTML);
+            
+            // 提取URL
+            const url = this.extractArticleURL(articleHTML);
+            
+            return {
+                id: articleId,
+                date: timeInfo.date,
+                datetimeString: timeInfo.datetimeString,
+                title: title,
+                url: url
+            };
+            
+        } catch (error) {
+            console.error('❌ [解析文章] 解析單個文章失敗:', error.message);
+            return null;
+        }
+    }
+
+    // 尋找基於時間的文章（備用方法）
+    findTimeBasedArticles(html) {
+        const articles = [];
+        
+        try {
+            // 尋找所有 time 標籤
+            const timePattern = /<time[^>]*datetime="([^"]+)"[^>]*>([^<]*)<\/time>/gi;
+            let match;
+            let index = 0;
+            
+            while ((match = timePattern.exec(html)) !== null) {
+                const datetime = match[1];
+                const displayText = match[2];
+                
+                const timeInfo = this.parseDateTime(datetime);
+                if (timeInfo) {
+                    articles.push({
+                        id: index++, // 使用索引作為臨時ID
+                        date: timeInfo.date,
+                        datetimeString: timeInfo.datetimeString,
+                        title: `文章 ${displayText}`,
+                        url: null
+                    });
+                }
+            }
+            
+            return articles;
+            
+        } catch (error) {
+            console.error('❌ [時間搜索] 失敗:', error.message);
+            return [];
+        }
+    }
+
+    // 提取時間信息
+    extractDateTime(html) {
+        try {
+            // 多種時間格式模式
             const timePatterns = [
-                // Nitter時間格式
+                // 標準 datetime 屬性
                 /datetime="([^"]+)"/i,
+                // data-time 屬性
                 /data-time="([^"]+)"/i,
-                /title="([^"]*\d{4}[^"]*)"]/i,
-                // 相對時間
-                /(\d+)([smhd])\s*ago/i,
-                /(\d+)\s*(second|minute|hour|day)s?\s*ago/i,
-                // 絕對時間
-                /(\w{3})\s+(\d{1,2}),?\s+(\d{4})/i,
-                /(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2}),?\s+(\d{4})/i,
-                // 數字日期格式
-                /(\d{1,2})\/(\d{1,2})\/(\d{4})/,
-                /(\d{4})-(\d{2})-(\d{2})/,
-                // 時間標籤內容
-                /<time[^>]*>([^<]+)<\/time>/i
+                // time 標籤內容
+                /<time[^>]*>([^<]+)<\/time>/i,
+                // 日期格式
+                /(\d{4})[年\-\/](\d{1,2})[月\-\/](\d{1,2})[日號]/,
+                // ISO格式
+                /(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/
             ];
             
             for (const pattern of timePatterns) {
-                const match = tweetContent.match(pattern);
+                const match = html.match(pattern);
                 if (match) {
-                    let tweetDate = null;
-                    
-                    try {
-                        if (pattern.source.includes('([smhd])') || pattern.source.includes('(second|minute|hour|day)')) {
-                            // 相對時間處理
-                            const value = parseInt(match[1]);
-                            let unit = match[2];
-                            
-                            // 標準化單位
-                            if (unit.startsWith('s')) unit = 's';
-                            else if (unit.startsWith('m')) unit = 'm';
-                            else if (unit.startsWith('h')) unit = 'h';
-                            else if (unit.startsWith('d')) unit = 'd';
-                            
-                            tweetDate = new Date();
-                            switch (unit) {
-                                case 's': tweetDate.setSeconds(tweetDate.getSeconds() - value); break;
-                                case 'm': tweetDate.setMinutes(tweetDate.getMinutes() - value); break;
-                                case 'h': tweetDate.setHours(tweetDate.getHours() - value); break;
-                                case 'd': tweetDate.setDate(tweetDate.getDate() - value); break;
-                            }
-                        } else if (pattern.source.includes('(\\w{3})') || pattern.source.includes('(Jan|Feb')) {
-                            // 月份格式處理
-                            const months = {
-                                'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
-                                'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
-                            };
-                            const monthStr = match[1];
-                            const month = months[monthStr] !== undefined ? months[monthStr] : parseInt(monthStr) - 1;
-                            const day = parseInt(match[2]);
-                            const year = parseInt(match[3]);
-                            tweetDate = new Date(year, month, day);
-                        } else {
-                            // 嘗試直接解析
-                            const dateStr = match[1] || match[0];
-                            tweetDate = new Date(dateStr);
-                        }
-                        
-                        if (tweetDate && !isNaN(tweetDate.getTime())) {
-                            return {
-                                date: tweetDate,
-                                dateString: `${tweetDate.getFullYear()}年${tweetDate.getMonth() + 1}月${tweetDate.getDate()}日`,
-                                fullDateTime: `${tweetDate.getFullYear()}年${tweetDate.getMonth() + 1}月${tweetDate.getDate()}日 ${tweetDate.getHours().toString().padStart(2, '0')}:${tweetDate.getMinutes().toString().padStart(2, '0')}`
-                            };
-                        }
-                    } catch (parseError) {
-                        console.warn(`⚠️ [時間解析] 解析錯誤: ${parseError.message}`);
+                    const timeInfo = this.parseDateTime(match[1] || match[0]);
+                    if (timeInfo) {
+                        return timeInfo;
                     }
                 }
             }
             
-            // 如果無法解析時間，使用當前時間
-            const now = new Date();
-            console.warn('⚠️ [時間解析] 無法解析推文時間，使用當前時間');
-            return {
-                date: now,
-                dateString: `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日`,
-                fullDateTime: `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`
-            };
-            
-        } catch (error) {
-            console.error('❌ [時間解析] 嚴重錯誤:', error.message);
             return null;
-        }
-    }
-    
-    // 提取推文文字內容 - 改進版
-    extractTweetText(tweetContent) {
-        try {
-            // 移除不需要的標籤和內容
-            let textContent = tweetContent
-                .replace(/<script[\s\S]*?<\/script>/gi, '')
-                .replace(/<style[\s\S]*?<\/style>/gi, '')
-                .replace(/<noscript[\s\S]*?<\/noscript>/gi, '')
-                .replace(/<!--[\s\S]*?-->/g, '')
-                .replace(/<svg[\s\S]*?<\/svg>/gi, '')
-                .replace(/<img[^>]*>/gi, ' [圖片] ')
-                .replace(/<a[^>]*href="[^"]*"[^>]*>([^<]*)<\/a>/gi, '$1')
-                .replace(/<[^>]+>/g, ' ')
-                .replace(/&nbsp;/g, ' ')
-                .replace(/&lt;/g, '<')
-                .replace(/&gt;/g, '>')
-                .replace(/&amp;/g, '&')
-                .replace(/&quot;/g, '"')
-                .replace(/&#x27;/g, "'")
-                .replace(/&#x2F;/g, '/')
-                .replace(/\s+/g, ' ')
-                .trim();
-            
-            // 過濾掉太短的內容
-            if (textContent.length < 10) {
-                console.warn('⚠️ [文字提取] 提取的內容過短');
-                return null;
-            }
-            
-            // 限制長度
-            const maxLength = 500;
-            if (textContent.length > maxLength) {
-                textContent = textContent.substring(0, maxLength) + '...';
-            }
-            
-            return textContent;
             
         } catch (error) {
-            console.error('❌ [文字提取] 失敗:', error.message);
-            return '無法提取推文內容';
-        }
-    }
-
-    // 搜索包含關鍵字的最新推文
-    async searchLatestTweetWithKeywords() {
-        try {
-            console.log('🔍 [搜索最新推文] 開始搜索包含關鍵字的最新推文...');
-            console.log(`🔍 [搜索最新推文] 目標關鍵字: ${this.keywords.join(', ')}`);
-            
-            const tweets = await this.checkTwitterForUpdates();
-            
-            if (tweets.length === 0) {
-                console.log('📋 [搜索最新推文] 未找到包含關鍵字的推文');
-                return null;
-            }
-            
-            // 返回最新的推文（已按時間排序）
-            const latestTweet = tweets[0];
-            
-            console.log(`✅ [搜索最新推文] 找到最新推文:`);
-            console.log(`   - 時間: ${latestTweet.fullDateTime}`);
-            console.log(`   - 關鍵字: ${latestTweet.keyword}`);
-            console.log(`   - 內容: ${latestTweet.content.substring(0, 100)}...`);
-            
-            return latestTweet;
-            
-        } catch (error) {
-            console.error('❌ [搜索最新推文] 搜索失敗:', error.message);
+            console.error('❌ [時間提取] 失敗:', error.message);
             return null;
         }
     }
 
-    // 測試網站連接 - 改進版
-    async testWebsiteAccess() {
+    // 解析日期時間
+    parseDateTime(dateString) {
         try {
-            console.log('🔍 [Twitter測試] 測試所有Nitter實例連接...');
+            let date = null;
             
-            const results = [];
+            // 嘗試直接解析ISO格式
+            if (dateString.includes('T') || dateString.includes('-')) {
+                date = new Date(dateString);
+            }
             
-            for (let i = 0; i < Math.min(3, this.nitterInstances.length); i++) {
-                const url = this.nitterInstances[i];
-                try {
-                    console.log(`📊 [Twitter測試] 測試實例 ${i + 1}: ${url}`);
-                    
-                    const response = await this.makeRequest(url);
-                    
-                    const result = {
-                        instance: i + 1,
-                        url: url,
-                        statusCode: response.statusCode,
-                        contentLength: response.data.length,
-                        success: response.statusCode === 200,
-                        hasValidContent: response.data.includes('timeline') || response.data.includes('tweet'),
-                        hasKeywords: this.keywords.some(keyword => 
-                            response.data.toLowerCase().includes(keyword.toLowerCase())
-                        )
-                    };
-                    
-                    results.push(result);
-                    
-                    console.log(`${result.success ? '✅' : '❌'} [Twitter測試] 實例 ${i + 1}: HTTP ${result.statusCode}, ${result.contentLength} 字元`);
-                    
-                    if (result.success) break; // 找到一個可用的就停止
-                    
-                } catch (error) {
-                    results.push({
-                        instance: i + 1,
-                        url: url,
-                        success: false,
-                        error: error.message
-                    });
-                    console.log(`❌ [Twitter測試] 實例 ${i + 1} 失敗: ${error.message}`);
+            // 如果直接解析失敗，嘗試其他格式
+            if (!date || isNaN(date.getTime())) {
+                // 解析 YYYY年MM月DD日 格式
+                const jpMatch = dateString.match(/(\d{4})[年](\d{1,2})[月](\d{1,2})[日]/);
+                if (jpMatch) {
+                    const year = parseInt(jpMatch[1]);
+                    const month = parseInt(jpMatch[2]) - 1; // 月份從0開始
+                    const day = parseInt(jpMatch[3]);
+                    date = new Date(year, month, day);
                 }
             }
             
-            const successfulResults = results.filter(r => r.success);
+            if (!date || isNaN(date.getTime())) {
+                return null;
+            }
             
             return {
-                success: successfulResults.length > 0,
-                totalTested: results.length,
-                successfulInstances: successfulResults.length,
-                results: results,
-                keywords: this.keywords,
-                bestInstance: successfulResults[0] || null
+                date: date,
+                datetimeString: `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`
             };
-
+            
         } catch (error) {
-            console.error('❌ [Twitter測試] 測試失敗:', error.message);
-            return {
-                success: false,
-                error: error.message
-            };
+            console.error('❌ [日期解析] 失敗:', error.message);
+            return null;
         }
     }
 
-    // 分析當前內容 - 改進版
-    async analyzeCurrentContent(showDetails = false) {
+    // 提取文章標題
+    extractTitle(html) {
         try {
-            console.log('🔍 [Twitter分析] 開始分析當前推文內容...');
+            const titlePatterns = [
+                /<h[1-6][^>]*>([^<]+)<\/h[1-6]>/i,
+                /<div[^>]*class="[^"]*title[^"]*"[^>]*>([^<]+)<\/div>/i,
+                /<span[^>]*class="[^"]*title[^"]*"[^>]*>([^<]+)<\/span>/i,
+                /<a[^>]*>([^<]+)<\/a>/i
+            ];
             
-            const tweets = await this.checkTwitterForUpdates();
+            for (const pattern of titlePatterns) {
+                const match = html.match(pattern);
+                if (match && match[1].trim().length > 0) {
+                    return match[1].trim();
+                }
+            }
             
-            if (tweets.length === 0) {
-                return {
-                    success: true,
-                    totalTweets: 0,
-                    recentTweets: 0,
-                    latestTweet: null,
-                    keywords: this.keywords,
-                    analysisTime: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
-                    message: '未找到包含關鍵字的推文',
-                    currentInstance: this.nitterInstances[this.currentInstanceIndex]
-                };
-            }
-
-            const now = new Date();
-            const recentTweets = tweets.filter(tweet => {
-                const diffDays = (now - tweet.date) / (1000 * 60 * 60 * 24);
-                return diffDays <= 7; // 最近7天
-            });
-
-            console.log(`📊 [Twitter分析] 總共找到 ${tweets.length} 個相關推文`);
-            console.log(`📊 [Twitter分析] 最近7天內的推文: ${recentTweets.length} 個`);
-
-            if (showDetails && recentTweets.length > 0) {
-                console.log('📋 [Twitter分析] 最近推文列表:');
-                recentTweets.slice(0, 5).forEach((tweet, index) => {
-                    console.log(`   ${index + 1}. ${tweet.fullDateTime} - 關鍵字: ${tweet.keyword}`);
-                    console.log(`      內容: ${tweet.content.substring(0, 100)}...`);
-                });
-            }
-
-            return {
-                success: true,
-                totalTweets: tweets.length,
-                recentTweets: recentTweets.length,
-                latestTweet: tweets[0],
-                allRecentTweets: recentTweets,
-                keywords: this.keywords,
-                analysisTime: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
-                currentInstance: this.nitterInstances[this.currentInstanceIndex]
-            };
-
+            return '未知標題';
+            
         } catch (error) {
-            console.error('❌ [Twitter分析] 分析失敗:', error.message);
-            return {
-                success: false,
-                error: error.message,
-                currentInstance: this.nitterInstances[this.currentInstanceIndex]
-            };
+            return '標題提取失敗';
         }
     }
 
-    // 主要檢查方法 - 改進版
+    // 提取文章URL
+    extractArticleURL(html) {
+        try {
+            const urlPatterns = [
+                /href="([^"]*diary[^"]*[^"]+)"/i,
+                /href="([^"]*\/\d+[^"]*)"/i
+            ];
+            
+            for (const pattern of urlPatterns) {
+                const match = html.match(pattern);
+                if (match) {
+                    let url = match[1];
+                    // 確保URL是完整的
+                    if (url.startsWith('/')) {
+                        url = 'https://web.familyclub.jp' + url;
+                    }
+                    return url;
+                }
+            }
+            
+            return null;
+            
+        } catch (error) {
+            return null;
+        }
+    }
+
+    // 找出最新文章
+    findLatestArticle(articles) {
+        if (articles.length === 0) {
+            return null;
+        }
+        
+        // 優先按ID排序（如果有ID的話）
+        const articlesWithId = articles.filter(a => a.id !== null && !isNaN(a.id));
+        if (articlesWithId.length > 0) {
+            console.log('📊 [最新文章] 按ID排序查找最新文章');
+            return articlesWithId.sort((a, b) => b.id - a.id)[0];
+        }
+        
+        // 否則按時間排序
+        console.log('📊 [最新文章] 按時間排序查找最新文章');
+        return articles.sort((a, b) => b.date - a.date)[0];
+    }
+
+    // 檢查是否有新文章
     async checkForNewArticles(testMode = false) {
         try {
-            console.log(`🔍 [Twitter] 檢查新推文... ${testMode ? '(測試模式)' : ''}`);
+            console.log(`🔍 [檢查更新] 檢查新文章... ${testMode ? '(測試模式)' : ''}`);
             this.totalChecks++;
             this.lastCheckTime = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
 
-            const tweets = await this.checkTwitterForUpdates();
+            const response = await this.makeRequest(this.blogUrl);
             
-            if (tweets.length === 0) {
-                console.log('📋 [Twitter] 無相關推文');
+            if (response.statusCode !== 200) {
+                throw new Error(`HTTP錯誤: ${response.statusCode}`);
+            }
+            
+            const html = response.data;
+            const articles = this.parseArticles(html);
+            
+            if (articles.length === 0) {
+                console.log('📋 [檢查更新] 未找到文章');
                 return null;
             }
-
-            const latestTweet = tweets[0];
-
+            
+            const latestArticle = this.findLatestArticle(articles);
+            
             if (testMode) {
-                console.log(`📝 [Twitter測試] 找到最新推文: ${latestTweet.fullDateTime} (關鍵字: ${latestTweet.keyword})`);
-                console.log(`📝 [Twitter測試] 推文內容: ${latestTweet.content.substring(0, 150)}...`);
-                this.lastFoundArticles = tweets.slice(0, 5);
-                return latestTweet;
+                console.log(`📝 [測試模式] 當前最新文章: ID=${latestArticle.id}, 時間=${latestArticle.datetimeString}`);
+                return latestArticle;
             }
-
-            if (!this.lastArticleDate || latestTweet.date > this.lastArticleDate) {
-                this.lastArticleDate = latestTweet.date;
+            
+            // 檢查是否有更新
+            let hasUpdate = false;
+            let updateReason = '';
+            
+            if (!this.latestRecord.articleId && !this.latestRecord.datetime) {
+                // 第一次運行，初始化記錄
+                hasUpdate = true;
+                updateReason = '初始化記錄';
+            } else {
+                // 檢查ID是否更大
+                if (latestArticle.id && this.latestRecord.articleId && latestArticle.id > this.latestRecord.articleId) {
+                    hasUpdate = true;
+                    updateReason = `新文章ID: ${latestArticle.id} > ${this.latestRecord.articleId}`;
+                }
+                
+                // 檢查時間是否更新
+                if (!hasUpdate && latestArticle.date && this.latestRecord.datetime && latestArticle.date > this.latestRecord.datetime) {
+                    hasUpdate = true;
+                    updateReason = `新發佈時間: ${latestArticle.datetimeString} > ${this.latestRecord.datetimeString}`;
+                }
+            }
+            
+            if (hasUpdate) {
+                console.log(`📝 [檢查更新] 發現新文章! 原因: ${updateReason}`);
+                
+                // 更新記錄
+                this.latestRecord = {
+                    articleId: latestArticle.id,
+                    datetime: latestArticle.date,
+                    datetimeString: latestArticle.datetimeString,
+                    title: latestArticle.title,
+                    url: latestArticle.url,
+                    lastUpdated: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
+                };
+                
                 this.articlesFound++;
-                console.log(`📝 [Twitter] 發現新推文: ${latestTweet.fullDateTime} (關鍵字: ${latestTweet.keyword})`);
-                return latestTweet;
+                return latestArticle;
             }
-
-            console.log('📋 [Twitter] 無新推文');
+            
+            console.log('📋 [檢查更新] 無新文章');
             return null;
 
         } catch (error) {
-            console.error('❌ [Twitter] 檢查失敗:', error.message);
+            console.error('❌ [檢查更新] 檢查失敗:', error.message);
             return null;
         }
     }
@@ -586,21 +482,69 @@ class BlogMonitor {
     async sendNewArticleNotification(article) {
         if (!this.notificationCallback) return;
 
-        const notificationMessage = `🐦 **新推文發現!** 
+        const notificationMessage = `📝 **Family Club 新文章發布!**
 
-🔍 **關鍵字:** ${article.keyword}
-🗓️ **發布時間:** ${article.fullDateTime}
-📝 **內容:** ${article.content.substring(0, 300)}${article.content.length > 300 ? '...' : ''}
-🔗 **Twitter連結:** https://x.com/${this.targetAccount}
+📄 **文章ID:** ${article.id || '未知'}
+🗓️ **發布時間:** ${article.datetimeString}
+📝 **標題:** ${article.title || '未知標題'}
+${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
+🌐 **博客首頁:** ${this.blogUrl}
 ⏰ **檢測時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
 
-🎉 快去查看新推文吧！`;
+🎉 快去看看新內容吧！`;
 
         try {
-            await this.notificationCallback(notificationMessage, 'blog_alert', 'Twitter');
-            console.log('📤 [Twitter] 新推文通知已發送');
+            await this.notificationCallback(notificationMessage, 'blog_alert', 'Blog');
+            console.log('📤 [通知] 新文章通知已發送');
         } catch (error) {
-            console.error('❌ [Twitter] 通知發送失敗:', error.message);
+            console.error('❌ [通知] 通知發送失敗:', error.message);
+        }
+    }
+
+    // 測試網站連接
+    async testWebsiteAccess() {
+        try {
+            console.log('🔍 [測試連接] 測試博客網站連接...');
+            
+            const response = await this.makeRequest(this.blogUrl);
+            
+            console.log(`📊 [測試連接] HTTP狀態: ${response.statusCode}`);
+            console.log(`📊 [測試連接] Content-Type: ${response.headers['content-type'] || '未知'}`);
+            console.log(`📊 [測試連接] 內容長度: ${response.data.length} 字元`);
+            
+            if (response.statusCode !== 200) {
+                return {
+                    success: false,
+                    error: `HTTP錯誤: ${response.statusCode}`,
+                    details: response.headers
+                };
+            }
+
+            const html = response.data;
+            const hasContent = html.length > 1000;
+            const hasTimeTag = html.includes('<time');
+            const articles = this.parseArticles(html);
+            
+            return {
+                success: true,
+                statusCode: response.statusCode,
+                contentLength: response.data.length,
+                hasContent,
+                hasTimeTag,
+                articlesFound: articles.length,
+                sampleArticles: articles.slice(0, 3).map(a => ({
+                    id: a.id,
+                    time: a.datetimeString,
+                    title: a.title
+                }))
+            };
+
+        } catch (error) {
+            console.error('❌ [測試連接] 測試失敗:', error.message);
+            return {
+                success: false,
+                error: error.message
+            };
         }
     }
 
@@ -609,65 +553,65 @@ class BlogMonitor {
         const now = new Date();
         const nextCheck = new Date(now);
         
-        // 設定為下一個整點
         nextCheck.setHours(now.getHours() + 1);
         nextCheck.setMinutes(0);
         nextCheck.setSeconds(0);
         nextCheck.setMilliseconds(0);
 
         const waitTime = nextCheck.getTime() - now.getTime();
-        return Math.floor(waitTime / 1000); // 返回秒數
+        return Math.floor(waitTime / 1000);
     }
 
     // 開始監控
     startMonitoring() {
         if (this.isMonitoring) {
-            console.log('⚠️ [Twitter] 監控已在運行中');
+            console.log('⚠️ [監控] 監控已在運行中');
             return;
         }
 
         this.isMonitoring = true;
-        console.log('🚀 [Twitter] 開始Twitter監控 (每小時00分檢查)');
-        console.log('🔍 [Twitter] 監控關鍵字:', this.keywords);
-        console.log('🔗 [Twitter] 可用Nitter實例:', this.nitterInstances.length, '個');
+        console.log('🚀 [監控] 開始Family Club博客監控 (每小時00分檢查)');
         
         const monitorLoop = async () => {
             if (!this.isMonitoring) {
-                console.log('⏹️ [Twitter] 監控已停止');
+                console.log('⏹️ [監控] 監控已停止');
                 return;
             }
 
             try {
-                const newTweet = await this.checkForNewArticles();
-                if (newTweet) {
-                    await this.sendNewArticleNotification(newTweet);
+                const newArticle = await this.checkForNewArticles();
+                if (newArticle) {
+                    await this.sendNewArticleNotification(newArticle);
                 }
 
-                // 計算下次檢查時間
                 const nextCheckSeconds = this.calculateNextCheckTime();
                 const nextCheckTime = new Date(Date.now() + nextCheckSeconds * 1000)
                     .toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
                 
-                console.log(`⏰ [Twitter] 下次檢查: ${nextCheckTime} (${Math.round(nextCheckSeconds/60)}分鐘後)`);
-                console.log(`🔗 [Twitter] 當前使用實例: ${this.nitterInstances[this.currentInstanceIndex]}`);
+                console.log(`⏰ [監控] 下次檢查: ${nextCheckTime} (${Math.round(nextCheckSeconds/60)}分鐘後)`);
 
-                // 設定下次檢查
                 this.monitoringInterval = setTimeout(monitorLoop, nextCheckSeconds * 1000);
 
             } catch (error) {
-                console.error('❌ [Twitter] 監控循環錯誤:', error.message);
+                console.error('❌ [監控] 監控循環錯誤:', error.message);
                 
-                // 發生錯誤時，10分鐘後重試
                 if (this.isMonitoring) {
-                    console.log('⚠️ [Twitter] 10分鐘後重試');
+                    console.log('⚠️ [監控] 10分鐘後重試');
                     this.monitoringInterval = setTimeout(monitorLoop, 10 * 60 * 1000);
                 }
             }
         };
 
-        // 首次檢查 - 立即執行
-        console.log('⏳ [Twitter] 5秒後開始首次檢查');
-        this.monitoringInterval = setTimeout(monitorLoop, 5000);
+        // 先初始化，然後開始監控
+        this.initialize().then(success => {
+            if (success) {
+                console.log('⏳ [監控] 5秒後開始定期檢查');
+                this.monitoringInterval = setTimeout(monitorLoop, 5000);
+            } else {
+                console.error('❌ [監控] 初始化失敗，停止監控');
+                this.isMonitoring = false;
+            }
+        });
     }
 
     // 停止監控
@@ -679,95 +623,44 @@ class BlogMonitor {
             this.monitoringInterval = null;
         }
         
-        console.log('⏹️ [Twitter] Twitter監控已停止');
+        console.log('⏹️ [監控] Family Club博客監控已停止');
     }
 
-    // 獲取狀態 - 增強版
+    // 獲取狀態
     getStatus() {
         return {
             isMonitoring: this.isMonitoring,
             totalChecks: this.totalChecks,
             articlesFound: this.articlesFound,
             lastCheckTime: this.lastCheckTime,
-            lastArticleDate: this.lastArticleDate ? this.lastArticleDate.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null,
             nextCheckTime: this.isMonitoring ? new Date(Date.now() + this.calculateNextCheckTime() * 1000).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null,
-            twitterUrl: this.nitterInstances[this.currentInstanceIndex],
-            targetAccount: this.targetAccount,
-            keywords: this.keywords,
-            totalInstances: this.nitterInstances.length,
-            currentInstance: this.currentInstanceIndex + 1,
-            lastFoundArticles: this.lastFoundArticles.map(tweet => ({
-                date: tweet.fullDateTime,
-                keyword: tweet.keyword,
-                content: tweet.content.substring(0, 100)
-            }))
-        };
-    }
-
-    // 重新載入關鍵字
-    reloadKeywords() {
-        this.keywords = this.loadKeywords();
-        console.log('🔄 [Twitter] 關鍵字已重新載入:', this.keywords);
-        return this.keywords;
-    }
-
-    // 獲取監控統計
-    getMonitoringStats() {
-        return {
-            isActive: this.isMonitoring,
-            totalChecks: this.totalChecks,
-            successfulFinds: this.articlesFound,
-            keywords: this.keywords,
-            lastCheck: this.lastCheckTime,
-            lastFind: this.lastArticleDate ? this.lastArticleDate.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null,
-            instanceStats: {
-                total: this.nitterInstances.length,
-                current: this.currentInstanceIndex + 1,
-                currentUrl: this.nitterInstances[this.currentInstanceIndex]
+            blogUrl: this.blogUrl,
+            latestRecord: {
+                ...this.latestRecord,
+                hasRecord: !!(this.latestRecord.articleId || this.latestRecord.datetime)
             }
         };
     }
 
-    // 切換到下一個Nitter實例
-    switchToNextInstance() {
-        this.currentInstanceIndex = (this.currentInstanceIndex + 1) % this.nitterInstances.length;
-        console.log(`🔄 [Twitter] 切換到實例 ${this.currentInstanceIndex + 1}: ${this.nitterInstances[this.currentInstanceIndex]}`);
-        return this.nitterInstances[this.currentInstanceIndex];
-    }
-
-    // 獲取所有可用實例的狀態
-    async getAllInstancesStatus() {
-        const results = [];
-        
-        for (let i = 0; i < this.nitterInstances.length; i++) {
-            const url = this.nitterInstances[i];
-            try {
-                const startTime = Date.now();
-                const response = await this.makeRequest(url);
-                const responseTime = Date.now() - startTime;
-                
-                results.push({
-                    index: i + 1,
-                    url: url,
-                    status: response.statusCode === 200 ? 'online' : 'error',
-                    statusCode: response.statusCode,
-                    responseTime: responseTime,
-                    contentLength: response.data.length,
-                    hasContent: response.data.length > 1000
-                });
-                
-            } catch (error) {
-                results.push({
-                    index: i + 1,
-                    url: url,
-                    status: 'offline',
-                    error: error.message,
-                    responseTime: null
-                });
-            }
+    // 獲取當前最新記錄 (for !blog-latest 命令)
+    getLatestRecord() {
+        if (!this.latestRecord.articleId && !this.latestRecord.datetime) {
+            return null;
         }
         
-        return results;
+        return {
+            articleId: this.latestRecord.articleId,
+            datetime: this.latestRecord.datetimeString,
+            title: this.latestRecord.title,
+            url: this.latestRecord.url,
+            lastUpdated: this.latestRecord.lastUpdated
+        };
+    }
+
+    // 手動重新初始化
+    async reinitialize() {
+        console.log('🔄 [重新初始化] 手動重新初始化記錄...');
+        return await this.initialize();
     }
 }
 
