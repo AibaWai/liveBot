@@ -7,6 +7,13 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// 在現有的環境變數檢查後添加
+const BLOG_NOTIFICATION_CHANNEL_ID = process.env.BLOG_NOTIFICATION_CHANNEL_ID;
+if (BLOG_NOTIFICATION_CHANNEL_ID) {
+    console.log('📝 博客監控已啟用');
+} else {
+    console.log('📝 博客監控未配置 (BLOG_NOTIFICATION_CHANNEL_ID 未設定)');
+}
 
 console.log('🚀 統一直播監控機器人啟動中...');
 console.log('📺 Instagram 監控 + Discord 頻道監控 + 電話通知');
