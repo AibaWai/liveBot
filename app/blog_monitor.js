@@ -699,6 +699,62 @@ ${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
         console.log('🔄 [重新初始化] 手動重新初始化記錄...');
         return await this.initialize();
     }
+
+    // 新增：調試 diary 容器內容
+    async debugDiaryContainers() {
+        try {
+            console.log('🔍 [Diary調試] 開始分析 diary 容器內容...');
+            
+            const response = await this.makeRequest(this.blogUrl);
+            if (response.statusCode !== 200) {
+                return { success: false, error: `HTTP錯誤: ${response.statusCode}` };
+            }
+            
+            const html = response.data;
+            const diaryContainers = [];
+            
+            // 尋找所有包含 diary 的元素
+            const diaryPatterns = [
+                /<div[^>]*class="[^"]*diary[^"]*"[^>]*>([\s\S]*?)<\/div>/gi,
+                /<li[^>]*class="[^"]*diary[^"]*"[^>]*>([\s\S]*?)<\/li>/gi,
+                /<[^>]*diary[^>]*>([\s\S]*?)<\/[^>]*>/gi
+            ];
+            
+            for (let patternIndex = 0; patternIndex < diaryPatterns.length; patternIndex++) {
+                const pattern = diaryPatterns[patternIndex];
+                let match;
+                pattern.lastIndex = 0;
+                
+                while ((match = pattern.exec(html)) !== null && diaryContainers.length < 10) {
+                    const containerContent = match[1];
+                    const fullMatch = match[0];
+                    
+                    // 提取容器的 class 和其他屬性
+                    const classMatch = fullMatch.match(/class="([^"]*)"/);
+                    const idMatch = fullMatch.match(/id="([^"]*)"/);
+                    
+                    diaryContainers.push({
+                        patternIndex: patternIndex + 1,
+                        class: classMatch ? classMatch[1] : '無',
+                        id: idMatch ? idMatch[1] : '無',
+                        contentPreview: containerContent.substring(0, 500),
+                        fullContent: containerContent,
+                        containerTag: fullMatch.substring(0, 200)
+                    });
+                }
+            }
+            
+            return {
+                success: true,
+                totalFound: diaryContainers.length,
+                containers: diaryContainers
+            };
+            
+        } catch (error) {
+            console.error('❌ [Diary調試] 失敗:', error.message);
+            return { success: false, error: error.message };
+        }
+    }
 }
 
 module.exports = BlogMonitor;

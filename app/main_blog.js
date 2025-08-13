@@ -850,6 +850,40 @@ ${timeTagSamples.map((tag, i) => `${i+1}. \`${tag}\``).join('\n')}` : '❌ 未�
             await message.reply('❌ 博客監控未啟用');
         }
     }
+
+        else if (cmd === '!blog-diary') {
+        if (blogMonitor) {
+            await message.reply('🔍 分析 diary 容器內容...');
+            try {
+                const diaryResult = await blogMonitor.debugDiaryContainers();
+                
+                if (diaryResult.success && diaryResult.totalFound > 0) {
+                    let diaryMsg = `📦 **找到 ${diaryResult.totalFound} 個 diary 容器**\n\n`;
+                    
+                    diaryResult.containers.slice(0, 3).forEach((container, index) => {
+                        diaryMsg += `**容器 ${index + 1}:**\n`;
+                        diaryMsg += `• 模式: ${container.patternIndex}\n`;
+                        diaryMsg += `• Class: ${container.class}\n`;
+                        diaryMsg += `• ID: ${container.id}\n`;
+                        diaryMsg += `• 標籤: \`${container.containerTag}...\`\n`;
+                        diaryMsg += `• 內容預覽:\n\`\`\`\n${container.contentPreview}...\n\`\`\`\n\n`;
+                    });
+                    
+                    if (diaryResult.totalFound > 3) {
+                        diaryMsg += `...(還有 ${diaryResult.totalFound - 3} 個容器)`;
+                    }
+                    
+                    await message.reply(diaryMsg);
+                } else {
+                    await message.reply(`❌ **未找到 diary 容器**\n\n錯誤: ${diaryResult.error || '無內容'}`);
+                }
+            } catch (error) {
+                await message.reply(`❌ diary 分析失敗: ${error.message}`);
+            }
+        } else {
+            await message.reply('❌ 博客監控未啟用');
+        }
+    }
     
     // 更新幫助命令
     else if (cmd === '!help') {
@@ -869,6 +903,7 @@ ${timeTagSamples.map((tag, i) => `${i+1}. \`${tag}\``).join('\n')}` : '❌ 未�
 \`!blog-test\` - 測試網站連接和解析
 \`!blog-init\` - 手動初始化/重新建立基準記錄 🆕
 \`!blog-debug\` - 調試分析網頁結構
+\`!blog-diary\` - 分析 diary 容器內容 🆕
 
 **系統命令:**
 \`!status\` - 完整系統狀態
