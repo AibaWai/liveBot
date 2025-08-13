@@ -357,7 +357,6 @@ client.once('ready', () => {
 \`!ig-stop\` - 停止Instagram監控
 \`!ig-status\` - Instagram監控狀態
 \`!blog-status\` - 博客監控狀態
-\`!blog-latest\` - 查看最新文章列表 🆕
 \`!blog-test\` - 測試API連接
 \`!blog-check\` - 手動檢查新文章
 \`!blog-restart\` - 重新啟動博客監控
