@@ -457,13 +457,13 @@ ${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
         const utcNext = new Date(nextCheck.getTime() - (9 * 60 * 60 * 1000)); // 減去9小時時差
         const waitTime = Math.max(0, utcNext.getTime() - utcNow.getTime());
         
-        console.log(`⏰ [計算時間] 日本當前時間: ${japanNow.toLocaleString()}, 活躍時段: ${isActiveTime}`);
-        console.log(`⏰ [計算時間] 下次檢查: ${nextCheck.toLocaleString()}, 等待: ${Math.round(waitTime/1000/60)}分鐘`);
-        
+        // 只在監控循環中打印詳細日誌，狀態查詢時不打印
         return Math.floor(waitTime / 1000);
     }
 
+
     // 開始監控
+    // 修正後的監控循環 - 增加更詳細的日誌控制
     startMonitoring() {
         if (this.isMonitoring) {
             console.log('⚠️ [監控] 博客監控已在運行中');
@@ -486,6 +486,14 @@ ${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
                     await this.sendNewArticleNotification(newArticle);
                 }
 
+                // 計算下次檢查時間並打印詳細日誌
+                const now = new Date();
+                const japanNow = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Tokyo" }));
+                const currentHour = japanNow.getHours();
+                const isActiveTime = currentHour >= 12 && currentHour <= 23;
+                
+                console.log(`⏰ [計算時間] 日本當前時間: ${japanNow.toLocaleString()}, 小時: ${currentHour}, 活躍時段: ${isActiveTime}`);
+                
                 const nextCheckSeconds = this.calculateNextCheckTime();
                 const nextCheckTime = new Date(Date.now() + nextCheckSeconds * 1000)
                     .toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
@@ -529,15 +537,21 @@ ${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
     }
 
     // 獲取狀態
+    // 修正後的 getStatus 方法 - 緩存計算結果避免重複計算
     getStatus() {
-        const nextCheckSeconds = this.isMonitoring ? this.calculateNextCheckTime() : 0;
-        const nextCheckTime = this.isMonitoring ? 
-            new Date(Date.now() + nextCheckSeconds * 1000).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : 
-            null;
-            
         const japanNow = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
         const currentHour = new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo", hour: '2-digit', hour12: false });
         const isActiveTime = parseInt(currentHour) >= 12 && parseInt(currentHour) <= 23;
+        
+        // 只在監控運行時計算下次檢查時間，避免頻繁計算
+        let nextCheckTime = null;
+        if (this.isMonitoring) {
+            // 使用緩存的下次檢查時間，避免重複計算
+            if (this.monitoringInterval) {
+                const nextCheckSeconds = this.calculateNextCheckTime();
+                nextCheckTime = new Date(Date.now() + nextCheckSeconds * 1000).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+            }
+        }
         
         return {
             isMonitoring: this.isMonitoring,
