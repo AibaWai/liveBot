@@ -12,10 +12,11 @@ class FamilyClubBlogMonitor {
         
         // Family Club API 端點
         this.apiEndpoint = 'https://web.familyclub.jp/s/jwb/api/list/diarkiji_list';
-        this.artistCode = 'F2017'; // 高木雄也
+        this.artistCode = process.env.ARTIST_CODE || 'F2017'; // 從環境變數獲取，默認高木雄也
+        this.artistName = null; // 將在初始化時從API獲取
         this.baseUrl = 'https://web.familyclub.jp';
         
-        // 記錄最新文章信息 - 使用正確的字段
+        // 記錄最新文章信息
         this.latestRecord = {
             articleCode: null,          // 使用 code 而不是隨機ID
             datetime: null,             // Date 對象
@@ -28,7 +29,7 @@ class FamilyClubBlogMonitor {
         
         console.log('📝 [博客監控] Family Club 博客監控已初始化');
         console.log('🎯 [博客監控] 使用API端點:', this.apiEndpoint);
-        console.log('🎨 [博客監控] 目標藝人:', this.artistCode, '(高木雄也)');
+        console.log('🎨 [博客監控] 目標藝人代碼:', this.artistCode);
     }
 
     // 安全HTTP請求
@@ -43,7 +44,7 @@ class FamilyClubBlogMonitor {
                     'Accept-Encoding': 'gzip, deflate, br',
                     'Cache-Control': 'no-cache',
                     'Pragma': 'no-cache',
-                    'Referer': 'https://web.familyclub.jp/s/jwb/diary/F2017',
+                    'Referer': `https://web.familyclub.jp/s/jwb/diary/${this.artistCode}`,
                     'X-Requested-With': 'XMLHttpRequest',
                     ...options.headers
                 },
@@ -130,6 +131,12 @@ class FamilyClubBlogMonitor {
                     return;
                 }
                 
+                // 第一次獲取時，自動設置藝人名稱
+                if (!this.artistName && item.artist_name) {
+                    this.artistName = item.artist_name;
+                    console.log(`🎭 [藝人信息] 自動獲取藝人名稱: ${this.artistName}`);
+                }
+                
                 // 解析日期 - API返回格式: "2025-07-14T19:00"
                 const dateTime = this.parseDateTime(item.date);
                 if (!dateTime) {
@@ -137,12 +144,12 @@ class FamilyClubBlogMonitor {
                     return; // 跳過無法解析日期的文章
                 }
                 
-                // 構建文章URL
+                // 構建文章URL（移除ima參數）
                 let articleUrl = null;
                 if (item.link) {
                     articleUrl = item.link.startsWith('http') ? item.link : this.baseUrl + item.link;
                 } else if (item.code) {
-                    // 使用code構建URL
+                    // 使用code構建URL，不包含ima參數
                     articleUrl = `${this.baseUrl}/s/jwb/diary/${this.artistCode}/detail/${item.code}`;
                 }
                 
@@ -150,7 +157,7 @@ class FamilyClubBlogMonitor {
                     code: item.code,                    // 使用真正的文章代碼
                     title: item.title || '未知標題',
                     diaryName: item.diary_name || '',
-                    artistName: item.artist_name || '',
+                    artistName: item.artist_name || this.artistName || '',
                     date: dateTime.date,
                     datetimeString: dateTime.datetimeString,
                     labelDate: item.label_date || '',   // API提供的格式化日期
@@ -265,6 +272,7 @@ class FamilyClubBlogMonitor {
             };
             
             console.log('✅ [博客監控] 初始化完成，建立基準記錄:');
+            console.log(`   🎭 藝人: ${this.artistName} (${this.artistCode})`);
             console.log(`   📄 文章Code: ${this.latestRecord.articleCode}`);
             console.log(`   🗓️ 發佈時間: ${this.latestRecord.datetimeString}`);
             console.log(`   📝 標題: ${this.latestRecord.title}`);
@@ -369,6 +377,8 @@ class FamilyClubBlogMonitor {
                 success: true,
                 method: 'Family Club Official API',
                 endpoint: this.apiEndpoint,
+                artistCode: this.artistCode,
+                artistName: this.artistName || '未知',
                 articlesFound: articles.length,
                 sampleArticles: articles.slice(0, 3).map(a => ({
                     code: a.code,
@@ -389,7 +399,8 @@ class FamilyClubBlogMonitor {
                 success: false,
                 error: error.message,
                 method: 'Family Club Official API',
-                endpoint: this.apiEndpoint
+                endpoint: this.apiEndpoint,
+                artistCode: this.artistCode
             };
         }
     }
@@ -398,7 +409,7 @@ class FamilyClubBlogMonitor {
     async sendNewArticleNotification(article) {
         if (!this.notificationCallback) return;
 
-        const notificationMessage = `📝 **Family Club 新文章發布!** (高木雄也)
+        const notificationMessage = `📝 **Family Club 新文章發布!** (${this.artistName || this.artistCode})
 
 📄 **文章代碼:** ${article.code}
 🗓️ **發布時間:** ${article.datetimeString}
@@ -406,7 +417,7 @@ class FamilyClubBlogMonitor {
 📝 **Diary名稱:** ${article.diaryName}
 ${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
 👤 **藝人:** ${article.artistName}
-🌐 **博客首頁:** https://web.familyclub.jp/s/jwb/diary/F2017
+🌐 **博客首頁:** https://web.familyclub.jp/s/jwb/diary/${this.artistCode}
 ⏰ **檢測時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
 🎯 **檢測方式:** Family Club 官方API
 
@@ -457,13 +468,10 @@ ${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
         const utcNext = new Date(nextCheck.getTime() - (9 * 60 * 60 * 1000)); // 減去9小時時差
         const waitTime = Math.max(0, utcNext.getTime() - utcNow.getTime());
         
-        // 只在監控循環中打印詳細日誌，狀態查詢時不打印
         return Math.floor(waitTime / 1000);
     }
 
-
     // 開始監控
-    // 修正後的監控循環 - 增加更詳細的日誌控制
     startMonitoring() {
         if (this.isMonitoring) {
             console.log('⚠️ [監控] 博客監控已在運行中');
@@ -537,7 +545,6 @@ ${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
     }
 
     // 獲取狀態
-    // 修正後的 getStatus 方法 - 緩存計算結果避免重複計算
     getStatus() {
         const japanNow = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
         const currentHour = new Date().toLocaleString("en-US", { timeZone: "Asia/Tokyo", hour: '2-digit', hour12: false });
@@ -545,12 +552,9 @@ ${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
         
         // 只在監控運行時計算下次檢查時間，避免頻繁計算
         let nextCheckTime = null;
-        if (this.isMonitoring) {
-            // 使用緩存的下次檢查時間，避免重複計算
-            if (this.monitoringInterval) {
-                const nextCheckSeconds = this.calculateNextCheckTime();
-                nextCheckTime = new Date(Date.now() + nextCheckSeconds * 1000).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
-            }
+        if (this.isMonitoring && this.monitoringInterval) {
+            const nextCheckSeconds = this.calculateNextCheckTime();
+            nextCheckTime = new Date(Date.now() + nextCheckSeconds * 1000).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
         }
         
         return {
@@ -562,8 +566,8 @@ ${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
             method: 'Family Club Official API',
             endpoint: this.apiEndpoint,
             artistCode: this.artistCode,
-            artistName: '高木雄也',
-            blogUrl: 'https://web.familyclub.jp/s/jwb/diary/F2017',
+            artistName: this.artistName || '未知',
+            blogUrl: `https://web.familyclub.jp/s/jwb/diary/${this.artistCode}`,
             activeTimeSchedule: '日本時間12:00-24:00 (每小時00分檢查)',
             currentActiveTime: isActiveTime,
             japanTime: japanNow,

@@ -580,7 +580,7 @@ async function handleDiscordCommands(message) {
             const blogStatus = blogMonitor.getStatus();
             const latestRecord = blogMonitor.getLatestRecord();
             
-            const statusMsg = `📝 **Family Club 博客監控狀態** (高木雄也)
+            const statusMsg = `📝 **Family Club 博客監控狀態** (${blogStatus.artistName})
 
     **監控狀態:** ${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
     **目標藝人:** ${blogStatus.artistName} (${blogStatus.artistCode})
@@ -617,56 +617,6 @@ async function handleDiscordCommands(message) {
         }
     }
 
-    else if (cmd === '!blog-latest') {
-        if (blogMonitor) {
-            await message.reply('🔍 獲取最新博客文章...');
-            try {
-                const latestArticles = await blogMonitor.getLatestArticles(3); // 顯示最新3篇
-                
-                if (latestArticles.length > 0) {
-                    let responseMsg = `📝 **Family Club 最新文章** (高木雄也)
-
-    📡 **API端點:** Family Club 官方API
-    🎨 **藝人代碼:** ${blogMonitor.artistCode}
-    ⏰ **查詢時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-
-    📋 **最新 ${latestArticles.length} 篇文章:**\n`;
-
-                    latestArticles.forEach((article, index) => {
-                        responseMsg += `
-    **${index + 1}. ${article.title}**
-    📄 代碼: ${article.code}
-    📝 Diary: ${article.diaryName}
-    📅 發布: ${article.datetime}
-    ${article.url ? `🔗 [閱讀文章](${article.url})` : ''}
-    `;
-                    });
-
-                    responseMsg += `\n💡 **檢測原理:**
-    • 按發布時間排序，最新的在前
-    • 每小時00分檢查 (活躍時段12:00-24:00)
-    • 比較文章代碼和時間來檢測新文章`;
-
-                    await message.reply(responseMsg);
-                } else {
-                    await message.reply(`❌ **無法獲取文章**
-
-    可能原因：
-    • API端點無響應
-    • JSON解析失敗
-    • 網絡連接問題
-
-    🔧 **故障排除:**
-    • 使用 \`!blog-test\` 檢查API連接`);
-                }
-            } catch (error) {
-                await message.reply(`❌ 獲取最新文章失敗: ${error.message}`);
-            }
-        } else {
-            await message.reply('❌ 博客監控未啟用');
-        }
-    }
-
     else if (cmd === '!blog-test') {
         if (blogMonitor) {
             await message.reply('🔍 執行博客API連接測試...');
@@ -677,6 +627,7 @@ async function handleDiscordCommands(message) {
                     const testMsg = `✅ **博客API連接測試成功**
 
     🔧 **檢測方式:** ${testResult.method}
+    🎭 **目標藝人:** ${testResult.artistName} (${testResult.artistCode})
     📡 **API端點:** ${testResult.endpoint}
     📰 **找到文章:** ${testResult.articlesFound} 篇
 
@@ -697,11 +648,13 @@ async function handleDiscordCommands(message) {
                     await message.reply(`❌ **博客API連接測試失敗**
 
     🔧 **檢測方式:** ${testResult.method}
+    🎭 **目標藝人代碼:** ${testResult.artistCode}
     📡 **API端點:** ${testResult.endpoint}
     ❌ **錯誤:** ${testResult.error}
 
     🔧 **故障排除建議:**
     • 檢查網絡連接
+    • 確認藝人代碼是否正確
     • 確認Family Club網站是否正常運行
     • 稍後再試`);
                 }
@@ -727,6 +680,7 @@ async function handleDiscordCommands(message) {
     📝 **標題:** ${newArticle.title}
     📝 **Diary名稱:** ${newArticle.diaryName}
     📅 **發布時間:** ${newArticle.datetimeString}
+    👤 **藝人:** ${newArticle.artistName}
     ${newArticle.url ? `🔗 **連結:** ${newArticle.url}` : ''}
 
     🕐 **檢查時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
@@ -739,6 +693,7 @@ async function handleDiscordCommands(message) {
 
     無法獲取文章信息，請檢查：
     • 網絡連接
+    • 藝人代碼配置
     • API端點狀態
     • 使用 \`!blog-test\` 進行詳細診斷`);
                 }
@@ -762,7 +717,7 @@ async function handleDiscordCommands(message) {
                     blogMonitor.startMonitoring();
                     await message.reply('✅ **博客監控重新啟動成功！**\n\n📊 已重新初始化最新文章記錄\n⏰ 恢復定期檢查排程');
                 } else {
-                    await message.reply('❌ **博客監控重新啟動失敗**\n\n無法重新初始化，請檢查API連接');
+                    await message.reply('❌ **博客監控重新啟動失敗**\n\n無法重新初始化，請檢查API連接和藝人代碼');
                 }
             } catch (error) {
                 await message.reply(`❌ 重新啟動失敗: ${error.message}`);
@@ -771,7 +726,6 @@ async function handleDiscordCommands(message) {
             await message.reply('❌ 博客監控未啟用');
         }
     }
-
     
     // 更新幫助命令
     else if (cmd === '!help') {
@@ -784,9 +738,8 @@ async function handleDiscordCommands(message) {
     \`!ig-check\` - 手動檢查Instagram
     \`!ig-accounts\` - 檢查帳號狀態
 
-    **博客監控命令:** (Family Club - 高木雄也)
+    **博客監控命令:** (Family Club)
     \`!blog-status\` - 博客監控狀態
-    \`!blog-latest\` - 查看最新文章列表
     \`!blog-test\` - 測試API連接
     \`!blog-check\` - 手動檢查新文章
     \`!blog-restart\` - 重新啟動博客監控
@@ -799,7 +752,8 @@ async function handleDiscordCommands(message) {
     🎯 使用Family Club官方API
     📅 智能時程：日本時間12:00-24:00每小時檢查
     🔍 精確檢測：比較文章代碼和發布時間
-    ⚡ 輕量級設計，適合雲端部署`);
+    ⚡ 輕量級設計，適合雲端部署
+    🎭 支持環境變數切換藝人 (ARTIST_CODE)`);
     }
 }
 
