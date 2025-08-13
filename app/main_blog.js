@@ -670,7 +670,8 @@ async function handleDiscordCommands(message) {
         if (blogMonitor) {
             await message.reply('🔍 執行手動博客檢查...');
             try {
-                const newArticle = await blogMonitor.checkForNewArticles(true); // 測試模式
+                // 調用測試模式檢查
+                const newArticle = await blogMonitor.checkForNewArticles(true);
                 
                 if (newArticle) {
                     const checkMsg = `📊 **手動檢查結果**
@@ -689,16 +690,28 @@ async function handleDiscordCommands(message) {
 
                     await message.reply(checkMsg);
                 } else {
-                    await message.reply(`❌ **手動檢查失敗**
+                    // 如果沒有返回文章，嘗試獲取狀態信息
+                    const status = blogMonitor.getStatus();
+                    await message.reply(`❌ **手動檢查完成但無法獲取詳細信息**
 
-    無法獲取文章信息，請檢查：
-    • 網絡連接
-    • 藝人代碼配置
-    • API端點狀態
-    • 使用 \`!blog-test\` 進行詳細診斷`);
+    📊 **基本狀態:**
+    • 監控狀態: ${status.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
+    • 檢查次數: ${status.totalChecks}
+    • 發現文章: ${status.articlesFound}
+    • 最後檢查: ${status.lastCheckTime || '尚未檢查'}
+
+    🔧 **故障排除:**
+    • 使用 \`!blog-test\` 檢查API連接
+    • 使用 \`!blog-status\` 查看詳細狀態`);
                 }
             } catch (error) {
-                await message.reply(`❌ 手動檢查失敗: ${error.message}`);
+                await message.reply(`❌ 手動檢查失敗: ${error.message}
+
+    🔧 **故障排除建議:**
+    • 檢查網絡連接
+    • 確認藝人代碼配置 (ARTIST_CODE)
+    • 使用 \`!blog-test\` 進行詳細診斷
+    • 使用 \`!blog-restart\` 重新啟動監控`);
             }
         } else {
             await message.reply('❌ 博客監控未啟用');

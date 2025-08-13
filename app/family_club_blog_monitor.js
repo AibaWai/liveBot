@@ -309,10 +309,12 @@ class FamilyClubBlogMonitor {
             if (testMode) {
                 console.log(`📝 [測試模式] 當前最新文章: Code=${latestArticle.code}, 時間=${latestArticle.datetimeString}`);
                 console.log(`📊 [測試模式] 總文章數: ${articles.length}`);
+                console.log(`✅ [測試模式] 返回最新文章給調用者`);
+                // 重要：在測試模式下要返回文章對象
                 return latestArticle;
             }
             
-            // 檢查是否有更新
+            // 正常監控模式的檢查邏輯
             let hasUpdate = false;
             let updateReason = '';
             
@@ -362,6 +364,10 @@ class FamilyClubBlogMonitor {
 
         } catch (error) {
             console.error('❌ [檢查更新] 檢查失敗:', error.message);
+            if (testMode) {
+                // 在測試模式下也要拋出錯誤，讓調用者知道
+                throw error;
+            }
             return null;
         }
     }
