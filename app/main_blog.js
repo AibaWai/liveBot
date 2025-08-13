@@ -357,7 +357,6 @@ client.once('ready', () => {
 \`!ig-status\` - Instagram監控狀態
 \`!blog-status\` - 博客監控狀態
 \`!blog-latest\` - 查看最新文章列表 🆕
-\`!blog-check\` - 測試新文章檢測 🆕
 \`!blog-test\` - 測試API連接
 \`!status\` - 完整系統狀態
 \`!help\` - 顯示幫助
@@ -607,38 +606,35 @@ ${latestRecord.url ? `🔗 連結: ${latestRecord.url}` : ''}
 
     else if (cmd === '!blog-latest') {
     if (blogMonitor) {
-        await message.reply('🔍 獲取最新博客文章列表...');
+        await message.reply('🔍 獲取最新博客文章...');
         try {
-            const latestArticles = await blogMonitor.getLatestArticles(5);
+            const latestArticles = await blogMonitor.getLatestArticles(1); // 只顯示最新一篇
             
             if (latestArticles.length > 0) {
-                let responseMsg = `📝 **Family Club 最新文章列表** (真正API)
+                const article = latestArticles[0];
+                let responseMsg = `📝 **Family Club 最新文章** (真正API)
 
 📡 **API端點:** diarkiji_list
 🎨 **藝人代碼:** F2017
 ⏰ **查詢時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
 
-📋 **最新 ${latestArticles.length} 篇文章:**
-`;
+🆕 **最新文章:**
+📄 **ID:** ${article.id}
+📝 **標題:** ${article.title}
+📅 **發布時間:** ${article.datetime}${article.dateEstimated ? ' (估計)' : ''}`;
 
-                latestArticles.forEach((article, index) => {
-                    responseMsg += `\n${index + 1}. **ID: ${article.id}**`;
-                    responseMsg += `\n   📝 標題: ${article.title}`;
-                    responseMsg += `\n   📅 發布時間: ${article.datetime}${article.dateEstimated ? ' (估計)' : ''}`;
-                    if (article.url) {
-                        responseMsg += `\n   🔗 連結: ${article.url}`;
-                    }
-                    responseMsg += '\n';
-                });
+                if (article.url) {
+                    responseMsg += `\n🔗 **連結:** ${article.url}`;
+                }
 
-                responseMsg += `\n💡 **檢測原理:**
-• 系統會記錄ID最大的文章作為"最新"
-• 每小時00分檢查，如果發現更大的ID就是新文章
+                responseMsg += `\n\n💡 **檢測原理:**
+• 系統記錄ID最大的文章作為"最新"
+• 每小時00分檢查，發現更大ID就是新文章
 • 自動發送新文章通知`;
 
                 await message.reply(responseMsg);
             } else {
-                await message.reply(`❌ **無法獲取文章列表**
+                await message.reply(`❌ **無法獲取文章**
 
 可能原因：
 • API端點無響應
@@ -646,8 +642,7 @@ ${latestRecord.url ? `🔗 連結: ${latestRecord.url}` : ''}
 • 網絡連接問題
 
 🔧 **故障排除:**
-• 使用 \`!blog-test\` 檢查API連接
-• 檢查網絡狀態`);
+• 使用 \`!blog-test\` 檢查API連接`);
             }
         } catch (error) {
             await message.reply(`❌ 獲取最新文章失敗: ${error.message}`);
@@ -701,289 +696,6 @@ ${testResult.sampleArticles.map((article, index) =>
         }
     }
 
-    else if (cmd === '!blog-detect') {
-        if (blogMonitor) {
-            await message.reply('🕵️ 執行API端點探測，這可能需要一些時間...');
-            try {
-                const detectionResults = await blogMonitor.getDetectionResults();
-                
-                const successfulEndpoints = detectionResults.filter(r => !r.error);
-                const jsonEndpoints = detectionResults.filter(r => r.isJson);
-                const articleEndpoints = detectionResults.filter(r => r.hasArticleData);
-                
-                let resultMsg = `🕵️ **API端點探測結果**
-
-📊 **總覽:**
-• 測試端點數: ${detectionResults.length}
-• 成功響應: ${successfulEndpoints.length} 個
-• JSON格式: ${jsonEndpoints.length} 個
-• 包含文章數據: ${articleEndpoints.length} 個
-
-🎯 **最佳候選端點:**`;
-
-                if (articleEndpoints.length > 0) {
-                    articleEndpoints.slice(0, 5).forEach((endpoint, index) => {
-                        resultMsg += `\n${index + 1}. ${endpoint.url}`;
-                        resultMsg += `\n   └ 狀態: ${endpoint.statusCode}, JSON: ${endpoint.isJson ? '✅' : '❌'}, 長度: ${endpoint.dataLength}`;
-                    });
-                } else {
-                    resultMsg += '\n❌ 未找到包含文章數據的端點';
-                }
-
-                if (jsonEndpoints.length > 0) {
-                    resultMsg += '\n\n📡 **JSON端點:**';
-                    jsonEndpoints.slice(0, 3).forEach((endpoint, index) => {
-                        resultMsg += `\n${index + 1}. ${endpoint.url} (${endpoint.statusCode})`;
-                    });
-                }
-
-                await message.reply(resultMsg);
-                
-            } catch (error) {
-                await message.reply(`❌ API探測失敗: ${error.message}`);
-            }
-        } else {
-            await message.reply('❌ 博客監控未啟用');
-        }
-    }
-
-    // 在現有的 !blog-detect 命令後添加
-    else if (cmd === '!blog-enhance') {
-        if (blogMonitor) {
-            await message.reply('🎯 執行增強API探測（包含POST請求）...');
-            try {
-                const results = await blogMonitor.enhancedAPIDetection();
-                
-                let resultMsg = `🎯 **增強API探測結果**
-
-    📊 **總覽:**
-    - 測試端點數: ${results.summary.totalTested}
-    - 最高信心度: ${results.summary.bestScore}%
-    - 發現端點: ${results.summary.foundEndpoint || '無'}
-
-    🎯 **最佳候選:**`;
-
-                if (results.bestCandidate) {
-                    resultMsg += `\n• URL: ${results.bestCandidate.url}
-    - 信心度: ${results.bestCandidate.confidence}%
-    - 真實文章: ${results.bestCandidate.hasRealArticles ? '✅' : '❌'}
-    - 文章數量: ${results.bestCandidate.articleCount}`;
-                } else {
-                    resultMsg += '\n❌ 未找到有效的API端點';
-                }
-
-                await message.reply(resultMsg);
-                
-            } catch (error) {
-                await message.reply(`❌ 增強探測失敗: ${error.message}`);
-            }
-        } else {
-            await message.reply('❌ 博客監控未啟用');
-        }
-    }
-
-    // 在現有的 !blog-enhance 命令後添加
-    else if (cmd === '!blog-target') {
-        await message.reply('🎯 執行針對Family Club的深度探測，這將測試多種User-Agent和請求配置...');
-        try {
-            const TargetedFamilyClubDetector = require('./targeted_familyclub_detector');
-            const detector = new TargetedFamilyClubDetector();
-            const results = await detector.executeTargetedDetection();
-            
-            let resultMsg = `🎯 **針對性深度探測結果**
-
-    📊 **總覽:**
-    - 總測試數: ${results.summary.totalTests}
-    - 成功響應: ${results.summary.successfulTests}
-    - 最高信心度: ${results.summary.bestScore}%
-    - 發現文章的端點: ${results.summary.articlesFound}
-
-    🏆 **最佳結果:**`;
-
-            if (results.bestResult) {
-                resultMsg += `\n• URL: ${results.bestResult.url}
-    - 信心度: ${results.bestResult.confidence}%
-    - User-Agent: ${results.bestResult.userAgent.substring(0, 50)}...
-    - 發現: ${results.bestResult.findings.slice(0, 3).join(', ')}`;
-                
-                if (results.bestResult.hasArticleContent && results.bestResult.articleData) {
-                    resultMsg += `\n• 文章數量: ${results.bestResult.articleData.articles.length}`;
-                    if (results.bestResult.articleData.articles.length > 0) {
-                        const firstArticle = results.bestResult.articleData.articles[0];
-                        resultMsg += `\n• 範例文章: ${firstArticle.title || firstArticle.id || 'N/A'}`;
-                    }
-                }
-            } else {
-                resultMsg += '\n❌ 未找到有效的API端點';
-            }
-
-            if (results.topResults.length > 1) {
-                resultMsg += `\n\n🔝 **前3名候選:**`;
-                results.topResults.slice(0, 3).forEach((result, index) => {
-                    resultMsg += `\n${index + 1}. 信心度 ${result.confidence}% - ${result.url.substring(result.url.lastIndexOf('/') + 1)}`;
-                });
-            }
-
-            await message.reply(resultMsg);
-            
-        } catch (error) {
-            await message.reply(`❌ 針對性探測失敗: ${error.message}`);
-        }
-    }
-
-    // 在現有命令後添加
-    else if (cmd === '!blog-deep') {
-        await message.reply('🔍 執行深度內容分析，專門尋找 "ブログ記事一覧" 中的真實文章...');
-        try {
-            const DeepContentAnalyzer = require('./deep_content_analyzer');
-            const analyzer = new DeepContentAnalyzer();
-            const results = await analyzer.executeDeepAnalysis();
-            
-            if (results.success) {
-                let resultMsg = `🔍 **深度內容分析結果**
-
-    📊 **總覽:**
-    - 總文章數: ${results.totalArticles}
-    - JSON來源: ${results.analysis.jsonArticles} 篇
-    - HTML來源: ${results.analysis.htmlArticles} 篇
-
-    📝 **發現的文章:**`;
-
-                if (results.articles.length > 0) {
-                    results.articles.slice(0, 5).forEach((article, index) => {
-                        resultMsg += `\n${index + 1}. **${article.title || 'ID: ' + article.id}**`;
-                        if (article.date) resultMsg += `\n   📅 ${article.date}`;
-                        if (article.url) resultMsg += `\n   🔗 ${article.url}`;
-                        if (article.source) resultMsg += `\n   📍 來源: ${article.source}`;
-                        resultMsg += '\n';
-                    });
-                    
-                    if (results.articles.length > 5) {
-                        resultMsg += `\n...還有 ${results.articles.length - 5} 篇文章`;
-                    }
-                } else {
-                    resultMsg += '\n❌ 未找到真實文章';
-                }
-
-                await message.reply(resultMsg);
-            } else {
-                await message.reply(`❌ 深度分析失敗: ${results.error}`);
-            }
-            
-        } catch (error) {
-            await message.reply(`❌ 深度分析執行失敗: ${error.message}`);
-        }
-    }
-
-    // 在現有命令後添加
-    else if (cmd === '!blog-js') {
-        await message.reply('🔍 執行JavaScript代碼分析，尋找Ajax調用和API端點...');
-        try {
-            const JavaScriptAnalyzer = require('./javascript_analyzer');
-            const analyzer = new JavaScriptAnalyzer();
-            const results = await analyzer.executeJavaScriptAnalysis();
-            
-            if (results.success) {
-                let resultMsg = `🔍 **JavaScript代碼分析結果**
-
-    📊 **總覽:**
-    - JavaScript代碼段: ${results.summary.scriptsFound}
-    - Ajax調用: ${results.summary.ajaxCallsFound}
-    - API端點: ${results.summary.apiEndpointsFound}
-    - 文章加載器: ${results.summary.articleLoadersFound}
-    - 測試端點: ${results.summary.endpointsTested}
-    - 工作端點: ${results.summary.workingEndpoints}
-
-    🔍 **發現的Ajax調用:**`;
-
-                if (results.analysis.ajaxCalls.length > 0) {
-                    results.analysis.ajaxCalls.slice(0, 3).forEach((call, index) => {
-                        resultMsg += `\n${index + 1}. **${call.type}**`;
-                        resultMsg += `\n   URL: ${call.url}`;
-                        if (call.context) {
-                            resultMsg += `\n   Context: ${call.context.substring(0, 100)}...`;
-                        }
-                    });
-                } else {
-                    resultMsg += '\n❌ 未發現Ajax調用';
-                }
-
-                resultMsg += '\n\n🎯 **發現的API端點:**';
-                if (results.analysis.apiEndpoints.length > 0) {
-                    results.analysis.apiEndpoints.slice(0, 3).forEach((endpoint, index) => {
-                        resultMsg += `\n${index + 1}. **${endpoint.type}**`;
-                        resultMsg += `\n   URL: ${endpoint.url}`;
-                    });
-                } else {
-                    resultMsg += '\n❌ 未發現API端點';
-                }
-
-                resultMsg += '\n\n✅ **測試結果:**';
-                if (results.testResults.length > 0) {
-                    const workingEndpoints = results.testResults.filter(r => r.statusCode === 200 && !r.error);
-                    if (workingEndpoints.length > 0) {
-                        workingEndpoints.slice(0, 3).forEach((result, index) => {
-                            resultMsg += `\n${index + 1}. ${result.url}`;
-                            resultMsg += `\n   Status: ${result.statusCode}, Type: ${result.contentType}`;
-                            resultMsg += `\n   JSON: ${result.isJson ? '✅' : '❌'}, Articles: ${result.hasArticleData ? '✅' : '❌'}`;
-                        });
-                    } else {
-                        resultMsg += '\n❌ 無工作端點';
-                    }
-                } else {
-                    resultMsg += '\n⚠️ 未測試端點';
-                }
-
-                await message.reply(resultMsg);
-            } else {
-                await message.reply(`❌ JavaScript分析失敗: ${results.error}`);
-            }
-            
-        } catch (error) {
-            await message.reply(`❌ JavaScript分析執行失敗: ${error.message}`);
-        }
-    }
-
-    else if (cmd === '!blog-init') {
-        if (blogMonitor) {
-            await message.reply('🔄 執行手動初始化（API探測模式）...');
-            try {
-                const success = await blogMonitor.reinitialize();
-                
-                if (success) {
-                    const latestRecord = blogMonitor.getLatestRecord();
-                    const blogStatus = blogMonitor.getStatus();
-                    
-                    await message.reply(`✅ **初始化成功！**
-
-📄 **基準文章已記錄:**
-• 文章ID: ${latestRecord.articleId || '未知'}
-• 發布時間: ${latestRecord.datetime}
-• 標題: ${latestRecord.title}
-${latestRecord.url ? `• 連結: ${latestRecord.url}` : ''}
-🔧 檢測方式: ${blogStatus.foundApiEndpoint ? `API端點: ${blogStatus.foundApiEndpoint}` : 'HTML回退模式'}
-
-🎯 系統將以此為基準檢測新文章`);
-                } else {
-                    await message.reply(`❌ **初始化失敗**
-
-可能原因：
-• 網站連接問題
-• API端點探測失效
-• 網頁結構解析失敗
-• 未找到有效文章
-
-🔧 建議：
-• 先使用 \`!blog-test\` 檢查網站狀態
-• 使用 \`!blog-detect\` 重新探測API端點`);
-                }
-            } catch (error) {
-                await message.reply(`❌ 初始化失敗: ${error.message}`);
-            }
-        } else {
-            await message.reply('❌ 博客監控未啟用');
-        }
-    }
     
     // 更新幫助命令
     else if (cmd === '!help') {
@@ -996,23 +708,14 @@ ${latestRecord.url ? `• 連結: ${latestRecord.url}` : ''}
     \`!ig-check\` - 手動檢查Instagram
     \`!ig-accounts\` - 檢查帳號狀態
 
-    **博客監控命令 (真正API模式):**
+    **博客監控命令:**
     \`!blog-status\` - 博客監控狀態
     \`!blog-latest\` - 查看最新文章列表 🆕
     \`!blog-test\` - 測試API連接
-    \`!blog-init\` - 手動初始化記錄
 
     **系統命令:**
     \`!status\` - 完整系統狀態
-    \`!help\` - 顯示此幫助
-
-    **博客監控說明 (真正API模式):**
-    🌐 監控目標: Family Club F2017 日記
-    🎯 API端點: diarkiji_list (真正的後端API)
-    📊 檢測方式: 文章ID和發布時間精確比較
-    ⏰ 檢查頻率: 每小時00分自動檢查
-    🎯 智能檢測: 只有真正的新文章才會觸發通知
-    ⚡ 輕量級: 專為 Koyeb 優化，高效穩定`);
+    \`!help\` - 顯示此幫助`);
     }
 }
 

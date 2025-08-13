@@ -358,32 +358,34 @@ class FamilyClubBlogMonitor {
         }
     }
 
-    // 找出最新文章
+    // 找出最新文章 - 修復排序問題
     findLatestArticle(articles) {
         if (articles.length === 0) {
             return null;
         }
         
-        // 打印所有文章ID用於調試
         console.log('🔍 [最新文章] 所有文章ID:', articles.map(a => a.id).join(', '));
         
-        // 優先按ID排序（數字越大越新）
-        const articlesWithNumericId = articles.filter(a => a.id && !isNaN(a.id));
-        if (articlesWithNumericId.length > 0) {
+        // 強制按數字ID排序（ID越大越新）
+        const articlesWithId = articles.filter(a => a.id && !isNaN(a.id));
+        if (articlesWithId.length > 0) {
             console.log('📊 [最新文章] 按數字ID排序查找最新文章');
-            // 確保正確的數字比較
-            const sorted = articlesWithNumericId.sort((a, b) => {
-                const idA = Number(a.id);
-                const idB = Number(b.id);
-                console.log(`🔍 [排序] 比較 ${idA} vs ${idB} = ${idB - idA}`);
-                return idB - idA;
+            
+            // 轉換為數字進行比較，確保正確排序
+            const sortedArticles = articlesWithId.sort((a, b) => {
+                const numA = parseInt(a.id);
+                const numB = parseInt(b.id);
+                console.log(`🔍 [排序] 比較 ${numA} vs ${numB}`);
+                return numB - numA; // 大的在前
             });
-            console.log('📊 [最新文章] 排序後的前3個ID:', sorted.slice(0, 3).map(a => a.id).join(', '));
-            return sorted[0];
+            
+            console.log('📊 [最新文章] 排序後ID順序:', sortedArticles.slice(0, 5).map(a => a.id).join(', '));
+            console.log('✅ [最新文章] 選擇最新文章 ID:', sortedArticles[0].id);
+            return sortedArticles[0];
         }
         
-        // 否則按時間排序
-        console.log('📊 [最新文章] 按時間排序查找最新文章');
+        // 回退到時間排序
+        console.log('📊 [最新文章] 回退到時間排序');
         return articles.sort((a, b) => b.date - a.date)[0];
     }
 
