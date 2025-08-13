@@ -13,7 +13,7 @@ RUN npm install --only=production && \
 COPY app/main_blog.js main_blog.js
 COPY app/api_detector_blog_monitor.js api_detector_blog_monitor.js
 COPY app/precise_api_detector.js precise_api_detector.js
-COPY app/enhanced_blog_monitor.js enhanced_blog_monitor.js
+COPY app/enhanced_api_blog_monitor.js enhanced_api_blog_monitor.js
 COPY app/safer_instagram_monitor.js safer_instagram_monitor.js
 COPY app/web_status_panel.js web_status_panel.js
 
