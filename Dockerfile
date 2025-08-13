@@ -1,37 +1,17 @@
 FROM node:18-alpine
 
-# Install Chrome dependencies for Puppeteer
-RUN apk add --no-cache \
-    chromium \
-    nss \
-    freetype \
-    freetype-dev \
-    harfbuzz \
-    ca-certificates \
-    ttf-freefont \
-    wget \
-    && rm -rf /var/cache/apk/*
-
-# Tell Puppeteer to skip installing Chrome. We'll be using the installed package.
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium-browser
-
 WORKDIR /app
 
 # Copy package files first for better caching
 COPY app/package.json package.json
 
-# Install dependencies including Puppeteer
+# Install dependencies (no Puppeteer)
 RUN npm install --only=production && \
-    npm install puppeteer && \
     npm cache clean --force
 
 # Copy application files
-COPY app/main.js main.js
 COPY app/main_blog.js main_blog.js
-COPY app/blog_monitor.js blog_monitor.js
-COPY app/enhanced_blog_monitor.js enhanced_blog_monitor.js
-COPY app/simplified_instagram_monitor.js simplified_instagram_monitor.js
+COPY app/api_detector_blog_monitor.js api_detector_blog_monitor.js
 COPY app/safer_instagram_monitor.js safer_instagram_monitor.js
 COPY app/web_status_panel.js web_status_panel.js
 

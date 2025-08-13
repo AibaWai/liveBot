@@ -7,18 +7,17 @@ const axios = require('axios');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 在現有的環境變數檢查後添加
+// 博客監控配置
 const BLOG_NOTIFICATION_CHANNEL_ID = process.env.BLOG_NOTIFICATION_CHANNEL_ID;
-const USE_ENHANCED_BLOG_MONITOR = process.env.USE_ENHANCED_BLOG_MONITOR === 'true'; // 新增環境變數
 
 if (BLOG_NOTIFICATION_CHANNEL_ID) {
-    console.log(`📝 博客監控已啟用 (${USE_ENHANCED_BLOG_MONITOR ? '動態模式' : '靜態模式'})`);
+    console.log('📝 博客監控已啟用 (API探測模式)');
 } else {
     console.log('📝 博客監控未配置 (BLOG_NOTIFICATION_CHANNEL_ID 未設定)');
 }
 
-console.log('🚀 統一直播監控機器人啟動中...');
-console.log('📺 Instagram 監控 + Discord 頻道監控 + 電話通知 + 博客監控');
+console.log('🚀 輕量級統一直播監控機器人啟動中...');
+console.log('📺 Instagram 監控 + Discord 頻道監控 + API探測博客監控');
 
 // === 環境變數檢查 ===
 const requiredEnvVars = [
@@ -62,7 +61,6 @@ if (process.env.CHANNEL_CONFIGS) {
                 process.exit(1);
             }
             
-            // 檢查電話通知配置（可選）
             if (channelConfig.api_key && channelConfig.phone_number) {
                 if (!channelConfig.caller_id) {
                     console.warn(`⚠️ 頻道 ${channelId} 缺少 caller_id，將使用預設值 '1'`);
@@ -90,68 +88,40 @@ if (missingVars.length > 0) {
 
 // === 配置整合 ===
 const config = {
-    // Discord Bot 基本配置
     DISCORD_TOKEN: process.env.DISCORD_TOKEN,
     NOTIFICATION_CHANNEL_ID: process.env.NOTIFICATION_CHANNEL_ID,
-    
-    // Instagram 監控配置
     TARGET_USERNAME: process.env.TARGET_USERNAME,
     IG_SESSION_ID: process.env.IG_SESSION_ID,
     IG_CSRF_TOKEN: process.env.IG_CSRF_TOKEN,
     IG_DS_USER_ID: process.env.IG_DS_USER_ID,
-    
-    // Discord 頻道監控配置
     CHANNEL_CONFIGS: discordChannelConfigs,
-    
-    // PushCall 配置 (可選)
     PUSHCALL_API_KEY: process.env.PUSHCALL_API_KEY,
     PUSHCALL_FROM: process.env.PUSHCALL_FROM,
     PUSHCALL_TO: process.env.PUSHCALL_TO,
-    
-    // 博客監控配置
-    BLOG_NOTIFICATION_CHANNEL_ID: process.env.BLOG_NOTIFICATION_CHANNEL_ID,
-    USE_ENHANCED_BLOG_MONITOR: USE_ENHANCED_BLOG_MONITOR
-};
-
-// === Instagram 監控配置 ===
-const SAFETY_CONFIG = {
-    minInterval: 90,
-    maxInterval: 180,
-    maxConsecutiveErrors: 3,
-    backoffMultiplier: 2,
-    maxBackoffInterval: 600,
-    rateLimitCooldown: 900,
+    BLOG_NOTIFICATION_CHANNEL_ID: process.env.BLOG_NOTIFICATION_CHANNEL_ID
 };
 
 // === 統一狀態管理 ===
 let unifiedState = {
-    // Bot 基本狀態
     startTime: Date.now(),
     botReady: false,
-    
-    // Instagram 監控狀態
     instagram: {
         isLiveNow: false,
         targetUserId: null,
         isMonitoring: false,
         consecutiveErrors: 0,
-        currentInterval: SAFETY_CONFIG.minInterval,
         accountStatus: 'unknown',
         totalRequests: 0,
         successfulRequests: 0,
         lastSuccessTime: Date.now(),
         lastCheck: null
     },
-    
-    // Discord 頻道監控狀態
     discord: {
         totalMessagesProcessed: 0,
         channelStats: {},
         lastDetections: [],
         apiUsage: {}
     },
-    
-    // 通知統計
     notifications: {
         discordMessages: 0,
         phoneCallsMade: 0,
@@ -273,7 +243,7 @@ function getInstagramStatus() {
     };
 }
 
-// === 博客監控系統（升級版）===
+// === 輕量級博客監控系統 ===
 let blogMonitor = null;
 
 async function startBlogMonitoring() {
@@ -283,31 +253,9 @@ async function startBlogMonitoring() {
     }
 
     try {
-        // 根據環境變數選擇監控器類型
-        if (USE_ENHANCED_BLOG_MONITOR) {
-            console.log('🚀 [Blog] 啟動增強版博客監控器（支援動態內容）');
-            
-            // 檢查 Puppeteer 依賴
-            try {
-                require('puppeteer');
-                console.log('✅ [Blog] Puppeteer 已安裝');
-            } catch (error) {
-                console.error('❌ [Blog] Puppeteer 未安裝，請執行: npm install puppeteer');
-                console.log('⚠️ [Blog] 回退到基本監控器');
-                config.USE_ENHANCED_BLOG_MONITOR = false;
-            }
-        }
+        const APIDetectorBlogMonitor = require('./api_detector_blog_monitor');
         
-        let BlogMonitorClass;
-        if (config.USE_ENHANCED_BLOG_MONITOR) {
-            BlogMonitorClass = require('./enhanced_blog_monitor');
-            console.log('🔧 [Blog] 使用增強版監控器（JavaScript 動態內容支援）');
-        } else {
-            BlogMonitorClass = require('./blog_monitor');
-            console.log('🔧 [Blog] 使用基本監控器（靜態 HTML 解析）');
-        }
-        
-        blogMonitor = new BlogMonitorClass(async (message, type, source) => {
+        blogMonitor = new APIDetectorBlogMonitor(async (message, type, source) => {
             try {
                 const channel = await client.channels.fetch(BLOG_NOTIFICATION_CHANNEL_ID);
                 await channel.send(message);
@@ -318,34 +266,12 @@ async function startBlogMonitoring() {
         });
         
         blogMonitor.startMonitoring();
-        console.log(`🚀 [Blog] Family Club 博客監控已啟動 (${config.USE_ENHANCED_BLOG_MONITOR ? '動態模式' : '靜態模式'})`);
+        console.log('🚀 [Blog] Family Club API探測博客監控已啟動');
+        console.log('🕵️ [Blog] 監控模式: 智能API端點探測 + HTML回退');
         console.log('🔗 [Blog] 監控網址: https://web.familyclub.jp/s/jwb/diary/F2017?ima=3047');
         
     } catch (error) {
         console.error('❌ [Blog] 博客監控啟動失敗:', error.message);
-        
-        // 如果增強版失敗，嘗試回退到基本版
-        if (config.USE_ENHANCED_BLOG_MONITOR) {
-            console.log('🔄 [Blog] 嘗試回退到基本監控器...');
-            try {
-                const BasicBlogMonitor = require('./blog_monitor');
-                blogMonitor = new BasicBlogMonitor(async (message, type, source) => {
-                    try {
-                        const channel = await client.channels.fetch(BLOG_NOTIFICATION_CHANNEL_ID);
-                        await channel.send(message);
-                        console.log(`📤 [${source}] 博客通知已發送: ${type}`);
-                    } catch (error) {
-                        console.error('❌ 博客通知發送失敗:', error.message);
-                    }
-                });
-                
-                blogMonitor.startMonitoring();
-                console.log('✅ [Blog] 回退到基本博客監控器成功');
-                config.USE_ENHANCED_BLOG_MONITOR = false;
-            } catch (fallbackError) {
-                console.error('❌ [Blog] 基本監控器也啟動失敗:', fallbackError.message);
-            }
-        }
     }
 }
 
@@ -403,13 +329,19 @@ client.once('ready', () => {
     console.log(`🕐 當前日本時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}`);
     
     // 發送啟動通知
-    sendNotification(`🚀 **統一直播監控機器人已啟動** (日本時間)
+    sendNotification(`🚀 **輕量級統一監控機器人已啟動** (日本時間)
 
 **Instagram監控:** @${config.TARGET_USERNAME}
 **Discord頻道監控:** ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道
-**博客監控:** ${config.BLOG_NOTIFICATION_CHANNEL_ID ? `✅ Family Club F2017 (${config.USE_ENHANCED_BLOG_MONITOR ? '動態模式' : '靜態模式'})` : '❌ 未配置'}
+**博客監控:** ${config.BLOG_NOTIFICATION_CHANNEL_ID ? '✅ Family Club F2017 (API探測模式)' : '❌ 未配置'}
 **電話通知:** ${config.PUSHCALL_API_KEY ? '✅ 已配置' : '❌ 未配置'}
 **時區:** 🕐 日本時間 (JST)
+
+**博客監控特色:**
+🕵️ 智能API端點探測
+📡 自動尋找最佳數據源
+🔄 HTML解析回退機制
+⚡ 輕量級，適合 Koyeb
 
 **智能間隔調整:**
 🌙 深夜 (02-06): 10-15分鐘間隔
@@ -417,19 +349,13 @@ client.once('ready', () => {
 ☀️ 活躍 (09-24): 90-180秒間隔
 🌃 深夜前期 (00-02): 3-5分鐘間隔
 
-**博客監控功能:**
-${config.USE_ENHANCED_BLOG_MONITOR ? '🚀 JavaScript 動態內容解析' : '📄 靜態 HTML 解析'}
-📊 智能文章ID和時間檢測
-⏰ 每小時00分自動檢查
-🎯 基準記錄自動建立和更新
-
 📋 **可用命令:**
 \`!ig-start\` - 開始Instagram監控
 \`!ig-stop\` - 停止Instagram監控
 \`!ig-status\` - Instagram監控狀態
 \`!blog-status\` - 博客監控狀態
-\`!blog-latest\` - 顯示最新文章記錄
-\`!blog-switch\` - 切換監控器模式 🆕
+\`!blog-detect\` - 手動API端點探測 🆕
+\`!blog-test\` - 測試博客連接
 \`!status\` - 完整系統狀態
 \`!help\` - 顯示幫助
 
@@ -535,11 +461,7 @@ async function handleDiscordCommands(message) {
 📊 今日請求: ${igStatus.dailyRequests}/${igStatus.maxDailyRequests}
 
 **時間段智能監控 (日本時間):**
-🕐 當前時間: ${igStatus.japanTime}
-🌙 深夜 (02-06): 10-15分鐘間隔
-🌅 早晨 (07-08): 3-5分鐘間隔  
-☀️ 活躍 (09-24): 90-180秒間隔
-🌃 深夜前期 (00-02): 3-5分鐘間隔`;
+🕐 當前時間: ${igStatus.japanTime}`;
 
         await message.reply(statusMsg);
     }
@@ -612,7 +534,7 @@ async function handleDiscordCommands(message) {
         const blogStatus = blogMonitor ? blogMonitor.getStatus() : { isMonitoring: false };
         const latestRecord = blogMonitor ? blogMonitor.getLatestRecord() : null;
         
-        const statusMsg = `📊 **統一監控系統狀態** (日本時間)
+        const statusMsg = `📊 **輕量級統一監控系統狀態** (日本時間)
 
 **系統運行時間:** ${runtime} 分鐘
 **Bot狀態:** ${unifiedState.botReady ? '✅ 在線' : '❌ 離線'}
@@ -626,10 +548,10 @@ async function handleDiscordCommands(message) {
 • 已停用帳號: ${igStatus.disabledAccounts || 0}
 • 成功率: ${igStatus.successRate}%
 
-**博客監控:**
+**博客監控 (API探測模式):**
 • 目標: Family Club F2017
-• 模式: ${config.USE_ENHANCED_BLOG_MONITOR ? '🚀 動態模式' : '📄 靜態模式'}
 • 狀態: ${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 停止'}
+• 探測方式: ${blogStatus.foundApiEndpoint ? '🎯 API端點' : '📄 HTML回退'}
 • 檢查次數: ${blogStatus.totalChecks}
 • 發現新文章: ${blogStatus.articlesFound}
 • 最新記錄: ${latestRecord ? `${latestRecord.datetime} (ID: ${latestRecord.articleId})` : '未建立'}
@@ -653,16 +575,16 @@ async function handleDiscordCommands(message) {
             const blogStatus = blogMonitor.getStatus();
             const latestRecord = blogMonitor.getLatestRecord();
             
-            const statusMsg = `📝 **Family Club 博客監控狀態**
+            const statusMsg = `📝 **Family Club 博客監控狀態** (API探測模式)
 
-**監控模式:** ${config.USE_ENHANCED_BLOG_MONITOR ? '🚀 動態模式 (JavaScript 支援)' : '📄 靜態模式 (基本 HTML)'}
 **監控狀態:** ${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
+**監控方式:** 🕵️ 智能API端點探測 + HTML回退
 **目標網址:** ${blogStatus.blogUrl}
+**發現的API端點:** ${blogStatus.foundApiEndpoint || '❌ 未找到，使用HTML回退'}
 **總檢查次數:** ${blogStatus.totalChecks}
 **發現新文章:** ${blogStatus.articlesFound} 篇
 **最後檢查:** ${blogStatus.lastCheckTime || '尚未檢查'}
 **下次檢查:** ${blogStatus.nextCheckTime || '未安排'}
-${config.USE_ENHANCED_BLOG_MONITOR ? `**瀏覽器狀態:** ${blogStatus.browserStatus || '未知'}` : ''}
 
 **當前記錄的最新文章:**
 ${latestRecord ? `📄 文章ID: ${latestRecord.articleId || '未知'}
@@ -671,7 +593,8 @@ ${latestRecord ? `📄 文章ID: ${latestRecord.articleId || '未知'}
 ${latestRecord.url ? `🔗 連結: ${latestRecord.url}` : ''}
 ⏰ 記錄更新: ${latestRecord.lastUpdated}` : '❌ 尚未建立記錄'}
 
-⏰ 每小時00分自動檢查`;
+⏰ 每小時00分自動檢查
+🕵️ 自動探測最佳數據源`;
 
             await message.reply(statusMsg);
         } else {
@@ -691,7 +614,7 @@ ${latestRecord.url ? `🔗 連結: ${latestRecord.url}` : ''}
 📝 **文章標題:** ${latestRecord.title}
 ${latestRecord.url ? `🔗 **文章連結:** ${latestRecord.url}` : ''}
 ⏰ **記錄時間:** ${latestRecord.lastUpdated}
-🔧 **檢測模式:** ${config.USE_ENHANCED_BLOG_MONITOR ? '動態 (JavaScript)' : '靜態 (HTML)'}
+🔧 **檢測模式:** API探測 + HTML回退
 
 💡 這是系統當前記錄的最新文章信息，用於比較檢測新文章`);
             } else {
@@ -700,12 +623,12 @@ ${latestRecord.url ? `🔗 **文章連結:** ${latestRecord.url}` : ''}
 原因可能是：
 • 系統剛啟動，尚未完成初始化
 • 網站連接失敗
-• 網頁解析出現問題
+• API端點探測未找到有效數據
 
 🔧 建議操作：
 • 使用 \`!blog-test\` 測試網站連接
+• 使用 \`!blog-detect\` 手動API探測
 • 使用 \`!blog-init\` 手動初始化
-• 使用 \`!blog-switch\` 切換監控模式
 • 檢查網絡連接狀態`);
             }
         } else {
@@ -715,7 +638,7 @@ ${latestRecord.url ? `🔗 **文章連結:** ${latestRecord.url}` : ''}
 
     else if (cmd === '!blog-check') {
         if (blogMonitor) {
-            await message.reply(`🔍 執行手動博客檢查（${config.USE_ENHANCED_BLOG_MONITOR ? '動態模式' : '靜態模式'}）...`);
+            await message.reply('🔍 執行手動博客檢查（API探測模式）...');
             try {
                 const newArticle = await blogMonitor.checkForNewArticles(true);
                 
@@ -727,7 +650,7 @@ ${latestRecord.url ? `🔗 **文章連結:** ${latestRecord.url}` : ''}
 📝 **文章標題:** ${newArticle.title}
 ${newArticle.url ? `🔗 **文章連結:** ${newArticle.url}` : ''}
 ⏰ **檢查時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-🔧 **檢測模式:** ${config.USE_ENHANCED_BLOG_MONITOR ? '動態 (JavaScript)' : '靜態 (HTML)'}
+🔧 **檢測模式:** API探測 + HTML回退
 
 💡 這是網站上當前最新的文章`);
                 } else {
@@ -743,38 +666,38 @@ ${newArticle.url ? `🔗 **文章連結:** ${newArticle.url}` : ''}
 
     else if (cmd === '!blog-test') {
         if (blogMonitor) {
-            await message.reply(`🔍 執行博客網站連接測試（${config.USE_ENHANCED_BLOG_MONITOR ? '動態模式' : '靜態模式'}）...`);
+            await message.reply('🔍 執行博客網站連接測試（API探測模式）...');
             try {
                 const testResult = await blogMonitor.testWebsiteAccess();
                 
                 if (testResult.success) {
                     const testMsg = `✅ **博客網站連接測試成功**
 
-🔧 **檢測方式:** ${testResult.method || (config.USE_ENHANCED_BLOG_MONITOR ? 'dynamic (Puppeteer)' : 'static (HTTPS)')}
-📊 **連接狀態:** HTTP ${testResult.statusCode || 200}
-📄 **內容長度:** ${testResult.contentLength.toLocaleString()} 字元
-🏗️ **包含time標籤:** ${testResult.hasTimeTag ? '✅ 是' : '❌ 否'}
-📰 **找到文章:** ${testResult.articlesFound} 篇
-${config.USE_ENHANCED_BLOG_MONITOR ? `🌐 **動態內容支援:** ${testResult.dynamicContentSupported ? '✅ 是' : '❌ 否'}` : ''}
+🔧 **檢測方式:** ${testResult.method}
+🕵️ **探測到的端點:** ${testResult.detectedEndpoints} 個
+📡 **有效JSON端點:** ${testResult.validJsonEndpoints} 個
+📰 **包含文章數據的端點:** ${testResult.endpointsWithArticles} 個
+🎯 **使用的API端點:** ${testResult.foundApiEndpoint || '無，使用HTML回退'}
+📄 **找到文章:** ${testResult.articlesFound} 篇
 
 ${testResult.sampleArticles && testResult.sampleArticles.length > 0 ? `📋 **範例文章:**
 ${testResult.sampleArticles.map((article, index) => 
     `${index + 1}. ID: ${article.id || 'N/A'} | 時間: ${article.time} | 標題: ${article.title}`
 ).join('\n')}` : ''}
 
-✅ 網站可正常訪問並解析文章！`;
+✅ 博客API探測系統運行正常！`;
                     
                     await message.reply(testMsg);
                 } else {
                     await message.reply(`❌ **博客網站連接測試失敗**
 
-🔧 **檢測方式:** ${testResult.method || (config.USE_ENHANCED_BLOG_MONITOR ? 'dynamic (Puppeteer)' : 'static (HTTPS)')}
+🔧 **檢測方式:** ${testResult.method}
 錯誤: ${testResult.error}
 
 🔧 **故障排除建議:**
 • 檢查網絡連接
 • 確認網站是否正常運行
-${config.USE_ENHANCED_BLOG_MONITOR ? '• 檢查 Puppeteer 是否正常運行\n• 嘗試使用 `!blog-switch` 切換到靜態模式' : '• 嘗試使用 `!blog-switch` 切換到動態模式'}
+• 嘗試使用 \`!blog-detect\` 重新探測API
 • 稍後再試`);
                 }
             } catch (error) {
@@ -785,14 +708,62 @@ ${config.USE_ENHANCED_BLOG_MONITOR ? '• 檢查 Puppeteer 是否正常運行\n�
         }
     }
 
+    else if (cmd === '!blog-detect') {
+        if (blogMonitor) {
+            await message.reply('🕵️ 執行API端點探測，這可能需要一些時間...');
+            try {
+                const detectionResults = await blogMonitor.getDetectionResults();
+                
+                const successfulEndpoints = detectionResults.filter(r => !r.error);
+                const jsonEndpoints = detectionResults.filter(r => r.isJson);
+                const articleEndpoints = detectionResults.filter(r => r.hasArticleData);
+                
+                let resultMsg = `🕵️ **API端點探測結果**
+
+📊 **總覽:**
+• 測試端點數: ${detectionResults.length}
+• 成功響應: ${successfulEndpoints.length} 個
+• JSON格式: ${jsonEndpoints.length} 個
+• 包含文章數據: ${articleEndpoints.length} 個
+
+🎯 **最佳候選端點:**`;
+
+                if (articleEndpoints.length > 0) {
+                    articleEndpoints.slice(0, 5).forEach((endpoint, index) => {
+                        resultMsg += `\n${index + 1}. ${endpoint.url}`;
+                        resultMsg += `\n   └ 狀態: ${endpoint.statusCode}, JSON: ${endpoint.isJson ? '✅' : '❌'}, 長度: ${endpoint.dataLength}`;
+                    });
+                } else {
+                    resultMsg += '\n❌ 未找到包含文章數據的端點';
+                }
+
+                if (jsonEndpoints.length > 0) {
+                    resultMsg += '\n\n📡 **JSON端點:**';
+                    jsonEndpoints.slice(0, 3).forEach((endpoint, index) => {
+                        resultMsg += `\n${index + 1}. ${endpoint.url} (${endpoint.statusCode})`;
+                    });
+                }
+
+                await message.reply(resultMsg);
+                
+            } catch (error) {
+                await message.reply(`❌ API探測失敗: ${error.message}`);
+            }
+        } else {
+            await message.reply('❌ 博客監控未啟用');
+        }
+    }
+
     else if (cmd === '!blog-init') {
         if (blogMonitor) {
-            await message.reply(`🔄 執行手動初始化（${config.USE_ENHANCED_BLOG_MONITOR ? '動態模式' : '靜態模式'}）...`);
+            await message.reply('🔄 執行手動初始化（API探測模式）...');
             try {
                 const success = await blogMonitor.reinitialize();
                 
                 if (success) {
                     const latestRecord = blogMonitor.getLatestRecord();
+                    const blogStatus = blogMonitor.getStatus();
+                    
                     await message.reply(`✅ **初始化成功！**
 
 📄 **基準文章已記錄:**
@@ -800,7 +771,7 @@ ${config.USE_ENHANCED_BLOG_MONITOR ? '• 檢查 Puppeteer 是否正常運行\n�
 • 發布時間: ${latestRecord.datetime}
 • 標題: ${latestRecord.title}
 ${latestRecord.url ? `• 連結: ${latestRecord.url}` : ''}
-🔧 檢測模式: ${config.USE_ENHANCED_BLOG_MONITOR ? '動態 (JavaScript)' : '靜態 (HTML)'}
+🔧 檢測方式: ${blogStatus.foundApiEndpoint ? `API端點: ${blogStatus.foundApiEndpoint}` : 'HTML回退模式'}
 
 🎯 系統將以此為基準檢測新文章`);
                 } else {
@@ -808,13 +779,13 @@ ${latestRecord.url ? `• 連結: ${latestRecord.url}` : ''}
 
 可能原因：
 • 網站連接問題
+• API端點探測失效
 • 網頁結構解析失敗
 • 未找到有效文章
-${config.USE_ENHANCED_BLOG_MONITOR ? '• Puppeteer 瀏覽器啟動失敗' : ''}
 
 🔧 建議：
 • 先使用 \`!blog-test\` 檢查網站狀態
-${config.USE_ENHANCED_BLOG_MONITOR ? '• 嘗試使用 `!blog-switch` 切換到靜態模式' : '• 嘗試使用 `!blog-switch` 切換到動態模式'}`);
+• 使用 \`!blog-detect\` 重新探測API端點`);
                 }
             } catch (error) {
                 await message.reply(`❌ 初始化失敗: ${error.message}`);
@@ -823,194 +794,10 @@ ${config.USE_ENHANCED_BLOG_MONITOR ? '• 嘗試使用 `!blog-switch` 切換到�
             await message.reply('❌ 博客監控未啟用');
         }
     }
-
-    // 新增：切換監控器模式命令
-    else if (cmd === '!blog-switch') {
-        if (!blogMonitor) {
-            await message.reply('❌ 博客監控未啟用');
-            return;
-        }
-
-        await message.reply(`🔄 **切換博客監控模式**
-
-當前模式: ${config.USE_ENHANCED_BLOG_MONITOR ? '🚀 動態模式 (JavaScript)' : '📄 靜態模式 (HTML)'}
-正在切換到: ${!config.USE_ENHANCED_BLOG_MONITOR ? '🚀 動態模式' : '📄 靜態模式'}...
-
-⏳ 請稍候，正在重新啟動監控器...`);
-
-        try {
-            // 停止當前監控器
-            if (blogMonitor) {
-                blogMonitor.stopMonitoring();
-                blogMonitor = null;
-            }
-
-            // 切換模式
-            config.USE_ENHANCED_BLOG_MONITOR = !config.USE_ENHANCED_BLOG_MONITOR;
-
-            // 重新啟動博客監控
-            await startBlogMonitoring();
-
-            await message.reply(`✅ **模式切換成功！**
-
-新模式: ${config.USE_ENHANCED_BLOG_MONITOR ? '🚀 動態模式 (JavaScript 動態內容支援)' : '📄 靜態模式 (基本 HTML 解析)'}
-
-${config.USE_ENHANCED_BLOG_MONITOR ? 
-'🔧 動態模式特點:\n• 支援 JavaScript 動態加載的內容\n• 使用 Puppeteer 瀏覽器引擎\n• 更準確但消耗更多資源' : 
-'🔧 靜態模式特點:\n• 僅解析初始 HTML 內容\n• 使用原生 HTTPS 請求\n• 速度快但可能錯過動態內容'}
-
-💡 使用 \`!blog-test\` 測試新模式是否正常工作`);
-
-        } catch (error) {
-            await message.reply(`❌ **模式切換失敗**: ${error.message}
-
-🔄 正在嘗試恢復原始模式...`);
-            
-            // 嘗試恢復原始模式
-            config.USE_ENHANCED_BLOG_MONITOR = !config.USE_ENHANCED_BLOG_MONITOR;
-            try {
-                await startBlogMonitoring();
-                await message.reply('✅ 已恢復到原始模式');
-            } catch (recoveryError) {
-                await message.reply(`❌ 恢復失敗: ${recoveryError.message}`);
-            }
-        }
-    }
-
-    else if (cmd === '!blog-debug') {
-        if (blogMonitor) {
-            await message.reply('🔍 執行博客調試分析...');
-            try {
-                let debugResult;
-                
-                if (config.USE_ENHANCED_BLOG_MONITOR) {
-                    // 動態模式調試
-                    await message.reply('🚀 動態模式調試：正在啟動瀏覽器分析...');
-                    debugResult = await blogMonitor.fetchDynamicContent();
-                    
-                    const html = debugResult;
-                    const hasTimeTag = html.includes('<time');
-                    const timeTagCount = (html.match(/<time[^>]*>/g) || []).length;
-                    const hasEntry = html.includes('entry');
-                    const hasDiary = html.includes('diary');
-                    const hasArticle = html.includes('<article');
-                    
-                    await message.reply(`🔍 **博客動態內容分析**
-
-📊 **基本信息:**
-• 模式: 🚀 動態模式 (Puppeteer)
-• HTML長度: ${html.length.toLocaleString()} 字元
-• 瀏覽器狀態: ${blogMonitor.browser ? '✅ 運行中' : '❌ 未啟動'}
-
-🏗️ **結構元素:**
-• Time標籤: ${hasTimeTag ? '✅' : '❌'} (${timeTagCount} 個)
-• Entry元素: ${hasEntry ? '✅' : '❌'}
-• Diary元素: ${hasDiary ? '✅' : '❌'}
-• Article標籤: ${hasArticle ? '✅' : '❌'}
-
-💡 動態模式可以獲取 JavaScript 加載後的完整內容`);
-                } else {
-                    // 靜態模式調試
-                    const response = await blogMonitor.makeRequest(blogMonitor.blogUrl);
-                    
-                    if (response.statusCode === 200) {
-                        const html = response.data;
-                        
-                        const hasTimeTag = html.includes('<time');
-                        const timeTagCount = (html.match(/<time[^>]*>/g) || []).length;
-                        const hasEntry = html.includes('entry');
-                        const hasDiary = html.includes('diary');
-                        const hasArticle = html.includes('<article');
-                        
-                        const containerPatterns = [
-                            'entry',
-                            'diary', 
-                            'article',
-                            'post',
-                            'content'
-                        ];
-                        
-                        let containerInfo = '';
-                        containerPatterns.forEach(pattern => {
-                            const count = (html.match(new RegExp(pattern, 'gi')) || []).length;
-                            if (count > 0) {
-                                containerInfo += `• ${pattern}: ${count} 個\n`;
-                            }
-                        });
-                        
-                        const timeTagSamples = html.match(/<time[^>]*>.*?<\/time>/gi)?.slice(0, 3) || [];
-                        
-                        await message.reply(`🔍 **博客HTML結構分析**
-
-📊 **基本信息:**
-• 模式: 📄 靜態模式 (HTTPS)
-• HTML長度: ${html.length.toLocaleString()} 字元
-• HTTP狀態: ${response.statusCode}
-
-🏗️ **結構元素:**
-• Time標籤: ${hasTimeTag ? '✅' : '❌'} (${timeTagCount} 個)
-• Entry元素: ${hasEntry ? '✅' : '❌'}
-• Diary元素: ${hasDiary ? '✅' : '❌'}
-• Article標籤: ${hasArticle ? '✅' : '❌'}
-
-📦 **容器統計:**
-${containerInfo || '未找到常見容器'}
-
-${timeTagSamples.length > 0 ? `⏰ **Time標籤範例:**
-${timeTagSamples.map((tag, i) => `${i+1}. \`${tag}\``).join('\n')}` : '❌ 未找到time標籤'}
-
-💡 靜態模式僅能分析初始 HTML，如需完整內容請使用 \`!blog-switch\` 切換到動態模式`);
-                    } else {
-                        await message.reply(`❌ 獲取網頁失敗: HTTP ${response.statusCode}`);
-                    }
-                }
-            } catch (error) {
-                await message.reply(`❌ 調試分析失敗: ${error.message}`);
-            }
-        } else {
-            await message.reply('❌ 博客監控未啟用');
-        }
-    }
-
-    else if (cmd === '!blog-diary') {
-        if (blogMonitor && !config.USE_ENHANCED_BLOG_MONITOR) {
-            await message.reply('🔍 分析 diary 容器內容...');
-            try {
-                const diaryResult = await blogMonitor.debugDiaryContainers();
-                
-                if (diaryResult.success && diaryResult.totalFound > 0) {
-                    let diaryMsg = `📦 **找到 ${diaryResult.totalFound} 個 diary 容器**\n\n`;
-                    
-                    diaryResult.containers.slice(0, 3).forEach((container, index) => {
-                        diaryMsg += `**容器 ${index + 1}:**\n`;
-                        diaryMsg += `• 模式: ${container.patternIndex}\n`;
-                        diaryMsg += `• Class: ${container.class}\n`;
-                        diaryMsg += `• ID: ${container.id}\n`;
-                        diaryMsg += `• 標籤: \`${container.containerTag}...\`\n`;
-                        diaryMsg += `• 內容預覽:\n\`\`\`\n${container.contentPreview}...\n\`\`\`\n\n`;
-                    });
-                    
-                    if (diaryResult.totalFound > 3) {
-                        diaryMsg += `...(還有 ${diaryResult.totalFound - 3} 個容器)`;
-                    }
-                    
-                    await message.reply(diaryMsg);
-                } else {
-                    await message.reply(`❌ **未找到 diary 容器**\n\n錯誤: ${diaryResult.error || '無內容'}`);
-                }
-            } catch (error) {
-                await message.reply(`❌ diary 分析失敗: ${error.message}`);
-            }
-        } else if (config.USE_ENHANCED_BLOG_MONITOR) {
-            await message.reply('⚠️ 此命令僅適用於靜態模式，請使用 `!blog-switch` 切換到靜態模式後再試');
-        } else {
-            await message.reply('❌ 博客監控未啟用');
-        }
-    }
     
     // 更新幫助命令
     else if (cmd === '!help') {
-        await message.reply(`🔍 **統一直播監控機器人** (日本時間版)
+        await message.reply(`🔍 **輕量級統一直播監控機器人** (日本時間版)
 
 **Instagram監控命令:**
 \`!ig-start\` - 開始Instagram監控
@@ -1019,28 +806,25 @@ ${timeTagSamples.map((tag, i) => `${i+1}. \`${tag}\``).join('\n')}` : '❌ 未�
 \`!ig-check\` - 手動檢查Instagram
 \`!ig-accounts\` - 檢查帳號狀態
 
-**博客監控命令:**
+**博客監控命令 (API探測模式):**
 \`!blog-status\` - 博客監控狀態
 \`!blog-latest\` - 顯示當前記錄的最新文章
 \`!blog-check\` - 手動檢查博客文章
-\`!blog-test\` - 測試網站連接和解析
+\`!blog-test\` - 測試網站連接和API探測
+\`!blog-detect\` - 手動執行API端點探測 🆕
 \`!blog-init\` - 手動初始化/重新建立基準記錄
-\`!blog-switch\` - 切換動態/靜態監控模式 🆕
-\`!blog-debug\` - 調試分析網頁結構
-\`!blog-diary\` - 分析 diary 容器內容 (僅靜態模式)
 
 **系統命令:**
 \`!status\` - 完整系統狀態
 \`!help\` - 顯示此幫助
 
-**博客監控說明:**
+**博客監控說明 (API探測模式):**
 🌐 監控目標: Family Club F2017 日記
-🔧 監控模式: 
-  • 📄 靜態模式: 快速 HTML 解析
-  • 🚀 動態模式: JavaScript 動態內容支援
+🕵️ 監控方式: 智能API端點探測 + HTML回退
 📊 檢測方式: 文章ID和發布時間比較
 ⏰ 檢查頻率: 每小時00分自動檢查
-🎯 智能記錄: 自動記錄最新文章作為比較基準`);
+🎯 智能記錄: 自動記錄最新文章作為比較基準
+⚡ 輕量級: 適合 Koyeb 等輕量級部署平台`);
     }
 }
 
@@ -1079,10 +863,6 @@ async function callChannelSpecificAPI(channelId, channelConfig, keyword, origina
 }
 
 // === Web 狀態面板整合 ===
-function getInstagramMonitorInstance() {
-    return instagramMonitor;
-}
-
 let webStatusPanel = null;
 
 function initializeWebStatusPanel() {
@@ -1113,6 +893,17 @@ function initializeWebStatusPanel() {
         setTimeout(initializeWebStatusPanel, 2000);
     }
 }
+
+// 健康檢查端點
+app.get('/health', (req, res) => {
+    res.status(200).json({
+        status: 'healthy',
+        uptime: Math.round((Date.now() - unifiedState.startTime) / 1000),
+        instagram: unifiedState.instagram.isMonitoring,
+        blog: blogMonitor ? blogMonitor.getStatus().isMonitoring : false,
+        discord: unifiedState.botReady
+    });
+});
 
 // 啟動Express服務器
 app.listen(PORT, () => {
@@ -1148,7 +939,7 @@ process.on('SIGINT', async () => {
     }
     
     if (unifiedState.botReady) {
-        await sendNotification('📴 統一監控機器人正在關閉...', 'info', 'System');
+        await sendNotification('📴 輕量級統一監控機器人正在關閉...', 'info', 'System');
     }
     
     client.destroy();

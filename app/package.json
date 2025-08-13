@@ -1,18 +1,16 @@
 {
-  "name": "unified-live-monitor",
-  "version": "5.1.0",
-  "description": "Unified Instagram + Discord + Blog Live monitor with dynamic content support",
+  "name": "lightweight-unified-monitor",
+  "version": "5.2.0",
+  "description": "Lightweight Unified Instagram + Discord + Blog monitor with API detection",
   "main": "main_blog.js",
   "scripts": {
     "start": "node main_blog.js",
-    "dev": "node main_blog.js",
-    "blog-only": "node main_blog.js"
+    "dev": "node main_blog.js"
   },
   "dependencies": {
     "discord.js": "^14.14.1",
     "express": "^4.18.2",
-    "axios": "^1.6.0",
-    "puppeteer": "^21.5.0"
+    "axios": "^1.6.0"
   },
   "engines": {
     "node": ">=18.0.0"
@@ -22,7 +20,8 @@
     "instagram",
     "blog",
     "monitor",
-    "puppeteer",
-    "dynamic-content"
+    "api-detection",
+    "lightweight",
+    "koyeb"
   ]
 }
