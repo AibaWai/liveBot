@@ -253,9 +253,9 @@ async function startBlogMonitoring() {
     }
 
     try {
-        const APIDetectorBlogMonitor = require('./api_detector_blog_monitor');
+        const EnhancedAPIBlogMonitor = require('./enhanced_api_blog_monitor');
         
-        blogMonitor = new APIDetectorBlogMonitor(async (message, type, source) => {
+        blogMonitor = new EnhancedAPIBlogMonitor(async (message, type, source) => {
             try {
                 const channel = await client.channels.fetch(BLOG_NOTIFICATION_CHANNEL_ID);
                 await channel.send(message);
@@ -748,6 +748,41 @@ ${testResult.sampleArticles.map((article, index) =>
                 
             } catch (error) {
                 await message.reply(`❌ API探測失敗: ${error.message}`);
+            }
+        } else {
+            await message.reply('❌ 博客監控未啟用');
+        }
+    }
+
+    // 在現有的 !blog-detect 命令後添加
+    else if (cmd === '!blog-enhance') {
+        if (blogMonitor) {
+            await message.reply('🎯 執行增強API探測（包含POST請求）...');
+            try {
+                const results = await blogMonitor.enhancedAPIDetection();
+                
+                let resultMsg = `🎯 **增強API探測結果**
+
+    📊 **總覽:**
+    - 測試端點數: ${results.summary.totalTested}
+    - 最高信心度: ${results.summary.bestScore}%
+    - 發現端點: ${results.summary.foundEndpoint || '無'}
+
+    🎯 **最佳候選:**`;
+
+                if (results.bestCandidate) {
+                    resultMsg += `\n• URL: ${results.bestCandidate.url}
+    - 信心度: ${results.bestCandidate.confidence}%
+    - 真實文章: ${results.bestCandidate.hasRealArticles ? '✅' : '❌'}
+    - 文章數量: ${results.bestCandidate.articleCount}`;
+                } else {
+                    resultMsg += '\n❌ 未找到有效的API端點';
+                }
+
+                await message.reply(resultMsg);
+                
+            } catch (error) {
+                await message.reply(`❌ 增強探測失敗: ${error.message}`);
             }
         } else {
             await message.reply('❌ 博客監控未啟用');
