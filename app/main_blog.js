@@ -789,6 +789,55 @@ ${testResult.sampleArticles.map((article, index) =>
         }
     }
 
+    // 在現有的 !blog-enhance 命令後添加
+    else if (cmd === '!blog-target') {
+        await message.reply('🎯 執行針對Family Club的深度探測，這將測試多種User-Agent和請求配置...');
+        try {
+            const TargetedFamilyClubDetector = require('./targeted_familyclub_detector');
+            const detector = new TargetedFamilyClubDetector();
+            const results = await detector.executeTargetedDetection();
+            
+            let resultMsg = `🎯 **針對性深度探測結果**
+
+    📊 **總覽:**
+    - 總測試數: ${results.summary.totalTests}
+    - 成功響應: ${results.summary.successfulTests}
+    - 最高信心度: ${results.summary.bestScore}%
+    - 發現文章的端點: ${results.summary.articlesFound}
+
+    🏆 **最佳結果:**`;
+
+            if (results.bestResult) {
+                resultMsg += `\n• URL: ${results.bestResult.url}
+    - 信心度: ${results.bestResult.confidence}%
+    - User-Agent: ${results.bestResult.userAgent.substring(0, 50)}...
+    - 發現: ${results.bestResult.findings.slice(0, 3).join(', ')}`;
+                
+                if (results.bestResult.hasArticleContent && results.bestResult.articleData) {
+                    resultMsg += `\n• 文章數量: ${results.bestResult.articleData.articles.length}`;
+                    if (results.bestResult.articleData.articles.length > 0) {
+                        const firstArticle = results.bestResult.articleData.articles[0];
+                        resultMsg += `\n• 範例文章: ${firstArticle.title || firstArticle.id || 'N/A'}`;
+                    }
+                }
+            } else {
+                resultMsg += '\n❌ 未找到有效的API端點';
+            }
+
+            if (results.topResults.length > 1) {
+                resultMsg += `\n\n🔝 **前3名候選:**`;
+                results.topResults.slice(0, 3).forEach((result, index) => {
+                    resultMsg += `\n${index + 1}. 信心度 ${result.confidence}% - ${result.url.substring(result.url.lastIndexOf('/') + 1)}`;
+                });
+            }
+
+            await message.reply(resultMsg);
+            
+        } catch (error) {
+            await message.reply(`❌ 針對性探測失敗: ${error.message}`);
+        }
+    }
+
     else if (cmd === '!blog-init') {
         if (blogMonitor) {
             await message.reply('🔄 執行手動初始化（API探測模式）...');
