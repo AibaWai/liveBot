@@ -606,66 +606,56 @@ ${latestRecord.url ? `🔗 連結: ${latestRecord.url}` : ''}
     }
 
     else if (cmd === '!blog-latest') {
-        if (blogMonitor) {
-            const latestRecord = blogMonitor.getLatestRecord();
+    if (blogMonitor) {
+        await message.reply('🔍 獲取最新博客文章列表...');
+        try {
+            const latestArticles = await blogMonitor.getLatestArticles(5);
             
-            if (latestRecord) {
-                await message.reply(`📄 **當前記錄中的最新文章**
+            if (latestArticles.length > 0) {
+                let responseMsg = `📝 **Family Club 最新文章列表** (真正API)
 
-📄 **文章ID:** ${latestRecord.articleId || '未知'}
-🗓️ **發布時間:** ${latestRecord.datetime}
-📝 **文章標題:** ${latestRecord.title}
-${latestRecord.url ? `🔗 **文章連結:** ${latestRecord.url}` : ''}
-⏰ **記錄時間:** ${latestRecord.lastUpdated}
-🔧 **檢測模式:** API探測 + HTML回退
+📡 **API端點:** diarkiji_list
+🎨 **藝人代碼:** F2017
+⏰ **查詢時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
 
-💡 這是系統當前記錄的最新文章信息，用於比較檢測新文章`);
+📋 **最新 ${latestArticles.length} 篇文章:**
+`;
+
+                latestArticles.forEach((article, index) => {
+                    responseMsg += `\n${index + 1}. **ID: ${article.id}**`;
+                    responseMsg += `\n   📝 標題: ${article.title}`;
+                    responseMsg += `\n   📅 發布時間: ${article.datetime}${article.dateEstimated ? ' (估計)' : ''}`;
+                    if (article.url) {
+                        responseMsg += `\n   🔗 連結: ${article.url}`;
+                    }
+                    responseMsg += '\n';
+                });
+
+                responseMsg += `\n💡 **檢測原理:**
+• 系統會記錄ID最大的文章作為"最新"
+• 每小時00分檢查，如果發現更大的ID就是新文章
+• 自動發送新文章通知`;
+
+                await message.reply(responseMsg);
             } else {
-                await message.reply(`📋 **尚未建立文章記錄**
+                await message.reply(`❌ **無法獲取文章列表**
 
-原因可能是：
-• 系統剛啟動，尚未完成初始化
-• 網站連接失敗
-• API端點探測未找到有效數據
+可能原因：
+• API端點無響應
+• JSON解析失敗
+• 網絡連接問題
 
-🔧 建議操作：
-• 使用 \`!blog-test\` 測試網站連接
-• 使用 \`!blog-detect\` 手動API探測
-• 使用 \`!blog-init\` 手動初始化
-• 檢查網絡連接狀態`);
+🔧 **故障排除:**
+• 使用 \`!blog-test\` 檢查API連接
+• 檢查網絡狀態`);
             }
-        } else {
-            await message.reply('❌ 博客監控未啟用');
+        } catch (error) {
+            await message.reply(`❌ 獲取最新文章失敗: ${error.message}`);
         }
+    } else {
+        await message.reply('❌ 博客監控未啟用');
     }
-
-    else if (cmd === '!blog-check') {
-        if (blogMonitor) {
-            await message.reply('🔍 執行手動博客檢查（API探測模式）...');
-            try {
-                const newArticle = await blogMonitor.checkForNewArticles(true);
-                
-                if (newArticle) {
-                    await message.reply(`📝 **找到文章信息**
-
-📄 **文章ID:** ${newArticle.id || '未知'}
-🗓️ **發布時間:** ${newArticle.datetimeString}
-📝 **文章標題:** ${newArticle.title}
-${newArticle.url ? `🔗 **文章連結:** ${newArticle.url}` : ''}
-⏰ **檢查時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-🔧 **檢測模式:** API探測 + HTML回退
-
-💡 這是網站上當前最新的文章`);
-                } else {
-                    await message.reply('📋 目前無法找到文章或解析失敗');
-                }
-            } catch (error) {
-                await message.reply(`❌ 檢查失敗: ${error.message}`);
-            }
-        } else {
-            await message.reply('❌ 博客監控未啟用');
-        }
-    }
+}
 
     else if (cmd === '!blog-test') {
         if (blogMonitor) {
@@ -1009,7 +999,6 @@ ${latestRecord.url ? `• 連結: ${latestRecord.url}` : ''}
     **博客監控命令 (真正API模式):**
     \`!blog-status\` - 博客監控狀態
     \`!blog-latest\` - 查看最新文章列表 🆕
-    \`!blog-check\` - 測試新文章檢測功能 🆕
     \`!blog-test\` - 測試API連接
     \`!blog-init\` - 手動初始化記錄
 

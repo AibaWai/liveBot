@@ -364,11 +364,22 @@ class FamilyClubBlogMonitor {
             return null;
         }
         
+        // 打印所有文章ID用於調試
+        console.log('🔍 [最新文章] 所有文章ID:', articles.map(a => a.id).join(', '));
+        
         // 優先按ID排序（數字越大越新）
         const articlesWithNumericId = articles.filter(a => a.id && !isNaN(a.id));
         if (articlesWithNumericId.length > 0) {
             console.log('📊 [最新文章] 按數字ID排序查找最新文章');
-            return articlesWithNumericId.sort((a, b) => Number(b.id) - Number(a.id))[0];
+            // 確保正確的數字比較
+            const sorted = articlesWithNumericId.sort((a, b) => {
+                const idA = Number(a.id);
+                const idB = Number(b.id);
+                console.log(`🔍 [排序] 比較 ${idA} vs ${idB} = ${idB - idA}`);
+                return idB - idA;
+            });
+            console.log('📊 [最新文章] 排序後的前3個ID:', sorted.slice(0, 3).map(a => a.id).join(', '));
+            return sorted[0];
         }
         
         // 否則按時間排序
