@@ -26,12 +26,12 @@ class EnhancedBlogMonitor {
             lastUpdated: null
         };
         
-        console.log('🔍 [Enhanced Blog Monitor] Family Club 動態博客監控已初始化');
+        console.log('🔍 [Enhanced Blog Monitor] Family Club 動態博客監控已初始化 (Docker版)');
         console.log('🔗 [Enhanced Blog Monitor] 目標網址:', this.blogUrl);
         console.log('🚀 [Enhanced Blog Monitor] 支援 JavaScript 動態內容加載');
     }
 
-    // 初始化瀏覽器
+    // 初始化瀏覽器 (Docker 優化版)
     async initializeBrowser() {
         try {
             if (this.browser) {
@@ -39,10 +39,11 @@ class EnhancedBlogMonitor {
                 return true;
             }
 
-            console.log('🚀 [Browser] 正在啟動 Puppeteer 瀏覽器...');
+            console.log('🚀 [Browser] 正在啟動 Puppeteer 瀏覽器 (Docker 環境)...');
             
-            this.browser = await puppeteer.launch({
-                headless: 'new', // 使用新的 headless 模式
+            // Docker 環境的瀏覽器配置
+            const browserOptions = {
+                headless: 'new',
                 args: [
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
@@ -53,22 +54,41 @@ class EnhancedBlogMonitor {
                     '--disable-gpu',
                     '--disable-web-security',
                     '--disable-features=VizDisplayCompositor',
-                    '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    '--disable-background-timer-throttling',
+                    '--disable-backgrounding-occluded-windows',
+                    '--disable-renderer-backgrounding',
+                    '--disable-field-trial-config',
+                    '--disable-ipc-flooding-protection',
+                    '--memory-pressure-off',
+                    '--max_old_space_size=512',
+                    '--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                 ],
                 timeout: 30000
-            });
+            };
+
+            // 檢查是否在 Docker/Alpine 環境中
+            const isDocker = process.env.PUPPETEER_EXECUTABLE_PATH || 
+                             process.platform === 'linux';
+            
+            if (isDocker) {
+                // 使用系統安裝的 Chromium
+                browserOptions.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/chromium-browser';
+                console.log('🐳 [Browser] 使用 Docker 環境配置');
+            }
+
+            this.browser = await puppeteer.launch(browserOptions);
 
             this.page = await this.browser.newPage();
             
             // 設置視窗大小和其他配置
             await this.page.setViewport({ width: 1366, height: 768 });
             
-            // 設置請求攔截（可選 - 阻止不必要的資源）
+            // 設置請求攔截（優化性能）
             await this.page.setRequestInterception(true);
             this.page.on('request', (req) => {
                 const resourceType = req.resourceType();
                 if (['image', 'stylesheet', 'font', 'media'].includes(resourceType)) {
-                    req.abort(); // 阻止圖片、CSS 等以提高速度
+                    req.abort(); // 阻止非必要資源
                 } else {
                     req.continue();
                 }
@@ -83,11 +103,21 @@ class EnhancedBlogMonitor {
                 console.warn('⚠️ [Browser] 頁面 JavaScript 錯誤:', error.message);
             });
 
-            console.log('✅ [Browser] Puppeteer 瀏覽器啟動成功');
+            // 設置超時
+            this.page.setDefaultTimeout(30000);
+            this.page.setDefaultNavigationTimeout(30000);
+
+            console.log('✅ [Browser] Puppeteer 瀏覽器啟動成功 (Docker 環境)');
             return true;
 
         } catch (error) {
             console.error('❌ [Browser] 瀏覽器初始化失敗:', error.message);
+            
+            // Docker 環境特殊錯誤提示
+            if (error.message.includes('could not find expected browser')) {
+                console.error('💡 [Browser] 提示: 請確保 Dockerfile 中正確安裝了 Chromium');
+            }
+            
             return false;
         }
     }
@@ -109,7 +139,7 @@ class EnhancedBlogMonitor {
         }
     }
 
-    // 使用 Puppeteer 獲取動態內容
+    // 使用 Puppeteer 獲取動態內容 (Docker 優化版)
     async fetchDynamicContent() {
         try {
             if (!this.browser || !this.page) {
@@ -120,17 +150,35 @@ class EnhancedBlogMonitor {
                 }
             }
 
-            console.log('🌐 [Fetch] 正在訪問博客頁面...');
+            console.log('🌐 [Fetch] 正在訪問博客頁面 (Docker 環境)...');
             
-            // 訪問頁面
-            await this.page.goto(this.blogUrl, {
-                waitUntil: 'networkidle0', // 等待網絡請求完成
-                timeout: 30000
-            });
+            // 訪問頁面，增加重試機制
+            let retryCount = 0;
+            const maxRetries = 3;
+            
+            while (retryCount < maxRetries) {
+                try {
+                    await this.page.goto(this.blogUrl, {
+                        waitUntil: 'networkidle0',
+                        timeout: 30000
+                    });
+                    break; // 成功就跳出循環
+                } catch (error) {
+                    retryCount++;
+                    console.warn(`⚠️ [Fetch] 頁面加載失敗 (嘗試 ${retryCount}/${maxRetries}):`, error.message);
+                    
+                    if (retryCount >= maxRetries) {
+                        throw error;
+                    }
+                    
+                    // 等待後重試
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                }
+            }
 
             console.log('📊 [Fetch] 頁面加載完成，等待動態內容...');
             
-            // 等待一段時間讓 JavaScript 動態加載內容
+            // 等待動態內容加載
             await this.page.waitForTimeout(5000);
 
             // 嘗試等待文章容器出現
@@ -143,6 +191,14 @@ class EnhancedBlogMonitor {
                 console.log('⚠️ [Fetch] 未檢測到標準文章容器，繼續嘗試...');
             }
 
+            // 滾動頁面確保所有動態內容加載
+            await this.page.evaluate(() => {
+                window.scrollTo(0, document.body.scrollHeight);
+            });
+            
+            // 再等待一下讓滾動觸發的內容加載
+            await this.page.waitForTimeout(3000);
+
             // 獲取頁面內容
             const content = await this.page.content();
             
@@ -152,6 +208,16 @@ class EnhancedBlogMonitor {
 
         } catch (error) {
             console.error('❌ [Fetch] 動態內容獲取失敗:', error.message);
+            
+            // 如果是網絡錯誤，嘗試重啟瀏覽器
+            if (error.message.includes('Navigation timeout') || 
+                error.message.includes('net::') ||
+                error.message.includes('Protocol error')) {
+                console.log('🔄 [Fetch] 嘗試重啟瀏覽器...');
+                await this.closeBrowser();
+                await new Promise(resolve => setTimeout(resolve, 5000));
+            }
+            
             throw error;
         }
     }
@@ -167,7 +233,7 @@ class EnhancedBlogMonitor {
             const articleData = await this.page.evaluate(() => {
                 const foundArticles = [];
                 
-                // 多種選擇器策略
+                // 多種選擇器策略，針對日文博客優化
                 const selectors = [
                     'article',
                     '[data-article-id]',
@@ -178,8 +244,14 @@ class EnhancedBlogMonitor {
                     '.entry',
                     '[id*="entry"]',
                     '[id*="article"]',
+                    '[id*="diary"]',
                     '[class*="diary"]',
-                    '[class*="entry"]'
+                    '[class*="entry"]',
+                    '[class*="blog"]',
+                    // Family Club 特定選擇器
+                    '.fc-diary-entry',
+                    '.fc-blog-item',
+                    '[data-diary-id]'
                 ];
                 
                 for (const selector of selectors) {
@@ -189,7 +261,7 @@ class EnhancedBlogMonitor {
                         try {
                             // 提取文章ID
                             let articleId = null;
-                            const idAttributes = ['data-id', 'data-article-id', 'id'];
+                            const idAttributes = ['data-id', 'data-article-id', 'data-diary-id', 'id'];
                             for (const attr of idAttributes) {
                                 const value = element.getAttribute(attr);
                                 if (value) {
@@ -201,14 +273,31 @@ class EnhancedBlogMonitor {
                                 }
                             }
                             
-                            // 如果沒有找到ID，使用索引
+                            // 如果沒有找到ID，從URL中提取
                             if (!articleId) {
-                                articleId = index + 1000; // 避免與真實ID衝突
+                                const linkEl = element.querySelector('a[href]');
+                                if (linkEl) {
+                                    const href = linkEl.getAttribute('href');
+                                    const urlIdMatch = href.match(/\/(\d+)(?:\?|$)/);
+                                    if (urlIdMatch) {
+                                        articleId = parseInt(urlIdMatch[1]);
+                                    }
+                                }
+                            }
+                            
+                            // 如果還是沒有ID，使用索引
+                            if (!articleId) {
+                                articleId = Date.now() + index; // 使用時間戳+索引避免衝突
                             }
                             
                             // 提取標題
                             let title = '未知標題';
-                            const titleSelectors = ['h1', 'h2', 'h3', 'h4', '.title', '[class*="title"]'];
+                            const titleSelectors = [
+                                'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+                                '.title', '[class*="title"]',
+                                '.subject', '[class*="subject"]',
+                                '.headline', '[class*="headline"]'
+                            ];
                             for (const titleSel of titleSelectors) {
                                 const titleEl = element.querySelector(titleSel);
                                 if (titleEl && titleEl.textContent.trim()) {
@@ -217,13 +306,29 @@ class EnhancedBlogMonitor {
                                 }
                             }
                             
+                            // 如果沒找到標題，從連結文本中提取
+                            if (title === '未知標題') {
+                                const linkEl = element.querySelector('a');
+                                if (linkEl && linkEl.textContent.trim()) {
+                                    title = linkEl.textContent.trim();
+                                }
+                            }
+                            
                             // 提取時間信息
                             let dateInfo = null;
-                            const timeSelectors = ['time', '[datetime]', '.date', '[class*="date"]', '[class*="time"]'];
+                            const timeSelectors = [
+                                'time', '[datetime]', 
+                                '.date', '[class*="date"]', 
+                                '.time', '[class*="time"]',
+                                '.created', '[class*="created"]',
+                                '.published', '[class*="published"]'
+                            ];
                             for (const timeSel of timeSelectors) {
                                 const timeEl = element.querySelector(timeSel);
                                 if (timeEl) {
-                                    const datetime = timeEl.getAttribute('datetime') || timeEl.textContent;
+                                    const datetime = timeEl.getAttribute('datetime') || 
+                                                   timeEl.getAttribute('data-time') ||
+                                                   timeEl.textContent;
                                     if (datetime) {
                                         dateInfo = datetime.trim();
                                         break;
@@ -238,7 +343,9 @@ class EnhancedBlogMonitor {
                                     /(\d{4})[年](\d{1,2})[月](\d{1,2})[日]/,
                                     /(\d{4})\.(\d{1,2})\.(\d{1,2})/,
                                     /(\d{4})\/(\d{1,2})\/(\d{1,2})/,
-                                    /(\d{4})-(\d{1,2})-(\d{1,2})/
+                                    /(\d{4})-(\d{1,2})-(\d{1,2})/,
+                                    /(\d{1,2})\/(\d{1,2})\/(\d{4})/,
+                                    /(\d{1,2})-(\d{1,2})-(\d{4})/
                                 ];
                                 
                                 for (const pattern of datePatterns) {
@@ -260,6 +367,7 @@ class EnhancedBlogMonitor {
                                 }
                             }
                             
+                            // 只有當我們找到有意義的信息時才添加
                             if (articleId && (dateInfo || title !== '未知標題')) {
                                 foundArticles.push({
                                     id: articleId,
@@ -390,7 +498,7 @@ class EnhancedBlogMonitor {
     // 初始化
     async initialize() {
         try {
-            console.log('🚀 [Enhanced Blog Monitor] 正在初始化動態博客監控...');
+            console.log('🚀 [Enhanced Blog Monitor] 正在初始化動態博客監控 (Docker 環境)...');
             
             const success = await this.initializeBrowser();
             if (!success) {
@@ -416,7 +524,7 @@ class EnhancedBlogMonitor {
                 lastUpdated: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })
             };
             
-            console.log('✅ [Enhanced Blog Monitor] 動態初始化完成，建立基準記錄:');
+            console.log('✅ [Enhanced Blog Monitor] 動態初始化完成 (Docker 環境)，建立基準記錄:');
             console.log(`   📄 文章ID: ${this.latestRecord.articleId}`);
             console.log(`   🗓️ 發佈時間: ${this.latestRecord.datetimeString}`);
             console.log(`   📝 標題: ${this.latestRecord.title}`);
@@ -425,7 +533,7 @@ class EnhancedBlogMonitor {
             return true;
             
         } catch (error) {
-            console.error('❌ [Enhanced Blog Monitor] 動態初始化失敗:', error.message);
+            console.error('❌ [Enhanced Blog Monitor] 動態初始化失敗 (Docker 環境):', error.message);
             return false;
         }
     }
@@ -433,7 +541,7 @@ class EnhancedBlogMonitor {
     // 檢查是否有新文章（動態版本）
     async checkForNewArticles(testMode = false) {
         try {
-            console.log(`🔍 [檢查更新] 檢查新文章（動態模式）... ${testMode ? '(測試模式)' : ''}`);
+            console.log(`🔍 [檢查更新] 檢查新文章（動態模式 Docker）... ${testMode ? '(測試模式)' : ''}`);
             this.totalChecks++;
             this.lastCheckTime = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
 
@@ -496,16 +604,17 @@ class EnhancedBlogMonitor {
         }
     }
 
-    // 測試網站連接（動態版本）
+    // 測試網站連接（Docker 優化版）
     async testWebsiteAccess() {
         try {
-            console.log('🔍 [測試連接] 測試博客網站動態連接...');
+            console.log('🔍 [測試連接] 測試博客網站動態連接 (Docker 環境)...');
             
             const success = await this.initializeBrowser();
             if (!success) {
                 return {
                     success: false,
-                    error: '瀏覽器初始化失敗'
+                    error: '瀏覽器初始化失敗 (Docker 環境)',
+                    method: 'dynamic (Puppeteer Docker)'
                 };
             }
 
@@ -514,7 +623,7 @@ class EnhancedBlogMonitor {
             
             return {
                 success: true,
-                method: 'dynamic (Puppeteer)',
+                method: 'dynamic (Puppeteer Docker)',
                 contentLength: html.length,
                 articlesFound: articles.length,
                 sampleArticles: articles.slice(0, 3).map(a => ({
@@ -522,15 +631,16 @@ class EnhancedBlogMonitor {
                     time: a.datetimeString,
                     title: a.title
                 })),
-                dynamicContentSupported: true
+                dynamicContentSupported: true,
+                dockerOptimized: true
             };
 
         } catch (error) {
-            console.error('❌ [測試連接] 動態測試失敗:', error.message);
+            console.error('❌ [測試連接] 動態測試失敗 (Docker 環境):', error.message);
             return {
                 success: false,
                 error: error.message,
-                method: 'dynamic (Puppeteer)'
+                method: 'dynamic (Puppeteer Docker)'
             };
         }
     }
@@ -539,7 +649,7 @@ class EnhancedBlogMonitor {
     async sendNewArticleNotification(article) {
         if (!this.notificationCallback) return;
 
-        const notificationMessage = `📝 **Family Club 新文章發布!** (動態檢測)
+        const notificationMessage = `📝 **Family Club 新文章發布!** (動態檢測 Docker)
 
 📄 **文章ID:** ${article.id || '未知'}
 🗓️ **發布時間:** ${article.datetimeString}
@@ -547,31 +657,31 @@ class EnhancedBlogMonitor {
 ${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
 🌐 **博客首頁:** ${this.blogUrl}
 ⏰ **檢測時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-🚀 **檢測方式:** JavaScript 動態內容解析
+🚀 **檢測方式:** JavaScript 動態內容解析 (Docker)
 
 🎉 快去看看新內容吧！`;
 
         try {
-            await this.notificationCallback(notificationMessage, 'blog_alert', 'EnhancedBlog');
-            console.log('📤 [通知] 動態新文章通知已發送');
+            await this.notificationCallback(notificationMessage, 'blog_alert', 'EnhancedBlogDocker');
+            console.log('📤 [通知] 動態新文章通知已發送 (Docker)');
         } catch (error) {
-            console.error('❌ [通知] 動態通知發送失敗:', error.message);
+            console.error('❌ [通知] 動態通知發送失敗 (Docker):', error.message);
         }
     }
 
     // 開始監控
     startMonitoring() {
         if (this.isMonitoring) {
-            console.log('⚠️ [監控] 動態監控已在運行中');
+            console.log('⚠️ [監控] 動態監控已在運行中 (Docker)');
             return;
         }
 
         this.isMonitoring = true;
-        console.log('🚀 [監控] 開始Family Club動態博客監控 (每小時00分檢查)');
+        console.log('🚀 [監控] 開始Family Club動態博客監控 (Docker 環境，每小時00分檢查)');
         
         const monitorLoop = async () => {
             if (!this.isMonitoring) {
-                console.log('⏹️ [監控] 動態監控已停止');
+                console.log('⏹️ [監控] 動態監控已停止 (Docker)');
                 return;
             }
 
@@ -590,7 +700,16 @@ ${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
                 this.monitoringInterval = setTimeout(monitorLoop, nextCheckSeconds * 1000);
 
             } catch (error) {
-                console.error('❌ [監控] 動態監控循環錯誤:', error.message);
+                console.error('❌ [監控] 動態監控循環錯誤 (Docker):', error.message);
+                
+                // Docker 環境錯誤恢復
+                if (error.message.includes('Protocol error') || 
+                    error.message.includes('Target closed') ||
+                    error.message.includes('Navigation timeout')) {
+                    console.log('🔄 [監控] 檢測到瀏覽器問題，重啟瀏覽器...');
+                    await this.closeBrowser();
+                    await new Promise(resolve => setTimeout(resolve, 10000)); // 等待10秒
+                }
                 
                 if (this.isMonitoring) {
                     console.log('⚠️ [監控] 10分鐘後重試');
@@ -602,10 +721,10 @@ ${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
         // 先初始化，然後開始監控
         this.initialize().then(success => {
             if (success) {
-                console.log('⏳ [監控] 5秒後開始定期檢查');
+                console.log('⏳ [監控] 5秒後開始定期檢查 (Docker)');
                 this.monitoringInterval = setTimeout(monitorLoop, 5000);
             } else {
-                console.error('❌ [監控] 動態初始化失敗，停止監控');
+                console.error('❌ [監控] 動態初始化失敗 (Docker)，停止監控');
                 this.isMonitoring = false;
             }
         });
@@ -623,7 +742,7 @@ ${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
         // 關閉瀏覽器
         this.closeBrowser();
         
-        console.log('⏹️ [監控] Family Club動態博客監控已停止');
+        console.log('⏹️ [監控] Family Club動態博客監控已停止 (Docker)');
     }
 
     // 計算下次檢查時間
@@ -649,8 +768,9 @@ ${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
             lastCheckTime: this.lastCheckTime,
             nextCheckTime: this.isMonitoring ? new Date(Date.now() + this.calculateNextCheckTime() * 1000).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }) : null,
             blogUrl: this.blogUrl,
-            method: 'dynamic (Puppeteer)',
+            method: 'dynamic (Puppeteer Docker)',
             browserStatus: this.browser ? '運行中' : '未啟動',
+            dockerOptimized: true,
             latestRecord: {
                 ...this.latestRecord,
                 hasRecord: !!(this.latestRecord.articleId || this.latestRecord.datetime)
@@ -675,7 +795,7 @@ ${article.url ? `🔗 **文章連結:** ${article.url}` : ''}
 
     // 手動重新初始化
     async reinitialize() {
-        console.log('🔄 [重新初始化] 手動重新初始化動態記錄...');
+        console.log('🔄 [重新初始化] 手動重新初始化動態記錄 (Docker)...');
         
         // 關閉現有瀏覽器
         await this.closeBrowser();
