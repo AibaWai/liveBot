@@ -12,6 +12,9 @@ const SAFE_CONFIG = {
     maxConsecutiveErrors: 3,
     backoffMultiplier: 2,
     maxBackoffInterval: 600,
+    // 新增配置：無可用帳號時的行為
+    autoStopWhenNoAccounts: true,  // 沒有可用帳號時自動停止
+    noAccountsCheckCount: 1,       // 連續幾次沒有可用帳號後停止
 };
 
 class SaferInstagramMonitor {
@@ -41,6 +44,10 @@ class SaferInstagramMonitor {
             this.cookieFailureStats = new Map();
             this.lastCookieAlert = new Map();
             this.allAccountsFailureNotified = false;
+            
+            // 新增：無可用帳號追蹤
+            this.noAccountsCount = 0;
+            this.lastNoAccountsTime = 0;
             
             // 模擬old_main.js的session策略：每個帳號保持固定的設備數據
             this.accountSessions = new Map();
@@ -384,10 +391,14 @@ ${this.accounts.map(acc => {
             accountSession.consecutiveErrors = 0;
             
             this.allAccountsFailureNotified = false;
+            
+            // 重置無可用帳號計數
+            this.noAccountsCount = 0;
+            this.lastNoAccountsTime = 0;
         }
     }
     
-    // 修改 selectBestAccount 函數，確保失效帳號不會被選擇
+    // 修改 selectBestAccount 函數，加入無可用帳號的追蹤和自動停止邏輯
     selectBestAccount() {
         const now = Date.now();
         
@@ -404,7 +415,27 @@ ${this.accounts.map(acc => {
         
         if (availableAccounts.length === 0) {
             console.log('😴 [帳號選擇] 沒有可用帳號 - 所有帳號都在冷卻或失效');
+            
+            // 新增：追蹤無可用帳號的情況
+            this.noAccountsCount++;
+            this.lastNoAccountsTime = now;
+            
+            console.log(`⚠️ [無可用帳號] 計數: ${this.noAccountsCount}/${SAFE_CONFIG.noAccountsCheckCount}`);
+            
+            // 檢查是否需要自動停止監控
+            if (SAFE_CONFIG.autoStopWhenNoAccounts && this.noAccountsCount >= SAFE_CONFIG.noAccountsCheckCount) {
+                console.log('🛑 [自動停止] 連續多次無可用帳號，自動停止Instagram監控');
+                this.autoStopMonitoring();
+            }
+            
             return null;
+        }
+        
+        // 有可用帳號時重置計數
+        if (this.noAccountsCount > 0) {
+            console.log(`✅ [帳號恢復] 發現可用帳號，重置無帳號計數 (之前計數: ${this.noAccountsCount})`);
+            this.noAccountsCount = 0;
+            this.lastNoAccountsTime = 0;
         }
         
         // 選擇使用次數最少且錯誤最少的帳號
@@ -426,6 +457,62 @@ ${this.accounts.map(acc => {
         
         console.log(`🔄 [帳號選擇] 使用: ${bestAccount.id} (錯誤數: ${this.accountSessions.get(bestAccount.id).consecutiveErrors}, 可用帳號數: ${availableAccounts.length})`);
         return bestAccount;
+    }
+    
+    // 新增：自動停止監控函數
+    async autoStopMonitoring() {
+        if (!this.isMonitoring) {
+            return;
+        }
+        
+        try {
+            // 發送自動停止通知
+            if (this.notificationCallback) {
+                const autoStopMessage = `🛑 **Instagram監控自動停止** 
+
+**停止原因：** 連續 ${SAFE_CONFIG.noAccountsCheckCount} 次檢查都沒有可用帳號
+**停止時間：** ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}
+**總帳號數：** ${this.accounts.length}
+**失效帳號：** ${this.accounts.filter(acc => this.cookieFailureStats.get(acc.id).isCurrentlyInvalid).length}
+
+📋 **帳號狀態詳情：**
+${this.accounts.map(acc => {
+    const cookieStats = this.cookieFailureStats.get(acc.id);
+    const stats = this.accountStats.get(acc.id);
+    const cooldownEnd = this.cooldownAccounts.get(acc.id) || 0;
+    const isInCooldown = Date.now() < cooldownEnd;
+    
+    let status = '';
+    if (cookieStats.isCurrentlyInvalid) {
+        status = '❌ Cookie失效';
+    } else if (isInCooldown) {
+        status = `⏳ 冷卻中 (${Math.round((cooldownEnd - Date.now()) / 60000)}分鐘)`;
+    } else if (stats.dailyRequests >= SAFE_CONFIG.maxRequestsPerAccount) {
+        status = `🚫 達到每日限制 (${stats.dailyRequests})`;
+    } else {
+        status = '✅ 正常但未選中';
+    }
+    
+    return `• ${acc.id}: ${status}`;
+}).join('\n')}
+
+🔧 **解決方案：**
+1. 修復失效的Cookie認證
+2. 等待冷卻時間結束
+3. 使用 \`!ig-start\` 命令重新啟動監控
+
+⚡ **監控已完全停止，等待手動重新啟動！**`;
+                
+                await this.notificationCallback(autoStopMessage, 'auto_stop', 'Instagram');
+                console.log('📨 [自動停止] 通知已發送');
+            }
+        } catch (error) {
+            console.error('❌ [自動停止] 發送通知失敗:', error.message);
+        }
+        
+        // 執行停止監控
+        this.stopMonitoring();
+        console.log('🛑 [自動停止] Instagram監控已自動停止，等待手動重新啟動');
     }
     
     // 記錄請求結果（模擬old_main.js的動態間隔調整）
@@ -787,12 +874,18 @@ ${this.accounts.map(acc => {
             this.monitoringTimeout = null;
         }
         
+        // 重置自動停止相關的計數器
+        this.noAccountsCount = 0;
+        this.lastNoAccountsTime = 0;
+        this.allAccountsFailureNotified = false;
+        
         this.isMonitoring = true;
         let isLiveNow = false;
         
         console.log('🚀 [安全監控] 開始Instagram監控 (模擬old_main.js策略)');
         console.log(`📊 [配置] 保守間隔: ${SAFE_CONFIG.minInterval}-${SAFE_CONFIG.maxInterval}秒`);
         console.log(`🔐 [帳號] 總數: ${this.accounts.length} (固定設備ID策略)`);
+        console.log(`🛑 [自動停止] 連續${SAFE_CONFIG.noAccountsCheckCount}次無可用帳號時自動停止`);
         console.log(`🕐 [時間] 當前日本時間: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}`);
         
         const monitorLoop = async () => {
@@ -822,6 +915,12 @@ ${this.accounts.map(acc => {
                     console.log('⚫ [監控] 直播已結束');
                 }
                 
+                // 檢查是否因為無可用帳號而需要停止（這個檢查在selectBestAccount中已經處理）
+                if (!this.isMonitoring) {
+                    console.log('🛑 [監控循環] 監控已被自動停止，退出循環');
+                    return;
+                }
+                
                 // 計算下次檢查間隔（使用修復的計算）
                 const nextInterval = this.calculateNextInterval();
                 const nextCheckTime = new Date(Date.now() + nextInterval * 1000).toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' });
@@ -838,7 +937,7 @@ ${this.accounts.map(acc => {
                            !cookieStats.isCurrentlyInvalid;
                 }).length;
                 
-                console.log(`📊 [狀態] 可用帳號: ${availableCount}/${this.accounts.length}, 今日請求: ${this.dailyRequestCount}/${SAFE_CONFIG.maxDailyRequests}`);
+                console.log(`📊 [狀態] 可用帳號: ${availableCount}/${this.accounts.length}, 今日請求: ${this.dailyRequestCount}/${SAFE_CONFIG.maxDailyRequests}, 無帳號計數: ${this.noAccountsCount}/${SAFE_CONFIG.noAccountsCheckCount}`);
                 console.log(`🕐 [日本時間] ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}`);
                 
                 // 確保使用正確的間隔設置下次檢查
@@ -875,6 +974,10 @@ ${this.accounts.map(acc => {
             this.monitoringTimeout = null;
             console.log('⏹️ [監控] 監控循環已清除');
         }
+        
+        // 重置自動停止計數器
+        this.noAccountsCount = 0;
+        this.lastNoAccountsTime = 0;
         
         console.log('⏹️ [監控] 已停止');
     }
@@ -921,6 +1024,10 @@ ${this.accounts.map(acc => {
             targetUserId: null,
             japanTime: new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' }),
             japanHour: parseInt(this.getJapanHour()),
+            // 新增自動停止相關狀態
+            autoStopEnabled: SAFE_CONFIG.autoStopWhenNoAccounts,
+            noAccountsCount: this.noAccountsCount,
+            noAccountsThreshold: SAFE_CONFIG.noAccountsCheckCount,
             accountDetails: Array.from(this.accountStats.entries()).map(([id, stats]) => {
                 const cookieStats = this.cookieFailureStats.get(id);
                 const accountSession = this.accountSessions.get(id);
@@ -951,6 +1058,9 @@ ${this.accounts.map(acc => {
             invalidAccounts: 0,
             recentlyFailed: 0,
             japanTime: new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' }),
+            autoStopEnabled: SAFE_CONFIG.autoStopWhenNoAccounts,
+            noAccountsCount: this.noAccountsCount,
+            noAccountsThreshold: SAFE_CONFIG.noAccountsCheckCount,
             details: []
         };
         

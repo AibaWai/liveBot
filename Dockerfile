@@ -12,19 +12,8 @@ RUN npm install --only=production && \
 # Copy application files
 COPY app/main_blog.js main_blog.js
 COPY app/family_club_blog_monitor.js family_club_blog_monitor.js
-COPY app/javascript_analyzer.js javascript_analyzer.js
-COPY app/deep_content_analyzer.js deep_content_analyzer.js
-COPY app/jsonp_blog_monitor.js jsonp_blog_monitor.js
-COPY app/targeted_familyclub_detector.js targeted_familyclub_detector.js
-COPY app/api_detector_blog_monitor.js api_detector_blog_monitor.js
-COPY app/precise_api_detector.js precise_api_detector.js
-COPY app/enhanced_api_blog_monitor.js enhanced_api_blog_monitor.js
 COPY app/safer_instagram_monitor.js safer_instagram_monitor.js
 COPY app/web_status_panel.js web_status_panel.js
-
-# Copy template and static files
-COPY app/templates/ templates/
-COPY app/public/ public/
 
 # Create necessary directories
 RUN mkdir -p /app/logs
