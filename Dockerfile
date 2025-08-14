@@ -15,13 +15,14 @@ COPY app/family_club_blog_monitor.js family_club_blog_monitor.js
 COPY app/safer_instagram_monitor.js safer_instagram_monitor.js
 COPY app/web_status_panel.js web_status_panel.js
 
+
 # Create necessary directories
-RUN mkdir -p /app/logs
-RUN mkdir -p /app/debug-files
+#RUN mkdir -p /app/logs
+#RUN mkdir -p /app/debug-files
 
 # Ensure proper permissions for static files
-RUN chmod -R 755 /app/public
-RUN chmod -R 755 /app/templates
+#RUN chmod -R 755 /app/public
+#RUN chmod -R 755 /app/templates
 
 # Create a non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
