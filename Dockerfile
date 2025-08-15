@@ -12,7 +12,7 @@ RUN npm install --only=production && \
 # Copy application files
 COPY app/main_blog.js main_blog.js
 COPY app/family_club_blog_monitor.js family_club_blog_monitor.js
-COPY app/safer_instagram_monitor.js safer_instagram_monitor.js
+COPY app/balanced_safe_instagram_monitor.js balanced_safe_instagram_monitor.js
 COPY app/web_status_panel.js web_status_panel.js
 
 
