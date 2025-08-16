@@ -6,10 +6,11 @@ class WebStatusPanel {
         this.unifiedState = unifiedState;
         this.config = config;
         this.client = client;
-        this.getInstagramMonitor = getInstagramMonitorFn;
-        this.getBlogMonitor = getBlogMonitorFn; // 新增博客監控函數
+        // Instagram監控已移除，不再使用
+        this.getBlogMonitor = getBlogMonitorFn;
         
         this.setupRoutes();
+        console.log('🌐 [Web面板] 初始化完成 - Discord頻道監控 + 博客監控模式');
     }
     
     // 獲取日本時間字符串
@@ -25,56 +26,6 @@ class WebStatusPanel {
             hour12: false
         }).split(':')[0];
     }
-    
-    // 根據日本時間獲取時間段描述
-    getTimeSlotDescription() {
-        const hour = parseInt(this.getJapanHour());
-        
-        if (hour >= 2 && hour <= 6) {
-            return '🌙 深夜模式 (10-15分鐘間隔)';
-        } else if (hour >= 0 && hour <= 1) {
-            return '🌃 深夜前期 (3-5分鐘間隔)';
-        } else if (hour >= 7 && hour <= 8) {
-            return '🌅 早晨時段 (3-5分鐘間隔)';
-        } else if (hour >= 9 && hour <= 23) {
-            return '☀️ 活躍時段 (90-180秒間隔)';
-        }
-        return '🕐 一般時段';
-    }
-    
-    // 安全獲取Instagram監控狀態
-    getInstagramStatus() {
-        try {
-            const instagramMonitor = this.getInstagramMonitor();
-            if (instagramMonitor && typeof instagramMonitor.getStatus === 'function') {
-                return instagramMonitor.getStatus();
-            }
-        } catch (error) {
-            console.error('❌ [Web面板] 獲取Instagram狀態失敗:', error.message);
-        }
-        
-        // 返回默認狀態
-        return {
-            isMonitoring: false,
-            isLiveNow: false,
-            accountStatus: 'unknown',
-            totalRequests: 0,
-            successfulRequests: 0,
-            successRate: 0,
-            consecutiveErrors: 0,
-            lastCheck: null,
-            targetUserId: null,
-            totalAccounts: 0,
-            availableAccounts: 0,
-            dailyRequests: 0,
-            maxDailyRequests: 0,
-            invalidCookieAccounts: 0,
-            japanTime: this.getJapanTimeString(),
-            japanHour: parseInt(this.getJapanHour()),
-            accountDetails: []
-        };
-    }
-
 
     getBlogStatus() {
         try {
@@ -99,7 +50,7 @@ class WebStatusPanel {
             endpoint: 'https://web.familyclub.jp/s/jwb/api/list/diarkiji_list',
             artistCode: 'F2017',
             artistName: '高木雄也',
-            blogUrl: 'https://web.familyclub.jp/s/jwb/diary/F2017?ima=3047',
+            blogUrl: 'https://web.familyclub.jp/s/jwb/diary/F2017',
             activeTimeSchedule: '日本時間12:00-24:00 (每小時00分檢查)',
             currentActiveTime: false,
             japanTime: this.getJapanTimeString(),
@@ -165,263 +116,25 @@ class WebStatusPanel {
             }
         });
         
-        // Instagram 狀態詳細端點
-        this.app.get('/instagram-status', (req, res) => {
+        // CloudPhone 狀態端點
+        this.app.get('/cloudphone-status', (req, res) => {
             try {
-                const igStatus = this.getInstagramStatus();
-                res.json(igStatus);
+                res.json({
+                    configured: this.unifiedState.cloudphone.configured,
+                    channelId: this.unifiedState.cloudphone.channelId,
+                    totalNotifications: this.unifiedState.cloudphone.totalNotifications,
+                    lastNotification: this.unifiedState.cloudphone.lastNotification,
+                    status: this.unifiedState.cloudphone.configured ? 'active' : 'not_configured'
+                });
             } catch (error) {
-                console.error('❌ [Web面板] 獲取Instagram詳細狀態失敗:', error.message);
-                res.status(500).json({ error: 'Instagram status not available' });
+                console.error('❌ [Web面板] 獲取CloudPhone狀態失敗:', error.message);
+                res.status(500).json({ error: 'CloudPhone status not available' });
             }
         });
-    }
-
-    // 在HTML生成中更新博客監控部分
-    generateTwitterMonitoringHTML() {
-        const blogStatus = this.getBlogStatus();
-        
-        if (!this.config.BLOG_NOTIFICATION_CHANNEL_ID) {
-            return '';
-        }
-
-        return `
-        <div class="status-card">
-            <div class="card-title">🐦 Twitter監控</div>
-            <div class="status-item">
-                <span>監控狀態:</span>
-                <span class="status-value">${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}</span>
-            </div>
-            <div class="status-item">
-                <span>目標帳號:</span>
-                <span class="status-value">@${blogStatus.targetAccount}</span>
-            </div>
-            <div class="status-item">
-                <span>檢查次數:</span>
-                <span class="status-value">${blogStatus.totalChecks}</span>
-            </div>
-            <div class="status-item">
-                <span>發現推文:</span>
-                <span class="status-value">${blogStatus.articlesFound}</span>
-            </div>
-            <div class="status-item">
-                <span>關鍵字數:</span>
-                <span class="status-value">${blogStatus.keywords.length}</span>
-            </div>
-            <div class="status-item">
-                <span>下次檢查:</span>
-                <span class="status-value">${blogStatus.nextCheckTime ? new Date(blogStatus.nextCheckTime).toLocaleTimeString('ja-JP', { timeZone: 'Asia/Tokyo', hour: '2-digit', minute: '2-digit' }) : '未安排'}</span>
-            </div>
-        </div>`;
-    }
-
-    // 生成Twitter監控詳情HTML
-    generateTwitterDetailHTML() {
-        const blogStatus = this.getBlogStatus();
-        
-        if (!this.config.BLOG_NOTIFICATION_CHANNEL_ID) {
-            return '';
-        }
-
-        return `
-        <div class="section">
-            <div class="section-title">🐦 Twitter監控詳情</div>
-            <div class="stats-grid" style="margin-bottom: 20px;">
-                <div class="stat-box ${blogStatus.isMonitoring ? '' : 'warning'}">
-                    <div class="stat-number">${blogStatus.isMonitoring ? '✅' : '❌'}</div>
-                    <div class="stat-label">監控狀態</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-number">${blogStatus.totalChecks}</div>
-                    <div class="stat-label">總檢查次數</div>
-                </div>
-                <div class="stat-box ${blogStatus.articlesFound > 0 ? '' : 'warning'}">
-                    <div class="stat-number">${blogStatus.articlesFound}</div>
-                    <div class="stat-label">發現推文</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-number">${blogStatus.keywords.length}</div>
-                    <div class="stat-label">監控關鍵字</div>
-                </div>
-            </div>
-
-            <div class="blog-info">
-                <div class="blog-detail-card">
-                    <h4>📋 Twitter監控信息</h4>
-                    <div class="detail-grid">
-                        <div class="detail-item">
-                            <span>Twitter帳號:</span>
-                            <span><a href="https://x.com/${blogStatus.targetAccount}" target="_blank" style="color: #2196F3; text-decoration: none;">@${blogStatus.targetAccount}</a></span>
-                        </div>
-                        <div class="detail-item">
-                            <span>Nitter網址:</span>
-                            <span><a href="${blogStatus.twitterUrl}" target="_blank" style="color: #2196F3; text-decoration: none;">nitter.poast.org</a></span>
-                        </div>
-                        <div class="detail-item">
-                            <span>檢查頻率:</span>
-                            <span>每小時00分</span>
-                        </div>
-                        <div class="detail-item">
-                            <span>監控關鍵字:</span>
-                            <span>${blogStatus.keywords.join(', ') || '未設定'}</span>
-                        </div>
-                        <div class="detail-item">
-                            <span>最後檢查:</span>
-                            <span>${blogStatus.lastCheckTime || '尚未檢查'}</span>
-                        </div>
-                        <div class="detail-item">
-                            <span>最新推文時間:</span>
-                            <span>${blogStatus.lastArticleDate || '無'}</span>
-                        </div>
-                        <div class="detail-item">
-                            <span>下次檢查時間:</span>
-                            <span class="next-check">${blogStatus.nextCheckTime || '未安排'}</span>
-                        </div>
-                        <div class="detail-item">
-                            <span>通知頻道:</span>
-                            <span>已配置 ✅</span>
-                        </div>
-                    </div>
-                </div>
-
-                ${blogStatus.lastFoundArticles && blogStatus.lastFoundArticles.length > 0 ? `
-                <div class="blog-detail-card" style="margin-top: 15px;">
-                    <h4>📝 最近發現的推文</h4>
-                    <div class="recent-tweets">
-                        ${blogStatus.lastFoundArticles.slice(0, 3).map((tweet, index) => `
-                            <div class="tweet-item" style="padding: 10px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 10px;">
-                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px;">
-                                    <span style="color: #2196F3; font-weight: bold;">${tweet.date}</span>
-                                    <span style="color: #4CAF50; font-size: 0.9em;">關鍵字: ${tweet.keyword}</span>
-                                </div>
-                                <div style="color: #ccc; font-size: 0.9em;">
-                                    ${tweet.content}
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-                ` : ''}
-            </div>
-
-            ${blogStatus.articlesFound > 0 ? `
-            <div class="blog-success">
-                🎉 <strong>監控運作正常!</strong> 已成功檢測到 ${blogStatus.articlesFound} 篇相關推文
-                <br>🔍 關鍵字: ${blogStatus.keywords.join(', ')}
-            </div>
-            ` : blogStatus.totalChecks > 5 ? `
-            <div class="blog-waiting">
-                ⏳ <strong>持續監控中...</strong> 已檢查 ${blogStatus.totalChecks} 次，等待包含關鍵字的新推文
-                <br>🔍 監控關鍵字: ${blogStatus.keywords.join(', ')}
-            </div>
-            ` : `
-            <div class="blog-waiting">
-                🚀 <strong>監控系統啟動中...</strong> 正在等待首次檢查結果
-                <br>🔍 監控關鍵字: ${blogStatus.keywords.join(', ')}
-            </div>
-            `}
-        </div>`;
-    }
-
-    generateCookieStatusHTML() {
-        try {
-            const instagramMonitor = this.getInstagramMonitor();
-            if (instagramMonitor && typeof instagramMonitor.getCookieStatusSummary === 'function') {
-                const cookieSummary = instagramMonitor.getCookieStatusSummary();
-                
-                return `
-                <div class="cookie-summary">
-                    <div class="stats-grid">
-                        <div class="stat-box ${cookieSummary.validAccounts === cookieSummary.totalAccounts ? '' : 'warning'}">
-                            <div class="stat-number">${cookieSummary.validAccounts}</div>
-                            <div class="stat-label">有效帳號</div>
-                        </div>
-                        <div class="stat-box ${cookieSummary.invalidAccounts > 0 ? 'error' : ''}">
-                            <div class="stat-number">${cookieSummary.invalidAccounts}</div>
-                            <div class="stat-label">失效帳號</div>
-                        </div>
-                        <div class="stat-box ${cookieSummary.recentlyFailed > 0 ? 'warning' : ''}">
-                            <div class="stat-number">${cookieSummary.recentlyFailed}</div>
-                            <div class="stat-label">近期失敗</div>
-                        </div>
-                        <div class="stat-box">
-                            <div class="stat-number">${parseInt(this.getJapanHour())}</div>
-                            <div class="stat-label">日本時間 (時)</div>
-                        </div>
-                    </div>
-                    
-                    <div class="time-info">
-                        <div class="current-time">
-                            🕐 當前日本時間: ${cookieSummary.japanTime}
-                        </div>
-                        <div class="time-slot">
-                            ${this.getTimeSlotDescription()}
-                        </div>
-                    </div>
-                    
-                    <div class="cookie-accounts">
-                        ${cookieSummary.details.map(account => `
-                            <div class="cookie-account ${account.status === 'Invalid' ? 'invalid' : 'valid'}">
-                                <div class="account-header">
-                                    <span class="account-name">${account.id}</span>
-                                    <span class="account-status ${account.status.toLowerCase()}">${account.status === 'Valid' ? '✅ 有效' : '❌ 失效'}</span>
-                                </div>
-                                <div class="account-details">
-                                    <div class="detail-item">
-                                        <span>Session ID:</span>
-                                        <span class="session-id">${account.sessionId}</span>
-                                    </div>
-                                    ${account.consecutiveFailures > 0 ? `
-                                    <div class="detail-item warning">
-                                        <span>連續失敗:</span>
-                                        <span>${account.consecutiveFailures} 次</span>
-                                    </div>
-                                    ` : ''}
-                                    ${account.lastFailure ? `
-                                    <div class="detail-item">
-                                        <span>最後失敗:</span>
-                                        <span>${account.lastFailure}</span>
-                                    </div>
-                                    ` : ''}
-                                    ${account.invalidSince ? `
-                                    <div class="detail-item error">
-                                        <span>失效時間:</span>
-                                        <span>${account.invalidSince}</span>
-                                    </div>
-                                    ` : ''}
-                                </div>
-                            </div>
-                        `).join('')}
-                    </div>
-                    
-                    ${cookieSummary.invalidAccounts > 0 ? `
-                    <div class="cookie-warning">
-                        ⚠️ <strong>注意:</strong> 有 ${cookieSummary.invalidAccounts} 個帳號的cookies已失效，需要立即更新！
-                        <br>
-                        📋 <strong>修復步驟:</strong> 
-                        1. 重新登入Instagram → 2. 複製新的cookies → 3. 更新環境變數 → 4. 重新部署
-                    </div>
-                    ` : ''}
-                `;
-            }
-        } catch (error) {
-            console.error('❌ [Web面板] 生成Cookie狀態失敗:', error.message);
-        }
-        
-        return `
-        <div class="cookie-unavailable">
-            <p>Cookie狀態信息暫時不可用</p>
-            <p>系統正在初始化中...</p>
-            <p>當前日本時間: ${this.getJapanTimeString()}</p>
-        </div>
-        `;
     }
     
     generateStatusHTML() {
         const uptime = Math.floor((Date.now() - this.unifiedState.startTime) / 1000);
-        const igStatus = this.getInstagramStatus();
-        
-        // 只獲取一次博客狀態，避免重複調用
         const blogStatus = this.getBlogStatus();
         
         return `
@@ -430,7 +143,7 @@ class WebStatusPanel {
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>統一直播監控機器人 (日本時間)</title>
+        <title>Discord頻道監控 + 博客監控機器人 (日本時間)</title>
         <style>
             * { margin: 0; padding: 0; box-sizing: border-box; }
             body {
@@ -456,6 +169,39 @@ class WebStatusPanel {
             }
             .header p { color: #888; font-size: 1.1em; }
             
+            .architecture-info {
+                background: rgba(33, 150, 243, 0.2);
+                border: 1px solid #2196F3;
+                border-radius: 15px;
+                padding: 20px;
+                margin-bottom: 30px;
+                text-align: center;
+            }
+            .architecture-info h3 {
+                color: #2196F3;
+                margin-bottom: 15px;
+            }
+            .architecture-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
+                margin-top: 15px;
+            }
+            .arch-item {
+                background: rgba(26, 26, 46, 0.8);
+                padding: 15px;
+                border-radius: 10px;
+                border-left: 3px solid #4CAF50;
+            }
+            .arch-item h4 {
+                color: #4CAF50;
+                margin-bottom: 8px;
+            }
+            .arch-item p {
+                font-size: 0.9em;
+                color: #ccc;
+            }
+            
             .main-status {
                 display: grid;
                 grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
@@ -473,7 +219,7 @@ class WebStatusPanel {
             .status-card:hover { transform: translateY(-5px); }
             .status-card.warning { border-left-color: #ff9800; }
             .status-card.error { border-left-color: #f44336; }
-            .status-card.live { border-left-color: #e91e63; }
+            .status-card.cloudphone { border-left-color: #9c27b0; }
             
             .card-title {
                 font-size: 1.3em;
@@ -493,25 +239,6 @@ class WebStatusPanel {
             .status-value {
                 font-weight: bold;
                 color: #4CAF50;
-            }
-            
-            .live-indicator {
-                text-align: center;
-                padding: 20px;
-                border-radius: 15px;
-                margin-bottom: 30px;
-                font-size: 1.8em;
-                font-weight: bold;
-            }
-            .live-yes {
-                background: linear-gradient(45deg, #e91e63, #f44336);
-                animation: pulse 2s infinite;
-            }
-            .live-no { background: rgba(66, 66, 66, 0.8); }
-            
-            @keyframes pulse {
-                0%, 100% { opacity: 1; transform: scale(1); }
-                50% { opacity: 0.8; transform: scale(1.05); }
             }
             
             .section {
@@ -539,6 +266,8 @@ class WebStatusPanel {
                 border-radius: 10px;
                 text-align: center;
             }
+            .stat-box.warning { border: 1px solid #ff9800; }
+            .stat-box.error { border: 1px solid #f44336; }
             .stat-number {
                 font-size: 2em;
                 font-weight: bold;
@@ -546,36 +275,15 @@ class WebStatusPanel {
             }
             .stat-label { color: #888; font-size: 0.9em; }
             
-            .refresh-note {
-                text-align: center;
-                color: #666;
-                margin-top: 30px;
-                font-size: 0.9em;
-            }
-            
-            .commands {
-                background: rgba(26, 26, 46, 0.8);
-                border-radius: 10px;
-                padding: 20px;
-                margin-top: 20px;
-            }
-            .command {
-                background: rgba(0, 0, 0, 0.5);
-                padding: 10px 15px;
-                border-radius: 8px;
-                margin: 8px 0;
-                font-family: 'Courier New', monospace;
-                font-size: 0.9em;
-            }
-            
-            .blog-detail-card {
+            .detail-card {
                 background: rgba(26, 26, 46, 0.8);
                 border-radius: 10px;
                 padding: 20px;
                 border-left: 3px solid #2196F3;
+                margin-bottom: 15px;
             }
 
-            .blog-detail-card h4 {
+            .detail-card h4 {
                 color: #2196F3;
                 margin-bottom: 15px;
                 font-size: 1.2em;
@@ -595,6 +303,63 @@ class WebStatusPanel {
                 font-size: 0.9em;
             }
             
+            .commands {
+                background: rgba(26, 26, 46, 0.8);
+                border-radius: 10px;
+                padding: 20px;
+                margin-top: 20px;
+            }
+            .command {
+                background: rgba(0, 0, 0, 0.5);
+                padding: 10px 15px;
+                border-radius: 8px;
+                margin: 8px 0;
+                font-family: 'Courier New', monospace;
+                font-size: 0.9em;
+            }
+            
+            .refresh-note {
+                text-align: center;
+                color: #666;
+                margin-top: 30px;
+                font-size: 0.9em;
+            }
+
+            .cloudphone-status {
+                background: rgba(156, 39, 176, 0.2);
+                border: 1px solid #9c27b0;
+                border-radius: 10px;
+                padding: 15px;
+                margin-top: 15px;
+                text-align: center;
+            }
+            
+            .discord-channels {
+                margin-top: 20px;
+            }
+            .channel-item {
+                background: rgba(26, 26, 46, 0.8);
+                border-radius: 8px;
+                padding: 15px;
+                margin-bottom: 10px;
+                border-left: 3px solid #673ab7;
+            }
+            .channel-name {
+                font-weight: bold;
+                color: #673ab7;
+                margin-bottom: 8px;
+            }
+            .channel-stats {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                gap: 10px;
+                font-size: 0.9em;
+            }
+            .channel-stat {
+                display: flex;
+                justify-content: space-between;
+                padding: 4px 0;
+            }
         </style>
         <script>
             // Auto refresh every 30 seconds
@@ -604,17 +369,28 @@ class WebStatusPanel {
     <body>
         <div class="container">
             <div class="header">
-                <h1>🤖 統一直播監控機器人</h1>
-                <p>Instagram監控 + Discord頻道監控 + Family Club博客監控</p>
+                <h1>🤖 Discord頻道監控 + 博客監控機器人</h1>
+                <p>CloudPhone Instagram監控 + Discord頻道監控 + Family Club博客監控</p>
             </div>
 
-            ${!igStatus.isMonitoring ? `
-            <div class="system-warning">
-                ⚠️ Instagram監控系統正在初始化中，請稍等...
-            </div>` : ''}
-
-            <div class="live-indicator ${igStatus.isLiveNow ? 'live-yes' : 'live-no'}">
-                ${igStatus.isLiveNow ? '🔴 @' + this.config.TARGET_USERNAME + ' 正在直播!' : '⚫ @' + this.config.TARGET_USERNAME + ' 離線中'}
+            <div class="architecture-info">
+                <h3>🔄 系統架構升級說明</h3>
+                <p>Instagram監控已轉移至CloudPhone 24/7外部監控，提供更穩定可靠的監控體驗</p>
+                
+                <div class="architecture-grid">
+                    <div class="arch-item">
+                        <h4>📱 CloudPhone Instagram</h4>
+                        <p>24/7 Android手機<br>Instagram原生通知<br>無API限制</p>
+                    </div>
+                    <div class="arch-item">
+                        <h4>📺 Discord頻道監控</h4>
+                        <p>實時關鍵字檢測<br>多頻道支援<br>電話通知整合</p>
+                    </div>
+                    <div class="arch-item">
+                        <h4>📝 Family Club博客</h4>
+                        <p>官方API監控<br>新文章即時通知<br>日本時間排程</p>
+                    </div>
+                </div>
             </div>
 
             <div class="main-status">
@@ -632,25 +408,29 @@ class WebStatusPanel {
                         <span>伺服器數:</span>
                         <span class="status-value">${this.client.guilds?.cache.size || 0}</span>
                     </div>
+                    <div class="status-item">
+                        <span>啟動時間:</span>
+                        <span class="status-value">${new Date(this.unifiedState.startTime).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}</span>
+                    </div>
                 </div>
 
-                <div class="status-card ${igStatus.isMonitoring ? '' : 'warning'}">
-                    <div class="card-title">📺 Instagram監控</div>
+                <div class="status-card cloudphone ${this.unifiedState.cloudphone.configured ? '' : 'warning'}">
+                    <div class="card-title">📱 CloudPhone Instagram</div>
                     <div class="status-item">
-                        <span>目標用戶:</span>
-                        <span class="status-value">@${this.config.TARGET_USERNAME}</span>
+                        <span>配置狀態:</span>
+                        <span class="status-value">${this.unifiedState.cloudphone.configured ? '✅ 已配置' : '❌ 未配置'}</span>
                     </div>
                     <div class="status-item">
-                        <span>監控狀態:</span>
-                        <span class="status-value">${igStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}</span>
+                        <span>監控頻道:</span>
+                        <span class="status-value">${this.unifiedState.cloudphone.channelId || '未設定'}</span>
                     </div>
                     <div class="status-item">
-                        <span>可用帳號:</span>
-                        <span class="status-value">${igStatus.availableAccounts}/${igStatus.totalAccounts}</span>
+                        <span>收到通知:</span>
+                        <span class="status-value">${this.unifiedState.cloudphone.totalNotifications} 次</span>
                     </div>
                     <div class="status-item">
-                        <span>今日請求:</span>
-                        <span class="status-value">${igStatus.dailyRequests}/${igStatus.maxDailyRequests}</span>
+                        <span>最後通知:</span>
+                        <span class="status-value">${this.unifiedState.cloudphone.lastNotification || '無'}</span>
                     </div>
                 </div>
 
@@ -696,6 +476,154 @@ class WebStatusPanel {
                 </div>
             </div>
 
+            ${this.unifiedState.cloudphone.configured ? `
+            <div class="section">
+                <div class="section-title">📱 CloudPhone Instagram監控詳情</div>
+                <div class="stats-grid" style="margin-bottom: 20px;">
+                    <div class="stat-box ${this.unifiedState.cloudphone.configured ? '' : 'error'}">
+                        <div class="stat-number">${this.unifiedState.cloudphone.configured ? '✅' : '❌'}</div>
+                        <div class="stat-label">配置狀態</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-number">${this.unifiedState.cloudphone.totalNotifications}</div>
+                        <div class="stat-label">收到通知</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-number">24/7</div>
+                        <div class="stat-label">監控時間</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-number">0ms</div>
+                        <div class="stat-label">延遲時間</div>
+                    </div>
+                </div>
+
+                <div class="detail-card">
+                    <h4>📋 CloudPhone監控詳情</h4>
+                    <div class="detail-grid">
+                        <div class="detail-item">
+                            <span>監控類型:</span>
+                            <span>Android手機實體監控</span>
+                        </div>
+                        <div class="detail-item">
+                            <span>通知來源:</span>
+                            <span>Instagram原生App</span>
+                        </div>
+                        <div class="detail-item">
+                            <span>運行時間:</span>
+                            <span>24小時不間斷</span>
+                        </div>
+                        <div class="detail-item">
+                            <span>Discord頻道:</span>
+                            <span>${this.unifiedState.cloudphone.channelId}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span>總通知數:</span>
+                            <span>${this.unifiedState.cloudphone.totalNotifications}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span>最後通知:</span>
+                            <span>${this.unifiedState.cloudphone.lastNotification || '等待中'}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="cloudphone-status">
+                    🔄 <strong>CloudPhone監控優勢:</strong><br>
+                    ✅ 24/7不間斷實體手機監控<br>
+                    ✅ Instagram原生App通知（最快檢測）<br>
+                    ✅ 無API限制或帳號管理問題<br>
+                    ✅ 不受Instagram政策變更影響<br>
+                    ✅ 自動轉發至Discord觸發後續流程
+                </div>
+            </div>` : `
+            <div class="section">
+                <div class="section-title">📱 CloudPhone Instagram監控 (未配置)</div>
+                <div class="detail-card">
+                    <h4>⚠️ CloudPhone監控未配置</h4>
+                    <p style="color: #ff9800; margin-bottom: 15px;">
+                        請設定 <code>CLOUDPHONE_NOTIFICATION_CHANNEL</code> 環境變數來啟用CloudPhone Instagram監控
+                    </p>
+                    <div style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; font-family: monospace;">
+                        CLOUDPHONE_NOTIFICATION_CHANNEL=YOUR_DISCORD_CHANNEL_ID
+                    </div>
+                    <p style="margin-top: 15px; color: #ccc; font-size: 0.9em;">
+                        配置後，CloudPhone收到的Instagram通知將轉發至指定Discord頻道，觸發關鍵字檢測和電話通知
+                    </p>
+                </div>
+            </div>`}
+
+            <div class="section">
+                <div class="section-title">📺 Discord頻道監控詳情</div>
+                <div class="stats-grid" style="margin-bottom: 20px;">
+                    <div class="stat-box">
+                        <div class="stat-number">${Object.keys(this.config.CHANNEL_CONFIGS).length}</div>
+                        <div class="stat-label">監控頻道</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-number">${this.unifiedState.discord.totalMessagesProcessed}</div>
+                        <div class="stat-label">處理訊息</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-number">${this.unifiedState.discord.lastDetections.length}</div>
+                        <div class="stat-label">關鍵字檢測</div>
+                    </div>
+                    <div class="stat-box">
+                        <div class="stat-number">${this.unifiedState.notifications.phoneCallsMade}</div>
+                        <div class="stat-label">電話通知</div>
+                    </div>
+                </div>
+
+                ${Object.keys(this.config.CHANNEL_CONFIGS).length > 0 ? `
+                <div class="discord-channels">
+                    <h4 style="color: #673ab7; margin-bottom: 15px;">📋 監控頻道列表</h4>
+                    ${Object.entries(this.config.CHANNEL_CONFIGS).map(([channelId, config]) => {
+                        const stats = this.unifiedState.discord.channelStats[channelId] || {};
+                        return `
+                        <div class="channel-item">
+                            <div class="channel-name">📺 ${config.name || `頻道 ${channelId}`}</div>
+                            <div class="channel-stats">
+                                <div class="channel-stat">
+                                    <span>處理訊息:</span>
+                                    <span>${stats.messagesProcessed || 0}</span>
+                                </div>
+                                <div class="channel-stat">
+                                    <span>關鍵字檢測:</span>
+                                    <span>${stats.keywordsDetected || 0}</span>
+                                </div>
+                                <div class="channel-stat">
+                                    <span>電話通知:</span>
+                                    <span>${stats.callsMade || 0}</span>
+                                </div>
+                                <div class="channel-stat">
+                                    <span>最後檢測:</span>
+                                    <span>${stats.lastDetection || '無'}</span>
+                                </div>
+                            </div>
+                            <div style="margin-top: 10px; font-size: 0.85em; color: #888;">
+                                關鍵字: ${config.keywords.join(', ')}
+                            </div>
+                            ${config.api_key && config.phone_number ? `
+                            <div style="margin-top: 8px; font-size: 0.85em; color: #4CAF50;">
+                                ✅ 電話通知已配置 (${config.phone_number})
+                            </div>
+                            ` : `
+                            <div style="margin-top: 8px; font-size: 0.85em; color: #ff9800;">
+                                ⚠️ 電話通知未配置
+                            </div>
+                            `}
+                        </div>
+                        `;
+                    }).join('')}
+                </div>
+                ` : `
+                <div style="background: rgba(255, 152, 0, 0.2); border: 1px solid #ff9800; border-radius: 10px; padding: 15px; text-align: center; color: #ffb74d;">
+                    ⚠️ <strong>未配置Discord頻道監控</strong><br>
+                    請設定 <code>CHANNEL_CONFIGS</code> 環境變數來啟用Discord頻道監控功能
+                </div>
+                `}
+            </div>
+
             ${this.config.BLOG_NOTIFICATION_CHANNEL_ID ? `
             <div class="section">
                 <div class="section-title">📝 Family Club 博客監控詳情</div>
@@ -718,7 +646,7 @@ class WebStatusPanel {
                     </div>
                 </div>
 
-                <div class="blog-detail-card">
+                <div class="detail-card">
                     <h4>📋 博客監控詳情</h4>
                     <div class="detail-grid">
                         <div class="detail-item">
@@ -757,21 +685,36 @@ class WebStatusPanel {
                     ⏳ <strong>持續監控中...</strong> 已檢查 ${blogStatus.totalChecks} 次，等待新文章發布
                 </div>
                 ` : ''}
-            </div>` : ''}
+            </div>` : `
+            <div class="section">
+                <div class="section-title">📝 Family Club 博客監控 (未配置)</div>
+                <div class="detail-card">
+                    <h4>⚠️ 博客監控未配置</h4>
+                    <p style="color: #ff9800; margin-bottom: 15px;">
+                        請設定 <code>BLOG_NOTIFICATION_CHANNEL_ID</code> 環境變數來啟用Family Club博客監控
+                    </p>
+                    <div style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; font-family: monospace;">
+                        BLOG_NOTIFICATION_CHANNEL_ID=YOUR_DISCORD_CHANNEL_ID<br>
+                        ARTIST_CODE=F2017  # 高木雄也
+                    </div>
+                    <p style="margin-top: 15px; color: #ccc; font-size: 0.9em;">
+                        配置後將監控Family Club博客新文章，每小時自動檢查並發送通知
+                    </p>
+                </div>
+            </div>`}
 
             <div class="section">
                 <div class="section-title">💬 Discord 命令</div>
                 <div class="commands">
-                    <div class="command">!ig-start - 開始Instagram監控</div>
-                    <div class="command">!ig-stop - 停止Instagram監控</div>
-                    <div class="command">!ig-status - Instagram監控狀態</div>
+                    <div class="command">!status - 完整系統狀態</div>
+                    <div class="command">!discord-stats - Discord監控統計</div>
+                    <div class="command">!cloudphone-stats - CloudPhone統計</div>
                     ${this.config.BLOG_NOTIFICATION_CHANNEL_ID ? `
                     <div class="command">!blog-status - 博客監控狀態</div>
-                    <div class="command">!blog-latest - 查看最新文章</div>
                     <div class="command">!blog-test - 測試API連接</div>
-                    <div class="command">!blog-check - 手動檢查</div>
+                    <div class="command">!blog-check - 手動檢查新文章</div>
+                    <div class="command">!blog-restart - 重新啟動博客監控</div>
                     ` : ''}
-                    <div class="command">!status - 完整系統狀態</div>
                     <div class="command">!help - 顯示幫助</div>
                 </div>
             </div>
@@ -786,30 +729,30 @@ class WebStatusPanel {
     
     getSystemStatus() {
         const uptime = Math.floor((Date.now() - this.unifiedState.startTime) / 1000);
-        const igStatus = this.getInstagramStatus(); // 使用安全的方法
+        const blogStatus = this.getBlogStatus();
         
         return {
             system: {
                 uptime: uptime,
                 bot_ready: this.unifiedState.botReady,
-                start_time: this.unifiedState.startTime
+                start_time: this.unifiedState.startTime,
+                architecture: 'CloudPhone + Discord + Blog'
             },
-            instagram: {
-                target: this.config.TARGET_USERNAME,
-                is_live: igStatus.isLiveNow,
-                is_monitoring: igStatus.isMonitoring,
-                account_status: igStatus.accountStatus,
-                total_requests: igStatus.totalRequests,
-                successful_requests: igStatus.successfulRequests,
-                success_rate: igStatus.successRate,
-                consecutive_errors: igStatus.consecutiveErrors,
-                last_check: igStatus.lastCheck,
-                user_id: igStatus.targetUserId,
-                available_accounts: igStatus.availableAccounts,
-                total_accounts: igStatus.totalAccounts,
-                daily_requests: igStatus.dailyRequests,
-                max_daily_requests: igStatus.maxDailyRequests,
-                invalid_cookie_accounts: igStatus.invalidCookieAccounts
+            cloudphone: {
+                configured: this.unifiedState.cloudphone.configured,
+                channel_id: this.unifiedState.cloudphone.channelId,
+                total_notifications: this.unifiedState.cloudphone.totalNotifications,
+                last_notification: this.unifiedState.cloudphone.lastNotification,
+                status: this.unifiedState.cloudphone.configured ? 'active' : 'not_configured'
+            },
+            blog: {
+                is_monitoring: blogStatus.isMonitoring,
+                total_checks: blogStatus.totalChecks,
+                articles_found: blogStatus.articlesFound,
+                last_check: blogStatus.lastCheckTime,
+                next_check: blogStatus.nextCheckTime,
+                artist: blogStatus.artistName,
+                method: blogStatus.method
             },
             discord: {
                 monitoring_channels: Object.keys(this.config.CHANNEL_CONFIGS).length,
@@ -828,14 +771,14 @@ class WebStatusPanel {
     }
     
     getHealthStatus() {
-        const igStatus = this.getInstagramStatus(); // 使用安全的方法
-        
         return {
             status: this.unifiedState.botReady ? 'healthy' : 'unhealthy',
             bot: this.client.user?.tag || 'Not ready',
-            instagram_monitoring: igStatus.isMonitoring,
+            cloudphone_monitoring: this.unifiedState.cloudphone.configured,
+            blog_monitoring: this.unifiedState.blog.isMonitoring,
             discord_channels: Object.keys(this.config.CHANNEL_CONFIGS).length,
-            uptime: Math.floor((Date.now() - this.unifiedState.startTime) / 1000)
+            uptime: Math.floor((Date.now() - this.unifiedState.startTime) / 1000),
+            architecture: 'CloudPhone + Discord + Blog'
         };
     }
 }

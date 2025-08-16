@@ -632,7 +632,7 @@ function initializeWebStatusPanel() {
     // 確保 instagramMonitor 已經初始化且具有 getStatus 方法
     if (!webStatusPanel && instagramMonitor && typeof instagramMonitor.getStatus === 'function') {
         try {
-            const WebStatusPanel = require('./web_status_panel');
+            const WebStatusPanel = require('../web_status_panel');
             webStatusPanel = new WebStatusPanel(
                 app, 
                 unifiedState, 
