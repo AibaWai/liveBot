@@ -192,62 +192,176 @@ class InstagramMonitor {
         }
     }
 
-    // 解析Instagram響應 - 使用多種方式解析
+    // 解析Instagram響應 - 改進版本
     parseInstagramResponse(data) {
         try {
             let user = null;
             let posts = [];
 
+            console.log(`🔍 [Instagram] 開始解析數據，類型: ${typeof data}, 長度: ${typeof data === 'string' ? data.length : 'N/A'}`);
+
             // 嘗試不同的解析方式
             if (typeof data === 'string') {
-                // 如果是HTML字符串，嘗試提取JSON
-                const jsonMatch = data.match(/window\._sharedData\s*=\s*({.*?});/);
-                if (jsonMatch) {
-                    const sharedData = JSON.parse(jsonMatch[1]);
-                    const userKey = Object.keys(sharedData.entry_data?.ProfilePage?.[0]?.graphql?.user || {})[0];
-                    user = sharedData.entry_data?.ProfilePage?.[0]?.graphql?.user;
-                }
-
-                // 嘗試另一種模式
-                if (!user) {
-                    const scriptMatch = data.match(/"ProfilePage":\[{"graphql":{"user":(.*?)}\]\s*}/);
-                    if (scriptMatch) {
-                        user = JSON.parse(scriptMatch[1]);
+                // 方法1: 尋找 window._sharedData
+                const sharedDataMatch = data.match(/window\._sharedData\s*=\s*({.*?});/);
+                if (sharedDataMatch) {
+                    try {
+                        const sharedData = JSON.parse(sharedDataMatch[1]);
+                        user = sharedData.entry_data?.ProfilePage?.[0]?.graphql?.user;
+                        if (user) {
+                            console.log(`✅ [Instagram] 使用 window._sharedData 解析成功`);
+                        }
+                    } catch (e) {
+                        console.warn(`⚠️ [Instagram] window._sharedData 解析失敗: ${e.message}`);
                     }
                 }
 
-                // 嘗試提取基本用戶信息
+                // 方法2: 尋找 ProfilePage JSON
                 if (!user) {
-                    const bioMatch = data.match(/<meta property="og:description" content="([^"]*)"/) ||
-                                   data.match(/<meta name="description" content="([^"]*)"/) ||
-                                   data.match(/"biography":"([^"]*)"/) ||
-                                   data.match(/"biography\\u0022:\\u0022([^"]*)"/) ||
-                                   data.match(/"biography\\u0022:\\u0022([^\\]*?)\\u0022/);
-                    
-                    const followersMatch = data.match(/"edge_followed_by":{"count":(\d+)}/) ||
-                                         data.match(/"follower_count":(\d+)/);
-                    
-                    const postsMatch = data.match(/"edge_owner_to_timeline_media":{"count":(\d+)}/) ||
-                                     data.match(/"media_count":(\d+)/);
+                    const profilePageMatch = data.match(/"ProfilePage":\[({.*?})\]/);
+                    if (profilePageMatch) {
+                        try {
+                            const profileData = JSON.parse(profilePageMatch[1]);
+                            user = profileData.graphql?.user;
+                            if (user) {
+                                console.log(`✅ [Instagram] 使用 ProfilePage 解析成功`);
+                            }
+                        } catch (e) {
+                            console.warn(`⚠️ [Instagram] ProfilePage 解析失敗: ${e.message}`);
+                        }
+                    }
+                }
 
-                    if (bioMatch || followersMatch || postsMatch) {
+                // 方法3: 正則表達式提取基本信息
+                if (!user) {
+                    console.log(`🔍 [Instagram] 嘗試正則表達式提取...`);
+                    
+                    // 提取Bio
+                    const bioPatterns = [
+                        /<meta property="og:description" content="([^"]*)"[^>]*>/,
+                        /<meta name="description" content="([^"]*)"[^>]*>/,
+                        /"biography":"([^"]*?)"/,
+                        /"biography\\u0022:\\u0022([^"]*?)\\u0022/
+                    ];
+                    
+                    let biography = '';
+                    for (const pattern of bioPatterns) {
+                        const match = data.match(pattern);
+                        if (match && match[1]) {
+                            biography = match[1]
+                                .replace(/\\n/g, '\n')
+                                .replace(/\\"/g, '"')
+                                .replace(/\\u0040/g, '@')
+                                .replace(/&#064;/g, '@');
+                            console.log(`📝 [Instagram] Bio提取成功: "${biography.substring(0, 50)}..."`);
+                            break;
+                        }
+                    }
+                    
+                    // 提取追蹤者數量
+                    const followerPatterns = [
+                        /"edge_followed_by":\s*{\s*"count":\s*(\d+)/,
+                        /"follower_count":\s*(\d+)/,
+                        /(\d+)\s+Followers?/i
+                    ];
+                    
+                    let followerCount = 0;
+                    for (const pattern of followerPatterns) {
+                        const match = data.match(pattern);
+                        if (match && match[1]) {
+                            followerCount = parseInt(match[1]);
+                            console.log(`👥 [Instagram] 追蹤者數提取成功: ${followerCount}`);
+                            break;
+                        }
+                    }
+                    
+                    // 提取貼文數量
+                    const postCountPatterns = [
+                        /"edge_owner_to_timeline_media":\s*{\s*"count":\s*(\d+)/,
+                        /"media_count":\s*(\d+)/,
+                        /(\d+)\s+Posts?/i
+                    ];
+                    
+                    let postCount = 0;
+                    for (const pattern of postCountPatterns) {
+                        const match = data.match(pattern);
+                        if (match && match[1]) {
+                            postCount = parseInt(match[1]);
+                            console.log(`📸 [Instagram] 貼文數提取成功: ${postCount}`);
+                            break;
+                        }
+                    }
+                    
+                    // 提取頭像URL
+                    const profilePicPatterns = [
+                        /"profile_pic_url_hd":"([^"]+)"/,
+                        /"profile_pic_url":"([^"]+)"/,
+                        /<meta property="og:image" content="([^"]+)"/
+                    ];
+                    
+                    let profilePicUrl = '';
+                    for (const pattern of profilePicPatterns) {
+                        const match = data.match(pattern);
+                        if (match && match[1]) {
+                            profilePicUrl = match[1]
+                                .replace(/\\u0026/g, '&')
+                                .replace(/\\u002F/g, '/');
+                            console.log(`🖼️ [Instagram] 頭像URL提取成功`);
+                            break;
+                        }
+                    }
+                    
+                    // 檢查是否為私人帳戶
+                    const isPrivate = data.includes('"is_private":true') || 
+                                     data.includes('"is_private\\u0022:true') ||
+                                     data.includes('This Account is Private');
+                    
+                    // 如果提取到任何有用信息，創建用戶對象
+                    if (biography || followerCount > 0 || postCount > 0 || profilePicUrl) {
                         user = {
-                            biography: bioMatch ? bioMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"') : '',
-                            edge_followed_by: { count: followersMatch ? parseInt(followersMatch[1]) : 0 },
-                            edge_owner_to_timeline_media: { count: postsMatch ? parseInt(postsMatch[1]) : 0, edges: [] },
-                            is_private: data.includes('"is_private":true') || data.includes('"is_private\\u0022:true'),
-                            profile_pic_url_hd: this.extractProfilePicUrl(data)
+                            biography: biography,
+                            edge_followed_by: { count: followerCount },
+                            edge_follow: { count: 0 }, // 無法從頁面提取追蹤中數量
+                            edge_owner_to_timeline_media: { count: postCount, edges: [] },
+                            is_private: isPrivate,
+                            profile_pic_url_hd: profilePicUrl
                         };
+                        console.log(`✅ [Instagram] 正則表達式提取成功`);
                     }
                 }
+
+                // 方法4: 尋找貼文數據
+                if (user && user.edge_owner_to_timeline_media?.count > 0) {
+                    console.log(`🔍 [Instagram] 嘗試提取貼文數據...`);
+                    
+                    // 尋找貼文JSON數據
+                    const postDataPatterns = [
+                        /"edge_owner_to_timeline_media":\s*{\s*"count":\s*\d+,\s*"page_info":[^}]*,\s*"edges":\s*(\[[^\]]*\])/,
+                        /"shortcode_media":\s*({[^}]*"shortcode"[^}]*})/g
+                    ];
+                    
+                    for (const pattern of postDataPatterns) {
+                        const matches = data.match(pattern);
+                        if (matches) {
+                            try {
+                                // 這裡需要更複雜的JSON解析
+                                console.log(`📋 [Instagram] 找到潛在貼文數據`);
+                                break;
+                            } catch (e) {
+                                console.warn(`⚠️ [Instagram] 貼文數據解析失敗: ${e.message}`);
+                            }
+                        }
+                    }
+                }
+
             } else if (typeof data === 'object') {
                 // JSON對象格式
                 user = data.graphql?.user || data.user || data;
+                console.log(`✅ [Instagram] JSON對象解析`);
             }
 
             if (!user) {
-                // 最後嘗試：創建基本用戶對象
-                console.warn('⚠️ [Instagram] 無法解析完整用戶數據，創建基本對象');
+                console.warn('⚠️ [Instagram] 所有解析方法都失敗，創建基本對象');
                 user = {
                     biography: '',
                     edge_followed_by: { count: 0 },
@@ -259,7 +373,7 @@ class InstagramMonitor {
             }
 
             // 解析貼文數據
-            if (user.edge_owner_to_timeline_media?.edges) {
+            if (user.edge_owner_to_timeline_media?.edges && Array.isArray(user.edge_owner_to_timeline_media.edges)) {
                 posts = user.edge_owner_to_timeline_media.edges.map(edge => ({
                     id: edge.node.id,
                     shortcode: edge.node.shortcode,
@@ -271,9 +385,10 @@ class InstagramMonitor {
                     likeCount: edge.node.edge_liked_by?.count || 0,
                     commentCount: edge.node.edge_media_to_comment?.count || 0
                 }));
+                console.log(`📋 [Instagram] 解析了 ${posts.length} 篇貼文`);
             }
 
-            return {
+            const result = {
                 isPrivate: user.is_private || false,
                 bio: user.biography || '',
                 followerCount: user.edge_followed_by?.count || 0,
@@ -283,10 +398,18 @@ class InstagramMonitor {
                 posts: posts
             };
 
+            console.log(`📊 [Instagram] 最終解析結果:`);
+            console.log(`   Bio: "${result.bio.substring(0, 30)}${result.bio.length > 30 ? '...' : ''}"`);
+            console.log(`   追蹤者: ${result.followerCount}`);
+            console.log(`   貼文: ${result.postCount}`);
+            console.log(`   私人: ${result.isPrivate}`);
+            console.log(`   實際貼文數據: ${result.posts.length}`);
+
+            return result;
+
         } catch (error) {
             console.error('❌ [Instagram] 數據解析失敗:', error.message);
-            console.error('Raw data type:', typeof data);
-            console.error('Raw data preview:', typeof data === 'string' ? data.substring(0, 200) : JSON.stringify(data).substring(0, 200));
+            console.error('Raw data preview:', typeof data === 'string' ? data.substring(0, 300) : JSON.stringify(data).substring(0, 300));
             
             // 返回基本空對象而不是拋出錯誤
             return {
@@ -377,56 +500,105 @@ class InstagramMonitor {
         return null;
     }
 
-    // 檢查Bio變更
+    // 檢查Bio變更 - 改進版本
     async checkBioChange(userData) {
-        if (this.state.lastBio && this.state.lastBio !== userData.bio) {
-            this.state.bioChanges++;
-            const oldBio = this.state.lastBio;
-            this.state.lastBio = userData.bio;
+        // 過濾掉明顯的HTML解析錯誤
+        let cleanBio = userData.bio || '';
+        
+        // 移除常見的HTML元數據模式
+        const htmlPatterns = [
+            /^\d+\s+Followers,\s+\d+\s+Following,\s+\d+\s+Posts\s+-\s+See Instagram photos and videos from.*$/i,
+            /^See photos, videos and more on Instagram\.$/i,
+            /^.*&#064;.*$/,  // 包含HTML實體的
+            /^監控中的用戶:.*$/  // 備用數據模式
+        ];
+        
+        let isMeaningfulBio = true;
+        for (const pattern of htmlPatterns) {
+            if (pattern.test(cleanBio)) {
+                console.log(`⚠️ [Instagram] 檢測到HTML元數據Bio，忽略: "${cleanBio.substring(0, 50)}..."`);
+                isMeaningfulBio = false;
+                break;
+            }
+        }
+        
+        // 只在有意義的Bio變更時才處理
+        if (isMeaningfulBio && this.state.lastBio && this.state.lastBio !== cleanBio) {
+            // 確保兩個Bio都不是HTML元數據
+            let lastBioMeaningful = true;
+            for (const pattern of htmlPatterns) {
+                if (pattern.test(this.state.lastBio)) {
+                    lastBioMeaningful = false;
+                    break;
+                }
+            }
             
-            console.log(`📝 [Instagram] 發現Bio變更`);
-            await this.sendBioChangeNotification(oldBio, userData.bio);
-            
-            return { oldBio, newBio: userData.bio };
+            if (lastBioMeaningful) {
+                this.state.bioChanges++;
+                const oldBio = this.state.lastBio;
+                this.state.lastBio = cleanBio;
+                
+                console.log(`📝 [Instagram] 發現真實Bio變更`);
+                console.log(`   舊: "${oldBio.substring(0, 30)}..."`);
+                console.log(`   新: "${cleanBio.substring(0, 30)}..."`);
+                
+                await this.sendBioChangeNotification(oldBio, cleanBio);
+                return { oldBio, newBio: cleanBio };
+            }
         }
 
-        if (!this.state.lastBio) {
-            this.state.lastBio = userData.bio;
-            console.log(`🎯 [Instagram] 初始化Bio內容`);
+        // 初始化狀態（只在有意義的Bio時）
+        if (!this.state.lastBio && isMeaningfulBio && cleanBio.length > 0) {
+            this.state.lastBio = cleanBio;
+            console.log(`🎯 [Instagram] 初始化Bio內容: "${cleanBio.substring(0, 30)}..."`);
         }
 
         return null;
     }
 
-    // 檢查頭像變更
+    // 檢查頭像變更 - 改進版本
     async checkProfilePicChange(userData) {
-        if (this.state.lastProfilePic && this.state.lastProfilePic !== userData.profilePicUrl) {
-            this.state.profilePicChanges++;
-            const oldPicUrl = this.state.lastProfilePic;
-            this.state.lastProfilePic = userData.profilePicUrl;
-            
-            console.log(`🖼️ [Instagram] 發現頭像變更`);
-            
-            try {
-                // 下載新頭像
-                const picFilename = `profile_pic_${Date.now()}.jpg`;
-                const downloadedPic = await this.downloadMedia(userData.profilePicUrl, picFilename);
+        // 過濾無效的頭像URL
+        const profilePicUrl = userData.profilePicUrl || '';
+        
+        if (!profilePicUrl || profilePicUrl.length < 10) {
+            console.log(`⚠️ [Instagram] 頭像URL無效，跳過檢查: "${profilePicUrl}"`);
+            return null;
+        }
+        
+        if (this.state.lastProfilePic && this.state.lastProfilePic !== profilePicUrl) {
+            // 確保兩個URL都是有效的
+            if (this.state.lastProfilePic.length > 10) {
+                this.state.profilePicChanges++;
+                const oldPicUrl = this.state.lastProfilePic;
+                this.state.lastProfilePic = profilePicUrl;
                 
-                await this.sendProfilePicChangeNotification(downloadedPic);
+                console.log(`🖼️ [Instagram] 發現頭像變更`);
+                console.log(`   舊URL: ${oldPicUrl.substring(0, 50)}...`);
+                console.log(`   新URL: ${profilePicUrl.substring(0, 50)}...`);
                 
-                // 立即刪除
-                await this.deleteFile(downloadedPic);
+                try {
+                    // 下載新頭像
+                    const picFilename = `profile_pic_${Date.now()}.jpg`;
+                    const downloadedPic = await this.downloadMedia(profilePicUrl, picFilename);
+                    
+                    await this.sendProfilePicChangeNotification(downloadedPic);
+                    
+                    // 立即刪除
+                    await this.deleteFile(downloadedPic);
+                    
+                } catch (error) {
+                    console.error('❌ [Instagram] 頭像處理失敗:', error.message);
+                }
                 
-            } catch (error) {
-                console.error('❌ [Instagram] 頭像處理失敗:', error.message);
+                return { oldUrl: oldPicUrl, newUrl: profilePicUrl };
             }
-            
-            return { oldUrl: oldPicUrl, newUrl: userData.profilePicUrl };
         }
 
-        if (!this.state.lastProfilePic) {
-            this.state.lastProfilePic = userData.profilePicUrl;
-            console.log(`🎯 [Instagram] 初始化頭像URL`);
+        // 初始化狀態（只在有效URL時）
+        if (!this.state.lastProfilePic && profilePicUrl.length > 10) {
+            this.state.lastProfilePic = profilePicUrl;
+            console.log(`🎯 [Instagram] 初始化頭像URL: ${profilePicUrl.substring(0, 50)}...`);
         }
 
         return null;
