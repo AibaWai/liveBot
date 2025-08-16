@@ -54,32 +54,51 @@ class InstagramMonitorV2 {
             const pythonCheck = await this.runCommand('python3', ['--version']);
             if (!pythonCheck.success) {
                 console.error('❌ [Instagram] Python3 未安裝');
+                console.error('請確保容器中安裝了 Python3');
                 return;
             }
-            console.log(`✅ [Instagram] Python 版本: ${pythonCheck.output}`);
-
-            // 檢查 pip 是否可用
-            const pipCheck = await this.runCommand('pip3', ['--version']);
-            if (!pipCheck.success) {
-                console.error('❌ [Instagram] pip3 未安裝');
-                return;
-            }
+            console.log(`✅ [Instagram] ${pythonCheck.output}`);
 
             // 檢查 instaloader 是否已安裝
-            const instaloaderCheck = await this.runCommand('python3', ['-c', 'import instaloader; print(instaloader.__version__)']);
+            const instaloaderCheck = await this.runCommand('python3', ['-c', 'import instaloader; print("instaloader version:", instaloader.__version__)']);
             
             if (instaloaderCheck.success) {
-                console.log(`✅ [Instagram] instaloader 已安裝，版本: ${instaloaderCheck.output}`);
+                console.log(`✅ [Instagram] ${instaloaderCheck.output}`);
                 this.state.instaloaderInstalled = true;
             } else {
-                console.log('📦 [Instagram] 正在安裝 instaloader...');
-                const installResult = await this.runCommand('pip3', ['install', 'instaloader'], { timeout: 120000 });
+                console.log('📦 [Instagram] instaloader 未安裝，嘗試安裝...');
                 
-                if (installResult.success) {
-                    console.log('✅ [Instagram] instaloader 安裝成功');
-                    this.state.instaloaderInstalled = true;
-                } else {
-                    console.error('❌ [Instagram] instaloader 安裝失敗:', installResult.error);
+                // 嘗試多種安裝方式
+                const installMethods = [
+                    ['pip3', ['install', '--user', 'instaloader']],
+                    ['pip3', ['install', 'instaloader']],
+                    ['python3', ['-m', 'pip', 'install', '--user', 'instaloader']],
+                    ['python3', ['-m', 'pip', 'install', 'instaloader']]
+                ];
+                
+                let installSuccess = false;
+                
+                for (const [cmd, args] of installMethods) {
+                    console.log(`🔄 [Instagram] 嘗試: ${cmd} ${args.join(' ')}`);
+                    const installResult = await this.runCommand(cmd, args, { timeout: 120000 });
+                    
+                    if (installResult.success) {
+                        // 再次檢查是否安裝成功
+                        const verifyCheck = await this.runCommand('python3', ['-c', 'import instaloader; print("安裝成功")']);
+                        if (verifyCheck.success) {
+                            console.log('✅ [Instagram] instaloader 安裝成功');
+                            this.state.instaloaderInstalled = true;
+                            installSuccess = true;
+                            break;
+                        }
+                    } else {
+                        console.warn(`⚠️ [Instagram] ${cmd} 安裝失敗: ${installResult.error}`);
+                    }
+                }
+                
+                if (!installSuccess) {
+                    console.error('❌ [Instagram] 所有安裝方法都失敗');
+                    console.error('建議在 Dockerfile 中預先安裝 instaloader');
                 }
             }
 
