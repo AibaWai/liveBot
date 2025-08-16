@@ -191,7 +191,7 @@ async function sendNotification(message, type = 'info', source = 'system') {
         
         console.log(`📤 [${source}] Discord通知已發送: ${type}`);
         
-        if (type === 'live_alert' && source === 'Instagram' && config.PUSHCALL_API_KEY) {
+        if (type === 'live_alert' && source === 'Discord' && config.PUSHCALL_API_KEY) {
             await makePhoneCall(`${config.TARGET_USERNAME} 開始直播了！`, source);
         }
     } catch (error) {
@@ -228,14 +228,12 @@ client.once('ready', () => {
     unifiedState.botReady = true;
     startBlogMonitoring();
     console.log(`✅ Discord Bot 已上線: ${client.user.tag}`);
-    console.log(`📺 Instagram監控目標: @${config.TARGET_USERNAME}`);
     console.log(`📋 Discord頻道監控: ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道`);
     console.log(`🕐 當前日本時間: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}`);
     
     // 發送啟動通知（修改版本）
-    sendNotification(`🚀 **平衡安全統一監控機器人已啟動** (日本時間)
+    sendNotification(`🚀 **統一監控機器人已啟動** (日本時間)
 
-**Instagram監控:** @${config.TARGET_USERNAME} (手動啟動模式)
 **Discord頻道監控:** ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道
 **博客監控:** ${config.BLOG_NOTIFICATION_CHANNEL_ID ? '✅ Family Club 高木雄也' : '❌ 未配置'}
 **電話通知:** ${config.PUSHCALL_API_KEY ? '✅ 已配置' : '❌ 未配置'}
@@ -300,250 +298,8 @@ client.on('messageCreate', async (message) => {
 async function handleDiscordCommands(message) {
     const cmd = message.content.toLowerCase();
     
-    if (cmd === '!ig-start') {
-        if (!instagramMonitor) {
-            await message.reply('❌ Instagram監控系統未初始化，請重新啟動Bot');
-            return;
-        }
-        
-        if (unifiedState.instagram.isMonitoring) {
-            await message.reply('⚠️ Instagram監控已在運行中!');
-            return;
-        }
-        
-        await message.reply('🚀 正在啟動Instagram監控...');
-        
-        try {
-            const started = await instagramMonitor.startMonitoring(config.TARGET_USERNAME, async () => {
-                if (!unifiedState.instagram.isLiveNow) {
-                    unifiedState.instagram.isLiveNow = true;
-                    console.log('🔴 [Instagram] 檢測到直播開始!');
-                    
-                    await sendNotification(`🔴 **@${config.TARGET_USERNAME} Instagram直播開始!** 🎥
-
-📺 觀看: https://www.instagram.com/${config.TARGET_USERNAME}/
-⏰ 檢測時間: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}
-🛡️ 平衡安全監控系統
-🕐 日本時間智能調整
-
-🚀 快去看直播吧！`, 'live_alert', 'Instagram');
-                }
-            });
-            
-            if (started) {
-                unifiedState.instagram.isMonitoring = true;
-                await message.reply('✅ Instagram監控已成功啟動！');
-            } else {
-                await message.reply('❌ Instagram監控啟動失敗，請檢查帳號狀態');
-            }
-            
-        } catch (error) {
-            console.error('❌ [命令] Instagram監控啟動失敗:', error.message);
-            await message.reply(`❌ 啟動失敗: ${error.message}`);
-        }
-    }
-    
-    else if (cmd === '!ig-stop') {
-        if (!instagramMonitor) {
-            await message.reply('❌ Instagram監控系統未初始化');
-            return;
-        }
-        
-        const stopped = instagramMonitor.stopMonitoring();
-        if (stopped) {
-            unifiedState.instagram.isMonitoring = false;
-            unifiedState.instagram.isLiveNow = false;
-            await message.reply('⏹️ Instagram監控已停止');
-        } else {
-            await message.reply('⚠️ 停止監控時發生錯誤');
-        }
-    }
-    
-    else if (cmd === '!ig-status') {
-        if (!instagramMonitor) {
-            await message.reply('❌ Instagram監控系統未初始化');
-            return;
-        }
-        
+    if (cmd === '!status') {
         const runtime = Math.round((Date.now() - unifiedState.startTime) / 60000);
-        const igStatus = getInstagramStatus();
-        
-        const statusMsg = `📊 **平衡安全Instagram監控狀態** (日本時間)
-
-**目標:** @${config.TARGET_USERNAME}
-**當前狀態:** ${unifiedState.instagram.isLiveNow ? '🔴 直播中' : '⚫ 離線'}
-**監控:** ${igStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
-
-**🔐 帳號狀態:**
-• 總帳號數: ${igStatus.totalAccounts}
-• 可用帳號: ${igStatus.availableAccounts}
-• 停用帳號: ${igStatus.disabledAccounts || 0}
-
-**📊 請求統計:**
-• 今日請求: ${igStatus.dailyRequests}/${igStatus.maxDailyRequests}
-• 成功率: ${igStatus.successRate}%
-• 運行時間: ${runtime} 分鐘
-
-**⏰ 時間段管理 (日本時間):**
-• 當前時間: ${igStatus.japanTime}
-• 當前時段: ${igStatus.currentTimeSlot === 'sleep' ? '😴 睡眠時段' : 
-                        igStatus.currentTimeSlot === 'low_activity' ? '🌅 低活躍時段' : 
-                        '☀️ 正常時段'}
-• 睡眠時段: ${igStatus.sleepHours?.join(', ')}:00 (完全停止)
-
-**🎯 預載入用戶:**
-${igStatus.preloadedUsers?.map(user => 
-    `• ${user.username}: ${user.userId} (${user.cacheAge}小時前載入)`
-).join('\n') || '• 無預載入用戶'}
-
-**🛡️ 安全策略:**
-• 錯誤處理: ${igStatus.errorHandling || '一次錯誤即停用'}
-• 輪換策略: ${igStatus.rotationStrategy || '每2次成功輪換'}`;
-
-        await message.reply(statusMsg);
-    }
-    
-    else if (cmd === '!ig-accounts' || cmd === '!accounts') {
-        if (!instagramMonitor) {
-            await message.reply('❌ Instagram監控系統未初始化');
-            return;
-        }
-        
-        try {
-            const igStatus = getInstagramStatus();
-            
-            let statusMsg = `🔐 **Instagram帳號狀態** (日本時間)
-
-📊 **總覽:**
-• 總帳號數: ${igStatus.totalAccounts}
-• 可用帳號: ${igStatus.availableAccounts} ✅
-• 停用帳號: ${igStatus.disabledAccounts || 0} 🚫
-• 檢查時間: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}
-
-📋 **帳號詳情:**\n`;
-
-            igStatus.accountDetails?.forEach(account => {
-                const statusIcon = account.isDisabled ? '🚫' : '✅';
-                const statusText = account.isDisabled ? '已停用' : '可用';
-                const successRate = account.successCount + account.errorCount > 0 ? 
-                    Math.round(account.successCount / (account.successCount + account.errorCount) * 100) : 0;
-                
-                statusMsg += `${statusIcon} **${account.id}**: ${statusText}\n`;
-                statusMsg += `   └ 成功率: ${successRate}%, 今日請求: ${account.dailyRequests}/${igStatus.maxDailyRequests/igStatus.totalAccounts}\n`;
-                statusMsg += `   └ 最後使用: ${account.lastUsed}\n`;
-                statusMsg += `   └ 連續成功: ${account.consecutiveSuccess}/${account.rotationThreshold} (${account.nextRotationIn}次後輪換)\n`;
-                
-                if (account.isDisabled && account.disabledReason) {
-                    statusMsg += `   └ ❌ 停用原因: ${account.disabledReason}\n`;
-                }
-            });
-
-            if ((igStatus.disabledAccounts || 0) > 0) {
-                statusMsg += `\n⚠️ **注意:** 有 ${igStatus.disabledAccounts} 個帳號已停用！`;
-                statusMsg += `\n💡 **提示:** 使用 \`!ig-reset\` 重置帳號狀態，或更新cookies`;
-            }
-
-            if (igStatus.availableAccounts === 0) {
-                statusMsg += `\n🆘 **緊急:** 沒有可用帳號！請立即使用 \`!ig-reset\` 或修復cookies`;
-            }
-
-            await message.reply(statusMsg);
-        } catch (error) {
-            await message.reply(`❌ 獲取帳號狀態失敗: ${error.message}`);
-        }
-    }
-    
-    else if (cmd === '!ig-reset') {
-        if (!instagramMonitor) {
-            await message.reply('❌ Instagram監控系統未初始化');
-            return;
-        }
-        
-        try {
-            const igStatus = getInstagramStatus();
-            const disabledCount = igStatus.disabledAccounts || 0;
-            
-            if (disabledCount === 0) {
-                await message.reply('ℹ️ 沒有需要重置的帳號，所有帳號都是可用狀態');
-                return;
-            }
-            
-            // 重置帳號狀態
-            if (typeof instagramMonitor.resetAccountStatus === 'function') {
-                instagramMonitor.resetAccountStatus();
-                
-                await message.reply(`🔄 **帳號狀態已重置**
-
-**重置帳號數:** ${disabledCount}
-**重置時間:** ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}
-
-**注意事項:**
-• 所有帳號的錯誤狀態已清除
-• 帳號輪換計數已重置
-• 如果cookies確實失效，帳號可能會再次被停用
-• 建議重置後立即測試監控功能
-
-**後續動作:**
-1. 使用 \`!ig-accounts\` 確認帳號狀態
-2. 使用 \`!ig-start\` 重新啟動監控
-3. 觀察帳號是否正常運作`);
-                
-            } else {
-                await message.reply('❌ 當前監控器版本不支援重置功能');
-            }
-        } catch (error) {
-            await message.reply(`❌ 重置帳號狀態失敗: ${error.message}`);
-        }
-    }
-    
-    else if (cmd === '!ig-check') {
-        if (!instagramMonitor) {
-            await message.reply('❌ Instagram監控系統未初始化');
-            return;
-        }
-        
-        await message.reply('🔍 執行手動Instagram檢查...');
-        
-        try {
-            const isLive = await instagramMonitor.checkLive(config.TARGET_USERNAME);
-            const status = isLive ? '🔴 發現直播' : '⚫ 無直播';
-            const igStatus = getInstagramStatus();
-            
-            await message.reply(`📊 **手動檢查結果:** ${status}
-
-🕐 檢查時間: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}
-🔐 可用帳號: ${igStatus.availableAccounts}/${igStatus.totalAccounts}
-🚫 停用帳號: ${igStatus.disabledAccounts || 0}
-📊 今日請求: ${igStatus.dailyRequests}/${igStatus.maxDailyRequests}
-⏰ 當前時段: ${igStatus.currentTimeSlot === 'sleep' ? '😴 睡眠' : 
-                      igStatus.currentTimeSlot === 'low_activity' ? '🌅 低活躍' : 
-                      '☀️ 正常'}
-
-${igStatus.disabledAccounts > 0 ? '\n💡 **提示:** 有帳號被停用，可使用 `!ig-reset` 重置' : ''}`);
-        } catch (error) {
-            await message.reply(`❌ 檢查失敗: ${error.message}`);
-        }
-    }
-    
-    else if (cmd === '!ig-preload') {
-        if (!instagramMonitor) {
-            await message.reply('❌ Instagram監控系統未初始化');
-            return;
-        }
-        
-        await message.reply(`🔄 重新預載入 @${config.TARGET_USERNAME} 的用戶ID...`);
-        
-        try {
-            await instagramMonitor.preloadUserIds([config.TARGET_USERNAME]);
-            await message.reply('✅ 用戶ID預載入成功！');
-        } catch (error) {
-            await message.reply(`❌ 預載入失敗: ${error.message}`);
-        }
-    }
-    
-    else if (cmd === '!status') {
-        const runtime = Math.round((Date.now() - unifiedState.startTime) / 60000);
-        const igStatus = getInstagramStatus();
         const blogStatus = blogMonitor ? blogMonitor.getStatus() : { isMonitoring: false };
         const latestRecord = blogMonitor ? blogMonitor.getLatestRecord() : null;
         
@@ -552,16 +308,6 @@ ${igStatus.disabledAccounts > 0 ? '\n💡 **提示:** 有帳號被停用，可�
 **系統運行時間:** ${runtime} 分鐘
 **Bot狀態:** ${unifiedState.botReady ? '✅ 在線' : '❌ 離線'}
 **當前日本時間:** ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}
-
-**Instagram監控 (平衡安全模式):**
-• 目標: @${config.TARGET_USERNAME}
-• 狀態: ${unifiedState.instagram.isLiveNow ? '🔴 直播中' : '⚫ 離線'}
-• 監控: ${unifiedState.instagram.isMonitoring ? '✅ 運行中' : '❌ 停止'}
-• 可用帳號: ${igStatus.availableAccounts}/${igStatus.totalAccounts}
-• 停用帳號: ${igStatus.disabledAccounts || 0}
-• 成功率: ${igStatus.successRate}%
-• 錯誤策略: 一次錯誤即停用
-• 輪換策略: 每2次成功輪換
 
 **博客監控:**
 • 目標: Family Club F2017
@@ -755,19 +501,41 @@ ${igStatus.disabledAccounts > 0 ? '\n💡 **提示:** 有帳號被停用，可�
             await message.reply('❌ 博客監控未啟用');
         }
     }
+
+else if (cmd === '!channels') {
+        const channelsInfo = Object.entries(config.CHANNEL_CONFIGS).map(([channelId, channelConfig]) => {
+            const stats = unifiedState.discord.channelStats[channelId];
+            return `**${channelConfig.name || channelId}** (${channelId})
+• 關鍵字: ${channelConfig.keywords.join(', ')}
+• 處理訊息: ${stats.messagesProcessed}
+• 檢測次數: ${stats.keywordsDetected}
+• 電話通知: ${stats.callsMade} 次 ${channelConfig.phone_number ? '📞' : '❌'}
+• 最後檢測: ${stats.lastDetection || '無'}`;
+        }).join('\n\n');
+
+        const recentDetections = unifiedState.discord.lastDetections.slice(-5).map((detection, index) => 
+            `${index + 1}. **${detection.頻道}** - ${detection.關鍵字} (${detection.時間})`
+        ).join('\n') || '無最近檢測';
+
+        const statusMsg = `📋 **Discord頻道監控詳情**
+
+**監控頻道 (${Object.keys(config.CHANNEL_CONFIGS).length}):**
+${channelsInfo || '無配置頻道'}
+
+**最近5次檢測:**
+${recentDetections}
+
+**總統計:**
+• 處理訊息: ${unifiedState.discord.totalMessagesProcessed}
+• 總檢測: ${unifiedState.discord.lastDetections.length}
+• 電話通知: ${unifiedState.notifications.phoneCallsMade}`;
+
+        await message.reply(statusMsg);
+    }
     
     // 更新幫助命令
-    else if (cmd === '!help') {
-        await message.reply(`🔍 **平衡安全Instagram監控機器人** (日本時間版)
-
-**Instagram監控命令:**
-\`!ig-start\` - 手動開始Instagram監控
-\`!ig-stop\` - 停止Instagram監控  
-\`!ig-status\` - Instagram監控狀態
-\`!ig-check\` - 手動檢查Instagram
-\`!ig-accounts\` - 檢查帳號狀態
-\`!ig-reset\` - 重置停用的帳號狀態
-\`!ig-preload\` - 重新預載入用戶ID
+else if (cmd === '!help') {
+        await message.reply(`🔍 **Discord頻道監控 + 博客監控機器人**
 
 **博客監控命令:** (Family Club)
 \`!blog-status\` - 博客監控狀態
@@ -775,26 +543,25 @@ ${igStatus.disabledAccounts > 0 ? '\n💡 **提示:** 有帳號被停用，可�
 \`!blog-check\` - 手動檢查新文章
 \`!blog-restart\` - 重新啟動博客監控
 
-**系統命令:**
+**Discord監控命令:**
+\`!channels\` - 查看頻道監控詳情
 \`!status\` - 完整系統狀態
 \`!help\` - 顯示此幫助
 
-**🛡️ 平衡安全特性:**
-• 手動啟動：不會自動開始監控
-• 睡眠模式：02:00-06:00完全停止
-• 單請求檢查：預載入用戶ID
-• 保持頻率：2-5分鐘間隔 (不會錯過直播)
-• 智能輪換：每2次成功就輪換帳號
-• 嚴格保護：一次錯誤即停用帳號
-• 每日限制：500次總請求, 200次/帳號
+**📋 系統功能:**
+• Discord頻道關鍵字監控 + 自動電話通知
+• Family Club博客新文章監控
+• 實時Web狀態面板
+• 多API Key電話通知支援
 
-**💡 常用操作流程:**
-1. \`!ig-start\` 啟動監控
-2. \`!ig-status\` 查看狀態
-3. 如有帳號停用，使用 \`!ig-reset\` 重置
-4. \`!ig-accounts\` 查看詳細帳號狀態`);
+**💡 使用說明:**
+• 機器人會自動監控配置的Discord頻道
+• 檢測到關鍵字時自動發送通知和撥打電話
+• 博客監控每小時自動檢查新文章
+• 訪問根網址查看實時狀態面板`);
     }
 }
+
 
 // 頻道專用API呼叫
 async function callChannelSpecificAPI(channelId, channelConfig, keyword, originalMessage) {
@@ -834,7 +601,7 @@ async function callChannelSpecificAPI(channelId, channelConfig, keyword, origina
 let webStatusPanel = null;
 
 function initializeWebStatusPanel() {
-    if (!webStatusPanel && instagramMonitor && typeof instagramMonitor.getStatus === 'function') {
+    if (!webStatusPanel  === 'function') {
         try {
             const WebStatusPanel = require('./web_status_panel');
             webStatusPanel = new WebStatusPanel(
@@ -842,7 +609,6 @@ function initializeWebStatusPanel() {
                 unifiedState, 
                 config, 
                 client, 
-                () => instagramMonitor,
                 () => blogMonitor
             );
             console.log('🌐 [Web面板] 狀態面板已初始化');
@@ -853,12 +619,6 @@ function initializeWebStatusPanel() {
                 initializeWebStatusPanel();
             }, 5000);
         }
-    } else if (!instagramMonitor) {
-        console.log('⏳ [Web面板] 等待Instagram監控初始化...');
-        setTimeout(initializeWebStatusPanel, 3000);
-    } else if (typeof instagramMonitor.getStatus !== 'function') {
-        console.log('⏳ [Web面板] Instagram監控尚未完全初始化...');
-        setTimeout(initializeWebStatusPanel, 2000);
     }
 }
 
@@ -867,7 +627,7 @@ app.get('/health', (req, res) => {
     res.status(200).json({
         status: 'healthy',
         uptime: Math.round((Date.now() - unifiedState.startTime) / 1000),
-        instagram: unifiedState.instagram.isMonitoring,
+        channels: Object.keys(config.CHANNEL_CONFIGS).length,
         blog: blogMonitor ? blogMonitor.getStatus().isMonitoring : false,
         discord: unifiedState.botReady
     });
@@ -900,7 +660,6 @@ process.on('uncaughtException', (error) => {
 // 優雅關閉
 process.on('SIGINT', async () => {
     console.log('🛑 收到終止信號，正在安全關閉...');
-    unifiedState.instagram.isMonitoring = false;
     
     if (blogMonitor) {
         blogMonitor.stopMonitoring();
@@ -915,9 +674,7 @@ process.on('SIGINT', async () => {
 });
 
 process.on('SIGTERM', async () => {
-    console.log('🛑 收到終止信號，正在安全關閉...');
-    unifiedState.instagram.isMonitoring = false;
-    
+    console.log('🛑 收到終止信號，正在安全關閉...');    
     if (blogMonitor) {
         blogMonitor.stopMonitoring();
     }
