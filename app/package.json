@@ -1,31 +1,40 @@
 {
-  "name": "discord-blog-instagram-monitor-bot",
-  "version": "3.0.0",
-  "description": "Discord頻道監控 + Family Club博客監控 + Instagram監控機器人",
-  "main": "main_blog.js",
+  "name": "discord-instagram-blog-monitor",
+  "version": "2.0.0",
+  "description": "Discord channel monitoring + Family Club blog monitoring + Instagram monitoring bot",
+  "main": "app/main_blog.js",
   "scripts": {
-    "start": "node main_blog.js",
-    "dev": "node main_blog.js"
-  },
-  "dependencies": {
-    "discord.js": "^14.11.0",
-    "express": "^4.18.2",
-    "axios": "^1.4.0"
-  },
-  "engines": {
-    "node": ">=18.0.0"
+    "start": "node app/main_blog.js",
+    "dev": "node app/main_blog.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
     "discord",
-    "bot",
-    "monitoring",
-    "blog",
     "instagram",
-    "family-club",
-    "phone-notification",
-    "koyeb",
-    "mode-1"
+    "blog",
+    "monitoring",
+    "bot",
+    "koyeb"
   ],
-  "author": "LiveBot Team",
-  "license": "MIT"
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.14.1",
+    "express": "^4.18.2",
+    "axios": "^1.6.2",
+    "cheerio": "^1.0.0-rc.12",
+    "node-cron": "^3.0.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/your-username/your-repo.git"
+  },
+  "bugs": {
+    "url": "https://github.com/your-username/your-repo/issues"
+  },
+  "homepage": "https://github.com/your-username/your-repo#readme"
 }

@@ -1,37 +1,50 @@
-FROM node:18-alpine
+# 使用 Node.js 官方映像
+FROM node:18-slim
 
+# 安裝 Python 和必要工具
+RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-pip \
+    python3-venv \
+    curl \
+    wget \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# 建立符號連結讓 python 指向 python3
+RUN ln -s /usr/bin/python3 /usr/bin/python
+
+# 升級 pip
+RUN python3 -m pip install --upgrade pip
+
+# 預先安裝 instaloader
+RUN pip3 install instaloader
+
+# 設定工作目錄
 WORKDIR /app
 
-# Copy package files first for better caching
-COPY app/package.json package.json
+# 複製 package.json 和 package-lock.json
+COPY package*.json ./
 
-# Install dependencies
-RUN npm install --only=production && \
-    npm cache clean --force
+# 安裝 Node.js 依賴
+RUN npm ci --only=production
 
-# Copy application files (包含新的模組化組件)
-COPY app/main_blog.js main_blog.js
-COPY app/family_club_blog_monitor.js family_club_blog_monitor.js
-COPY app/instagram_monitor.js instagram_monitor.js
-COPY app/discord_commands.js discord_commands.js
-COPY app/web_status_panel.js web_status_panel.js
+# 複製應用程式碼
+COPY . .
 
-# Create a non-root user for security
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nextjs -u 1001
+# 建立必要的目錄
+RUN mkdir -p /tmp/instagram_cache
 
-# 確保臨時目錄存在且有正確權限
-RUN mkdir -p /tmp/instagram_cache && \
-    chown -R nextjs:nodejs /app && \
-    chown -R nextjs:nodejs /tmp/instagram_cache
+# 設定環境變數
+ENV NODE_ENV=production
+ENV TZ=Asia/Tokyo
 
-USER nextjs
-
-# Health check (更新為包含所有監控服務)
-HEALTHCHECK --interval=5m --timeout=30s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })" || exit 1
-
-# Expose port
+# 暴露端口
 EXPOSE 3000
 
-CMD ["node", "main_blog.js"]
+# 健康檢查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:3000/health || exit 1
+
+# 啟動應用
+CMD ["node", "app/main_blog.js"]
