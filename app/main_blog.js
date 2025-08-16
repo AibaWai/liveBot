@@ -86,7 +86,6 @@ client.once('ready', async () => {
         // 1. Start blog monitoring first (if configured)
         if (BLOG_NOTIFICATION_CHANNEL_ID) {
             await startBlogMonitoring();
-            console.log('📝 [Blog] 博客監控已啟動');
         }
         
         // 2. Initialize Instagram monitoring (if configured and username is valid)
@@ -103,8 +102,13 @@ client.once('ready', async () => {
                 console.log(`🎯 目標用戶: @${instagramConfig.username}`);
                 console.log(`📺 觸發頻道: ${instagramConfig.triggerChannels.length} 個`);
                 
-                // Start Mode1 monitoring
-                await instagramMonitor.startMode1();
+                // Start Mode1 monitoring with error handling
+                try {
+                    await instagramMonitor.startMode1();
+                } catch (mode1Error) {
+                    console.error('❌ [Instagram Mode1] 啟動失敗:', mode1Error.message);
+                    // Instagram monitoring fails but don't crash the whole system
+                }
                 
             } catch (instagramError) {
                 console.error('❌ [Instagram] 初始化失敗:', instagramError.message);
@@ -150,6 +154,7 @@ client.once('ready', async () => {
         }
     }
 });
+
 
 // === Discord 訊息監聽 - 添加 Instagram 觸發器處理 ===
 client.on('messageCreate', async (message) => {

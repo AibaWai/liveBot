@@ -58,14 +58,19 @@ class DynamicInstagramMonitor {
         try {
             console.log('🚀 [Mode1] 啟動 24/7 基礎監控 (無登入模式)');
             
+            // Validate username first
+            if (!this.config.username || this.config.username === 'undefined') {
+                throw new Error('Instagram用戶名未配置或無效');
+            }
+            
             const pythonArgs = [
                 path.join(__dirname, 'instagram_monitor_mode1.py'),
                 '--username', this.config.username,
-                '--mode', '1',
+                '--interval', this.config.mode1Interval || '600',
                 '--check-posts', 'true',
                 '--check-bio', 'true',
+                '--mode', '1',
                 '--check-followers', 'false',
-                '--interval', this.config.mode1Interval || '600', // 10分鐘
                 '--output-format', 'json'
             ];
 
@@ -100,8 +105,9 @@ class DynamicInstagramMonitor {
             );
             
         } catch (error) {
-            console.error('❌ [Mode1] 啟動失敗:', error);
+            console.error('❌ [Mode1] 啟動失敗:', error.message);
             this.isMode1Running = false;
+            throw error; // Re-throw to let caller handle
         }
     }
 
