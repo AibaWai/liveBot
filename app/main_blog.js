@@ -192,7 +192,7 @@ async function sendNotification(message, type = 'info', source = 'system') {
         console.log(`📤 [${source}] Discord通知已發送: ${type}`);
         
         if (type === 'live_alert' && source === 'Discord' && config.PUSHCALL_API_KEY) {
-            await makePhoneCall(`${config.TARGET_USERNAME} 開始直播了！`, source);
+            await makePhoneCall(`Instagram直播開始了！`, source);
         }
     } catch (error) {
         console.error('❌ Discord通知發送失敗:', error.message);
@@ -239,7 +239,14 @@ client.once('ready', () => {
 **電話通知:** ${config.PUSHCALL_API_KEY ? '✅ 已配置' : '❌ 未配置'}
 `, 'info', 'System');
     
-});
+})
+
+    // 初始化Web狀態面板
+    setTimeout(() => {
+        console.log('🔄 [Web面板] 開始初始化狀態面板...');
+        initializeWebStatusPanel();
+    }, 3000);
+;
 
 // Discord消息監聽
 client.on('messageCreate', async (message) => {
@@ -287,6 +294,22 @@ client.on('messageCreate', async (message) => {
             if (channelConfig.api_key && channelConfig.phone_number) {
                 await callChannelSpecificAPI(channelId, channelConfig, foundKeyword, message.content);
             }
+
+            // 新增：發送自定義通知訊息到主通知頻道
+            if (channelConfig.message) {
+                const customMessage = channelConfig.message
+                    .replace('{keyword}', foundKeyword)
+                    .replace('{channel}', channelConfig.name || channelId)
+                    .replace('{author}', message.author.username)
+                    .replace('{time}', new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }));
+                
+                await sendNotification(customMessage, 'live_alert', 'Discord');
+            }
+            
+            // 撥打頻道專用電話
+            if (channelConfig.api_key && channelConfig.phone_number) {
+                await callChannelSpecificAPI(channelId, channelConfig, foundKeyword, message.content);
+            }
         }
         
     } catch (error) {
@@ -303,33 +326,34 @@ async function handleDiscordCommands(message) {
         const blogStatus = blogMonitor ? blogMonitor.getStatus() : { isMonitoring: false };
         const latestRecord = blogMonitor ? blogMonitor.getLatestRecord() : null;
         
-        const statusMsg = `📊 **平衡安全統一監控系統狀態** (日本時間)
+        const statusMsg = `📊 **Discord頻道監控 + 博客監控系統狀態**
 
-**系統運行時間:** ${runtime} 分鐘
-**Bot狀態:** ${unifiedState.botReady ? '✅ 在線' : '❌ 離線'}
-**當前日本時間:** ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}
+    🕐 **系統資訊** (日本時間)
+    - 運行時間: \`${Math.floor(runtime / 60)}h ${runtime % 60}m\`
+    - Bot狀態: ${unifiedState.botReady ? '✅ 在線' : '❌ 離線'}
+    - 當前時間: \`${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}\`
 
-**博客監控:**
-• 目標: Family Club F2017
-• 狀態: ${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 停止'}
-• 檢查次數: ${blogStatus.totalChecks}
-• 發現新文章: ${blogStatus.articlesFound}
-• 最新記錄: ${latestRecord ? `${latestRecord.datetime} (ID: ${latestRecord.articleId})` : '未建立'}
+    📝 **博客監控** (Family Club F2017)
+    - 狀態: ${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 停止'}
+    - 檢查次數: \`${blogStatus.totalChecks}\`
+    - 發現文章: \`${blogStatus.articlesFound}\`
+    - 最新記錄: ${latestRecord ? `\`${latestRecord.datetime}\`` : '❌ 未建立'}
 
-**Discord頻道監控:**
-• 監控頻道數: ${Object.keys(config.CHANNEL_CONFIGS).length}
-• 處理訊息數: ${unifiedState.discord.totalMessagesProcessed}
-• 檢測次數: ${unifiedState.discord.lastDetections.length}
+    💬 **Discord頻道監控**
+    - 監控頻道: \`${Object.keys(config.CHANNEL_CONFIGS).length}\` 個
+    - 處理訊息: \`${unifiedState.discord.totalMessagesProcessed}\`
+    - 關鍵字檢測: \`${unifiedState.discord.lastDetections.length}\` 次
 
-**通知統計:**
-• Discord訊息: ${unifiedState.notifications.discordMessages}
-• 電話通知: ${unifiedState.notifications.phoneCallsMade}
-• 最後通知: ${unifiedState.notifications.lastNotification || '無'}
+    📞 **通知統計**
+    - Discord訊息: \`${unifiedState.notifications.discordMessages}\`
+    - 電話通知: \`${unifiedState.notifications.phoneCallsMade}\`
+    - 最後通知: ${unifiedState.notifications.lastNotification || '`無`'}
 
-`;
+    🌐 **Web面板**: 訪問根網址查看詳細狀態`;
 
         await message.reply(statusMsg);
     }
+
     
     // 博客監控命令
     else if (cmd === '!blog-status') {
@@ -497,63 +521,67 @@ async function handleDiscordCommands(message) {
         }
     }
 
-else if (cmd === '!channels') {
+    else if (cmd === '!channels') {
+        if (Object.keys(config.CHANNEL_CONFIGS).length === 0) {
+            await message.reply('⚠️ **未配置任何Discord頻道監控**\n\n請設定 `CHANNEL_CONFIGS` 環境變數來配置頻道監控');
+            return;
+        }
+
         const channelsInfo = Object.entries(config.CHANNEL_CONFIGS).map(([channelId, channelConfig]) => {
             const stats = unifiedState.discord.channelStats[channelId];
-            return `**${channelConfig.name || channelId}** (${channelId})
-• 關鍵字: ${channelConfig.keywords.join(', ')}
-• 處理訊息: ${stats.messagesProcessed}
-• 檢測次數: ${stats.keywordsDetected}
-• 電話通知: ${stats.callsMade} 次 ${channelConfig.phone_number ? '📞' : '❌'}
-• 最後檢測: ${stats.lastDetection || '無'}`;
+            return `📺 **${channelConfig.name || '未命名頻道'}**
+    - 頻道ID: \`${channelId}\`
+    - 關鍵字: \`${channelConfig.keywords.join('`, `')}\`
+    - 處理訊息: \`${stats.messagesProcessed}\`
+    - 檢測次數: \`${stats.keywordsDetected}\`
+    - 電話通知: \`${stats.callsMade}\` 次 ${channelConfig.phone_number ? '📞' : '❌'}
+    - 最後檢測: ${stats.lastDetection || '`無`'}`;
         }).join('\n\n');
 
         const recentDetections = unifiedState.discord.lastDetections.slice(-5).map((detection, index) => 
-            `${index + 1}. **${detection.頻道}** - ${detection.關鍵字} (${detection.時間})`
+            `${index + 1}. **${detection.頻道}** - \`${detection.關鍵字}\` (${detection.時間})`
         ).join('\n') || '無最近檢測';
 
         const statusMsg = `📋 **Discord頻道監控詳情**
 
-**監控頻道 (${Object.keys(config.CHANNEL_CONFIGS).length}):**
-${channelsInfo || '無配置頻道'}
+    ${channelsInfo}
 
-**最近5次檢測:**
-${recentDetections}
+    📈 **最近5次檢測:**
+    ${recentDetections}
 
-**總統計:**
-• 處理訊息: ${unifiedState.discord.totalMessagesProcessed}
-• 總檢測: ${unifiedState.discord.lastDetections.length}
-• 電話通知: ${unifiedState.notifications.phoneCallsMade}`;
+    📊 **總統計:**
+    - 處理訊息: \`${unifiedState.discord.totalMessagesProcessed}\`
+    - 總檢測: \`${unifiedState.discord.lastDetections.length}\`
+    - 電話通知: \`${unifiedState.notifications.phoneCallsMade}\``;
 
         await message.reply(statusMsg);
     }
     
     // 更新幫助命令
-else if (cmd === '!help') {
-        await message.reply(`🔍 **Discord頻道監控 + 博客監控機器人**
+    else if (cmd === '!help') {
+        await message.reply(`🤖 **Discord頻道監控 + 博客監控機器人**
 
-**博客監控命令:** (Family Club)
-\`!blog-status\` - 博客監控狀態
-\`!blog-test\` - 測試API連接
-\`!blog-check\` - 手動檢查新文章
-\`!blog-restart\` - 重新啟動博客監控
+    📝 **博客監控命令**
+    \`!blog-status\` - 博客監控狀態
+    \`!blog-test\` - 測試API連接  
+    \`!blog-check\` - 手動檢查新文章
+    \`!blog-restart\` - 重新啟動博客監控
 
-**Discord監控命令:**
-\`!channels\` - 查看頻道監控詳情
-\`!status\` - 完整系統狀態
-\`!help\` - 顯示此幫助
+    💬 **Discord監控命令**
+    \`!channels\` - 查看頻道監控詳情
+    \`!status\` - 完整系統狀態
+    \`!help\` - 顯示此幫助
 
-**📋 系統功能:**
-• Discord頻道關鍵字監控 + 自動電話通知
-• Family Club博客新文章監控
-• 實時Web狀態面板
-• 多API Key電話通知支援
+    🚀 **系統功能**
+    - Discord頻道關鍵字監控 + 自動電話通知
+    - Family Club博客新文章監控  
+    - 實時Web狀態面板
+    - 多API Key電話通知支援
 
-**💡 使用說明:**
-• 機器人會自動監控配置的Discord頻道
-• 檢測到關鍵字時自動發送通知和撥打電話
-• 博客監控每小時自動檢查新文章
-• 訪問根網址查看實時狀態面板`);
+    💡 **使用說明**
+    機器人會自動監控配置的Discord頻道，檢測到關鍵字時自動發送通知和撥打電話。博客監控每小時自動檢查新文章。
+
+    🌐 **Web面板**: 訪問機器人網址查看實時狀態`);
     }
 }
 
@@ -661,7 +689,7 @@ process.on('SIGINT', async () => {
     }
     
     if (unifiedState.botReady) {
-        await sendNotification('📴 輕量級統一監控機器人正在關閉...', 'info', 'System');
+        await sendNotification('📴 統一監控機器人正在關閉...', 'info', 'System');
     }
     
     client.destroy();
