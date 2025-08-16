@@ -365,40 +365,6 @@ async function makePhoneCall(message, source = 'system') {
     }
 }
 
-
-
-// Discord ready 事件處理
-client.once('ready', async () => {
-    // 啟動 Instagram Mode1 監控
-
-    unifiedState.botReady = true;
-    startBlogMonitoring();
-    if (instagramMonitor) {
-        await instagramMonitor.startMode1();
-    }
-
-    console.log(`✅ Discord Bot 已上線: ${client.user.tag}`);
-    console.log(`📋 Discord頻道監控: ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道`);
-    console.log(`🕐 當前日本時間: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}`);
-    
-    // 發送啟動通知（修改版本）
-    sendNotification(`🚀 **統一監控機器人已啟動** (日本時間)
-
-**Instagram監控:** ${instagramConfig.username ? `✅ @${instagramConfig.username}` : '❌ 未配置'}
-**Discord頻道監控:** ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道
-**博客監控:** ${config.BLOG_NOTIFICATION_CHANNEL_ID ? '✅ Family Club 高木雄也' : '❌ 未配置'}
-**電話通知:** ${config.PUSHCALL_API_KEY ? '✅ 已配置' : '❌ 未配置'}
-`, 'info', 'System');
-    
-})
-
-    // 初始化Web狀態面板
-    setTimeout(() => {
-        console.log('🔄 [Web面板] 開始初始化狀態面板...');
-        initializeWebStatusPanel();
-    }, 3000);
-;
-
 // Discord消息監聽
 client.on('messageCreate', async (message) => {
     try {
