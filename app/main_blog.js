@@ -326,30 +326,36 @@ async function handleDiscordCommands(message) {
         const blogStatus = blogMonitor ? blogMonitor.getStatus() : { isMonitoring: false };
         const latestRecord = blogMonitor ? blogMonitor.getLatestRecord() : null;
         
-        const statusMsg = `📊 **Discord頻道監控 + 博客監控系統狀態**
+        const statusMsg = `📊 **系統狀態總覽** (日本時間: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })})
 
-    🕐 **系統資訊** (日本時間)
-    - 運行時間: \`${Math.floor(runtime / 60)}h ${runtime % 60}m\`
-    - Bot狀態: ${unifiedState.botReady ? '✅ 在線' : '❌ 離線'}
-    - 當前時間: \`${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}\`
+    \`\`\`
+    ┌─────────────────┬──────────────────────────────┐
+    │ 系統運行時間    │ ${Math.floor(runtime / 60)}h ${runtime % 60}m${' '.repeat(Math.max(0, 18 - `${Math.floor(runtime / 60)}h ${runtime % 60}m`.length))}│
+    │ Bot狀態         │ ${unifiedState.botReady ? '在線 ✅' : '離線 ❌'}${' '.repeat(Math.max(0, 24 - (unifiedState.botReady ? '在線 ✅' : '離線 ❌').length))}│
+    └─────────────────┴──────────────────────────────┘
+    \`\`\`
 
     📝 **博客監控** (Family Club F2017)
-    - 狀態: ${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 停止'}
-    - 檢查次數: \`${blogStatus.totalChecks}\`
-    - 發現文章: \`${blogStatus.articlesFound}\`
-    - 最新記錄: ${latestRecord ? `\`${latestRecord.datetime}\`` : '❌ 未建立'}
+    \`\`\`
+    ┌─────────────────┬──────────────────────────────┐
+    │ 監控狀態        │ ${blogStatus.isMonitoring ? '運行中 ✅' : '已停止 ❌'}${' '.repeat(Math.max(0, 22 - (blogStatus.isMonitoring ? '運行中 ✅' : '已停止 ❌').length))}│
+    │ 檢查次數        │ ${blogStatus.totalChecks}${' '.repeat(Math.max(0, 28 - blogStatus.totalChecks.toString().length))}│
+    │ 發現文章        │ ${blogStatus.articlesFound}${' '.repeat(Math.max(0, 28 - blogStatus.articlesFound.toString().length))}│
+    │ 最新記錄        │ ${latestRecord ? latestRecord.datetime.substring(0, 26) : '未建立'}${' '.repeat(Math.max(0, 28 - (latestRecord ? Math.min(26, latestRecord.datetime.length) : 2)))}│
+    └─────────────────┴──────────────────────────────┘
+    \`\`\`
 
-    💬 **Discord頻道監控**
-    - 監控頻道: \`${Object.keys(config.CHANNEL_CONFIGS).length}\` 個
-    - 處理訊息: \`${unifiedState.discord.totalMessagesProcessed}\`
-    - 關鍵字檢測: \`${unifiedState.discord.lastDetections.length}\` 次
+    💬 **Discord監控**
+    \`\`\`
+    ┌─────────────────┬──────────────────────────────┐
+    │ 監控頻道        │ ${Object.keys(config.CHANNEL_CONFIGS).length} 個${' '.repeat(Math.max(0, 26 - `${Object.keys(config.CHANNEL_CONFIGS).length} 個`.length))}│
+    │ 處理訊息        │ ${unifiedState.discord.totalMessagesProcessed}${' '.repeat(Math.max(0, 28 - unifiedState.discord.totalMessagesProcessed.toString().length))}│
+    │ 關鍵字檢測      │ ${unifiedState.discord.lastDetections.length} 次${' '.repeat(Math.max(0, 26 - `${unifiedState.discord.lastDetections.length} 次`.length))}│
+    │ 電話通知        │ ${unifiedState.notifications.phoneCallsMade} 次${' '.repeat(Math.max(0, 26 - `${unifiedState.notifications.phoneCallsMade} 次`.length))}│
+    └─────────────────┴──────────────────────────────┘
+    \`\`\`
 
-    📞 **通知統計**
-    - Discord訊息: \`${unifiedState.notifications.discordMessages}\`
-    - 電話通知: \`${unifiedState.notifications.phoneCallsMade}\`
-    - 最後通知: ${unifiedState.notifications.lastNotification || '`無`'}
-
-    🌐 **Web面板**: 訪問根網址查看詳細狀態`;
+    🌐 **訪問根網址查看完整Web狀態面板**`;
 
         await message.reply(statusMsg);
     }
@@ -527,34 +533,89 @@ async function handleDiscordCommands(message) {
             return;
         }
 
-        const channelsInfo = Object.entries(config.CHANNEL_CONFIGS).map(([channelId, channelConfig]) => {
+        // 頻道列表表格
+        let channelTable = `\`\`\`
+    ┌──────────────────────────────────────────────────────────────┐
+    │                        頻道監控詳情                          │
+    ├─────────────────┬────────────┬─────────┬─────────┬──────────┤
+    │ 頻道名稱        │ 檢測次數   │ 處理訊息│ 電話通知│ 電話狀態 │
+    ├─────────────────┼────────────┼─────────┼─────────┼──────────┤`;
+
+        Object.entries(config.CHANNEL_CONFIGS).forEach(([channelId, channelConfig]) => {
             const stats = unifiedState.discord.channelStats[channelId];
-            return `📺 **${channelConfig.name || '未命名頻道'}**
-    - 頻道ID: \`${channelId}\`
-    - 關鍵字: \`${channelConfig.keywords.join('`, `')}\`
-    - 處理訊息: \`${stats.messagesProcessed}\`
-    - 檢測次數: \`${stats.keywordsDetected}\`
-    - 電話通知: \`${stats.callsMade}\` 次 ${channelConfig.phone_number ? '📞' : '❌'}
-    - 最後檢測: ${stats.lastDetection || '`無`'}`;
-        }).join('\n\n');
+            const name = (channelConfig.name || '未命名').substring(0, 13);
+            const detections = stats.keywordsDetected.toString();
+            const messages = stats.messagesProcessed.toString();
+            const calls = stats.callsMade.toString();
+            const phoneStatus = channelConfig.phone_number ? '✅' : '❌';
+            
+            channelTable += `
+    │ ${name}${' '.repeat(15 - name.length)}│ ${detections}${' '.repeat(10 - detections.length)}│ ${messages}${' '.repeat(7 - messages.length)}│ ${calls}${' '.repeat(7 - calls.length)}│ ${phoneStatus}${' '.repeat(8 - phoneStatus.length)}│`;
+        });
 
-        const recentDetections = unifiedState.discord.lastDetections.slice(-5).map((detection, index) => 
-            `${index + 1}. **${detection.頻道}** - \`${detection.關鍵字}\` (${detection.時間})`
-        ).join('\n') || '無最近檢測';
+        channelTable += `
+    └─────────────────┴────────────┴─────────┴─────────┴──────────┘
+    \`\`\``;
 
-        const statusMsg = `📋 **Discord頻道監控詳情**
+        // 關鍵字配置表格
+        let keywordTable = `\n📋 **關鍵字配置**
+    \`\`\`
+    ┌─────────────────┬──────────────────────────────────────────┐
+    │ 頻道名稱        │ 監控關鍵字                               │
+    ├─────────────────┼──────────────────────────────────────────┤`;
 
-    ${channelsInfo}
+        Object.entries(config.CHANNEL_CONFIGS).forEach(([channelId, channelConfig]) => {
+            const name = (channelConfig.name || '未命名').substring(0, 13);
+            const keywords = channelConfig.keywords.join(', ').substring(0, 38);
+            
+            keywordTable += `
+    │ ${name}${' '.repeat(15 - name.length)}│ ${keywords}${' '.repeat(40 - keywords.length)}│`;
+        });
 
-    📈 **最近5次檢測:**
-    ${recentDetections}
+        keywordTable += `
+    └─────────────────┴──────────────────────────────────────────┘
+    \`\`\``;
 
-    📊 **總統計:**
-    - 處理訊息: \`${unifiedState.discord.totalMessagesProcessed}\`
-    - 總檢測: \`${unifiedState.discord.lastDetections.length}\`
-    - 電話通知: \`${unifiedState.notifications.phoneCallsMade}\``;
+        // 最近檢測記錄
+        const recentDetections = unifiedState.discord.lastDetections.slice(-5);
+        let detectionTable = '';
+        
+        if (recentDetections.length > 0) {
+            detectionTable = `\n📈 **最近5次檢測**
+    \`\`\`
+    ┌────────────┬──────────────┬─────────────────────┐
+    │ 頻道       │ 關鍵字       │ 檢測時間            │
+    ├────────────┼──────────────┼─────────────────────┤`;
 
-        await message.reply(statusMsg);
+            recentDetections.reverse().forEach(detection => {
+                const channel = detection.頻道.substring(0, 10);
+                const keyword = detection.關鍵字.substring(0, 12);
+                const time = detection.時間.substring(11, 19); // 只取時間部分
+                
+                detectionTable += `
+    │ ${channel}${' '.repeat(10 - channel.length)}│ ${keyword}${' '.repeat(12 - keyword.length)}│ ${time}${' '.repeat(19 - time.length)}│`;
+            });
+
+            detectionTable += `
+    └────────────┴──────────────┴─────────────────────┘
+    \`\`\``;
+        } else {
+            detectionTable = '\n📈 **最近檢測**: 暫無記錄';
+        }
+
+        // 統計表格
+        const statsTable = `\n📊 **總統計**
+    \`\`\`
+    ┌─────────────────┬──────────────────────────────┐
+    │ 處理訊息總數    │ ${unifiedState.discord.totalMessagesProcessed}${' '.repeat(Math.max(0, 28 - unifiedState.discord.totalMessagesProcessed.toString().length))}│
+    │ 關鍵字檢測總數  │ ${unifiedState.discord.lastDetections.length}${' '.repeat(Math.max(0, 28 - unifiedState.discord.lastDetections.length.toString().length))}│
+    │ 電話通知總數    │ ${unifiedState.notifications.phoneCallsMade}${' '.repeat(Math.max(0, 28 - unifiedState.notifications.phoneCallsMade.toString().length))}│
+    └─────────────────┴──────────────────────────────┘
+    \`\`\``;
+
+        const fullMessage = `📋 **Discord頻道監控詳情**\n${channelTable}${keywordTable}${detectionTable}${statsTable}`;
+
+        await message.reply(fullMessage);
     }
     
     // 更新幫助命令
@@ -581,7 +642,7 @@ async function handleDiscordCommands(message) {
     💡 **使用說明**
     機器人會自動監控配置的Discord頻道，檢測到關鍵字時自動發送通知和撥打電話。博客監控每小時自動檢查新文章。
 
-    🌐 **Web面板**: 訪問機器人網址查看實時狀態`);
+    🌐 **Web面板**: https://tame-amalee-k-326-34061d70.koyeb.app/`);
     }
 }
 
