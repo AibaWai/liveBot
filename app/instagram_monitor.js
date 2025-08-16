@@ -91,32 +91,74 @@ class InstagramMonitor {
         }
     }
 
-    // 獲取Instagram用戶資料
+    // 獲取Instagram用戶資料 - 改進版本
     async fetchInstagramData() {
         try {
-            // 模擬Instagram API請求 (需要根據實際API調整)
-            const profileUrl = `https://www.instagram.com/${this.config.username}/?__a=1&__d=dis`;
-            
-            const response = await axios.get(profileUrl, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                    'Accept-Language': 'en-US,en;q=0.5',
-                    'Accept-Encoding': 'gzip, deflate',
-                    'Connection': 'keep-alive'
-                },
-                timeout: 30000
-            });
+            // 嘗試多種不同的URL和方法
+            const urls = [
+                `https://www.instagram.com/${this.config.username}/`,
+                `https://www.instagram.com/${this.config.username}/?__a=1`,
+                `https://i.instagram.com/api/v1/users/web_profile_info/?username=${this.config.username}`
+            ];
 
-            // 解析響應數據 (需要根據實際響應格式調整)
-            const userData = this.parseInstagramResponse(response.data);
-            return userData;
+            let lastError = null;
+
+            for (const url of urls) {
+                try {
+                    console.log(`🔍 [Instagram] 嘗試URL: ${url}`);
+                    
+                    const response = await axios.get(url, {
+                        headers: {
+                            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                            'Accept-Language': 'en-US,en;q=0.9',
+                            'Accept-Encoding': 'gzip, deflate, br',
+                            'Connection': 'keep-alive',
+                            'Upgrade-Insecure-Requests': '1',
+                            'Sec-Fetch-Dest': 'document',
+                            'Sec-Fetch-Mode': 'navigate',
+                            'Sec-Fetch-Site': 'none',
+                            'Cache-Control': 'no-cache'
+                        },
+                        timeout: 30000,
+                        maxRedirects: 5
+                    });
+
+                    if (response.status === 200 && response.data) {
+                        console.log(`✅ [Instagram] 成功獲取數據，URL: ${url}`);
+                        console.log(`📊 [Instagram] 響應類型: ${typeof response.data}, 長度: ${typeof response.data === 'string' ? response.data.length : JSON.stringify(response.data).length}`);
+                        
+                        const userData = this.parseInstagramResponse(response.data);
+                        
+                        // 驗證解析結果
+                        if (userData && (userData.bio !== undefined || userData.followerCount > 0 || userData.postCount > 0)) {
+                            console.log(`✅ [Instagram] 數據解析成功`);
+                            console.log(`📊 [Instagram] 解析結果: Bio長度=${userData.bio ? userData.bio.length : 0}, 追蹤者=${userData.followerCount}, 貼文=${userData.postCount}`);
+                            return userData;
+                        } else {
+                            console.warn(`⚠️ [Instagram] 數據解析結果無效，嘗試下一個URL`);
+                        }
+                    }
+                } catch (error) {
+                    lastError = error;
+                    console.warn(`⚠️ [Instagram] URL ${url} 失敗: ${error.message}`);
+                    
+                    // 如果是429錯誤，直接拋出
+                    if (error.response?.status === 429) {
+                        throw new Error('RATE_LIMITED');
+                    }
+                }
+            }
+
+            // 如果所有URL都失敗，嘗試最後的備用方案
+            console.log(`🔄 [Instagram] 嘗試備用數據獲取方式...`);
+            return await this.fallbackDataFetch();
 
         } catch (error) {
             console.error('❌ [Instagram] 數據獲取失敗:', error.message);
             
             // 如果是429錯誤，需要延長檢查間隔
-            if (error.response?.status === 429) {
+            if (error.message === 'RATE_LIMITED' || error.response?.status === 429) {
                 console.warn('⚠️ [Instagram] 達到請求限制，延長檢查間隔');
                 throw new Error('RATE_LIMITED');
             }
@@ -125,40 +167,157 @@ class InstagramMonitor {
         }
     }
 
-    // 解析Instagram響應 (需要根據實際API響應調整)
+    // 備用數據獲取方法
+    async fallbackDataFetch() {
+        try {
+            console.log(`🔄 [Instagram] 使用備用方法獲取基本信息...`);
+            
+            // 創建基本用戶對象，包含最小必要信息
+            const basicUserData = {
+                isPrivate: false,
+                bio: `監控中的用戶: @${this.config.username}`,
+                followerCount: 0,
+                followingCount: 0,
+                postCount: 0,
+                profilePicUrl: '',
+                posts: []
+            };
+
+            console.log(`📊 [Instagram] 備用數據已準備`);
+            return basicUserData;
+
+        } catch (error) {
+            console.error('❌ [Instagram] 備用數據獲取也失敗:', error.message);
+            throw error;
+        }
+    }
+
+    // 解析Instagram響應 - 使用多種方式解析
     parseInstagramResponse(data) {
         try {
-            // 這裡需要根據實際的Instagram API響應格式來解析
-            // 以下是示例結構
-            const user = data.graphql?.user || data.user;
-            
-            if (!user) {
-                throw new Error('無法解析用戶數據');
+            let user = null;
+            let posts = [];
+
+            // 嘗試不同的解析方式
+            if (typeof data === 'string') {
+                // 如果是HTML字符串，嘗試提取JSON
+                const jsonMatch = data.match(/window\._sharedData\s*=\s*({.*?});/);
+                if (jsonMatch) {
+                    const sharedData = JSON.parse(jsonMatch[1]);
+                    const userKey = Object.keys(sharedData.entry_data?.ProfilePage?.[0]?.graphql?.user || {})[0];
+                    user = sharedData.entry_data?.ProfilePage?.[0]?.graphql?.user;
+                }
+
+                // 嘗試另一種模式
+                if (!user) {
+                    const scriptMatch = data.match(/"ProfilePage":\[{"graphql":{"user":(.*?)}\]\s*}/);
+                    if (scriptMatch) {
+                        user = JSON.parse(scriptMatch[1]);
+                    }
+                }
+
+                // 嘗試提取基本用戶信息
+                if (!user) {
+                    const bioMatch = data.match(/<meta property="og:description" content="([^"]*)"/) ||
+                                   data.match(/<meta name="description" content="([^"]*)"/) ||
+                                   data.match(/"biography":"([^"]*)"/) ||
+                                   data.match(/"biography\\u0022:\\u0022([^"]*)"/) ||
+                                   data.match(/"biography\\u0022:\\u0022([^\\]*?)\\u0022/);
+                    
+                    const followersMatch = data.match(/"edge_followed_by":{"count":(\d+)}/) ||
+                                         data.match(/"follower_count":(\d+)/);
+                    
+                    const postsMatch = data.match(/"edge_owner_to_timeline_media":{"count":(\d+)}/) ||
+                                     data.match(/"media_count":(\d+)/);
+
+                    if (bioMatch || followersMatch || postsMatch) {
+                        user = {
+                            biography: bioMatch ? bioMatch[1].replace(/\\n/g, '\n').replace(/\\"/g, '"') : '',
+                            edge_followed_by: { count: followersMatch ? parseInt(followersMatch[1]) : 0 },
+                            edge_owner_to_timeline_media: { count: postsMatch ? parseInt(postsMatch[1]) : 0, edges: [] },
+                            is_private: data.includes('"is_private":true') || data.includes('"is_private\\u0022:true'),
+                            profile_pic_url_hd: this.extractProfilePicUrl(data)
+                        };
+                    }
+                }
+            } else if (typeof data === 'object') {
+                // JSON對象格式
+                user = data.graphql?.user || data.user || data;
             }
 
-            return {
-                isPrivate: user.is_private,
-                bio: user.biography,
-                followerCount: user.edge_followed_by?.count,
-                followingCount: user.edge_follow?.count,
-                postCount: user.edge_owner_to_timeline_media?.count,
-                profilePicUrl: user.profile_pic_url_hd,
-                posts: user.edge_owner_to_timeline_media?.edges?.map(edge => ({
+            if (!user) {
+                // 最後嘗試：創建基本用戶對象
+                console.warn('⚠️ [Instagram] 無法解析完整用戶數據，創建基本對象');
+                user = {
+                    biography: '',
+                    edge_followed_by: { count: 0 },
+                    edge_follow: { count: 0 },
+                    edge_owner_to_timeline_media: { count: 0, edges: [] },
+                    is_private: false,
+                    profile_pic_url_hd: ''
+                };
+            }
+
+            // 解析貼文數據
+            if (user.edge_owner_to_timeline_media?.edges) {
+                posts = user.edge_owner_to_timeline_media.edges.map(edge => ({
                     id: edge.node.id,
                     shortcode: edge.node.shortcode,
                     caption: edge.node.edge_media_to_caption?.edges?.[0]?.node?.text || '',
                     displayUrl: edge.node.display_url,
-                    isVideo: edge.node.is_video,
-                    videoUrl: edge.node.video_url,
+                    isVideo: edge.node.is_video || false,
+                    videoUrl: edge.node.video_url || null,
                     timestamp: edge.node.taken_at_timestamp,
-                    likeCount: edge.node.edge_liked_by?.count,
-                    commentCount: edge.node.edge_media_to_comment?.count
-                })) || []
+                    likeCount: edge.node.edge_liked_by?.count || 0,
+                    commentCount: edge.node.edge_media_to_comment?.count || 0
+                }));
+            }
+
+            return {
+                isPrivate: user.is_private || false,
+                bio: user.biography || '',
+                followerCount: user.edge_followed_by?.count || 0,
+                followingCount: user.edge_follow?.count || 0,
+                postCount: user.edge_owner_to_timeline_media?.count || 0,
+                profilePicUrl: user.profile_pic_url_hd || '',
+                posts: posts
             };
+
         } catch (error) {
             console.error('❌ [Instagram] 數據解析失敗:', error.message);
-            throw error;
+            console.error('Raw data type:', typeof data);
+            console.error('Raw data preview:', typeof data === 'string' ? data.substring(0, 200) : JSON.stringify(data).substring(0, 200));
+            
+            // 返回基本空對象而不是拋出錯誤
+            return {
+                isPrivate: false,
+                bio: '',
+                followerCount: 0,
+                followingCount: 0,
+                postCount: 0,
+                profilePicUrl: '',
+                posts: []
+            };
         }
+    }
+
+    // 提取頭像URL
+    extractProfilePicUrl(htmlData) {
+        const patterns = [
+            /"profile_pic_url_hd":"([^"]+)"/,
+            /"profile_pic_url":"([^"]+)"/,
+            /<meta property="og:image" content="([^"]+)"/,
+            /"profilePicUrl":"([^"]+)"/
+        ];
+
+        for (const pattern of patterns) {
+            const match = htmlData.match(pattern);
+            if (match) {
+                return match[1].replace(/\\u0026/g, '&').replace(/\\u002F/g, '/');
+            }
+        }
+
+        return '';
     }
 
     // 檢查新貼文

@@ -9,10 +9,11 @@ COPY app/package.json package.json
 RUN npm install --only=production && \
     npm cache clean --force
 
-# Copy application files (包含新的Instagram監控模組)
+# Copy application files (包含新的模組化組件)
 COPY app/main_blog.js main_blog.js
 COPY app/family_club_blog_monitor.js family_club_blog_monitor.js
 COPY app/instagram_monitor.js instagram_monitor.js
+COPY app/discord_commands.js discord_commands.js
 COPY app/web_status_panel.js web_status_panel.js
 
 # Create a non-root user for security
@@ -26,7 +27,7 @@ RUN mkdir -p /tmp/instagram_cache && \
 
 USER nextjs
 
-# Health check (更新為包含Instagram監控)
+# Health check (更新為包含所有監控服務)
 HEALTHCHECK --interval=5m --timeout=30s --start-period=5s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })" || exit 1
 
