@@ -337,11 +337,20 @@ async function makePhoneCall(message, source = 'system') {
 client.once('ready', () => {
     unifiedState.botReady = true;
     
-    // 初始化命令處理器
-    commandHandler = new DiscordCommandHandler(unifiedState, config, blogMonitor, instagramMonitor);
-    
+    // 先啟動監控系統
     startBlogMonitoring();
     startInstagramMonitoring();
+    
+    // 在監控系統啟動後初始化命令處理器
+    setTimeout(() => {
+        commandHandler = new DiscordCommandHandler(
+            unifiedState, 
+            config, 
+            () => blogMonitor, 
+            () => instagramMonitor
+        );
+        console.log('🎮 [Discord] 命令處理器已初始化');
+    }, 1000);
     
     console.log(`✅ Discord Bot 已上線: ${client.user.tag}`);
     console.log(`📋 Discord頻道監控: ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道`);

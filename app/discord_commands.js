@@ -1,10 +1,10 @@
 // Discord命令處理模組
 class DiscordCommandHandler {
-    constructor(unifiedState, config, blogMonitor, instagramMonitor) {
+    constructor(unifiedState, config, getBlogMonitor, getInstagramMonitor) {
         this.state = unifiedState;
         this.config = config;
-        this.getBlogMonitor = () => blogMonitor;
-        this.getInstagramMonitor = () => instagramMonitor;
+        this.getBlogMonitor = getBlogMonitor;
+        this.getInstagramMonitor = getInstagramMonitor;
     }
 
     async handleCommand(message) {
