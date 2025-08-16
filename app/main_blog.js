@@ -514,19 +514,19 @@ async function handleDiscordCommands(message) {
             const stats = unifiedState.discord.channelStats[channelId];
             const phoneIcon = channelConfig.phone_number ? '📞' : '❌';
             return `**${channelConfig.name || '未命名'}** ${phoneIcon}
-    關鍵字: \`${channelConfig.keywords.join('`, `')}\`
-    檢測: \`${stats.keywordsDetected}\` 次，訊息: \`${stats.messagesProcessed}\`，通話: \`${stats.callsMade}\``;
+    關鍵字: \`${channelConfig.keywords.join(' / ')}\`
+    統計: \`${stats.keywordsDetected}\` 次檢測，\`${stats.callsMade}\` 次通話`;
         }).join('\n\n');
 
-        let recentDetections = '';
+        let recentPart = '';
         if (unifiedState.discord.lastDetections.length > 0) {
-            const recent = unifiedState.discord.lastDetections.slice(-3).reverse().map(d => 
-                `\`${d.關鍵字}\` in ${d.頻道} (${d.時間.substring(11, 16)})`
-            ).join('\n');
-            recentDetections = `\n\n**最近檢測:**\n${recent}`;
+            const recent = unifiedState.discord.lastDetections.slice(-3).reverse()
+                .map(d => `\`${d.關鍵字}\` 在 ${d.頻道}`)
+                .join(', ');
+            recentPart = `\n\n**最近檢測:** ${recent}`;
         }
 
-        await message.reply(`📋 **頻道監控** (\`${Object.keys(config.CHANNEL_CONFIGS).length}\` 個頻道)\n\n${channelsInfo}${recentDetections}`);
+        await message.reply(`📋 **頻道監控詳情**\n\n${channelsInfo}${recentPart}`);
     }
     
     // 更新幫助命令
