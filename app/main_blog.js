@@ -16,6 +16,15 @@ const requiredEnvVars = [
     'NOTIFICATION_CHANNEL_ID'
 ];
 
+// === Discord Client 設定 ===
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.MessageContent
+    ]
+});
+
 // Discord監控配置（必要）
 let discordChannelConfigs = {};
 if (process.env.CHANNEL_CONFIGS) {
@@ -90,7 +99,7 @@ client.once('ready', async () => {
     } else {
         console.log('⚠️ Instagram監控未配置 (INSTAGRAM_TARGET_USERNAME 未設定)');
     }
-    
+
     startBlogMonitoring();
     
     // 啟動 Instagram Mode1 監控
@@ -276,14 +285,7 @@ for (const [channelId, channelConfig] of Object.entries(config.CHANNEL_CONFIGS))
     }
 }
 
-// === Discord Client 設定 ===
-const client = new Client({
-    intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
-    ]
-});
+
 
 // === 博客監控系統 ===
 let blogMonitor = null;
@@ -362,6 +364,8 @@ async function makePhoneCall(message, source = 'system') {
         console.error(`❌ [${source}] 電話通知失敗:`, error.message);
     }
 }
+
+
 
 // Discord ready 事件處理
 client.once('ready', async () => {
