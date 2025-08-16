@@ -26,15 +26,7 @@
     "node-cron": "^3.0.3"
   },
   "engines": {
-    "node": ">=18.0.0",
-    "npm": ">=8.0.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/your-username/your-repo.git"
-  },
-  "bugs": {
-    "url": "https://github.com/your-username/your-repo/issues"
-  },
-  "homepage": "https://github.com/your-username/your-repo#readme"
+    "node": ">=16.0.0",
+    "npm": ">=7.0.0"
+  }
 }

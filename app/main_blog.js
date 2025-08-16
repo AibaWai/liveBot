@@ -1,18 +1,18 @@
 const express = require('express');
-const { Client, GatewayIntentBits, AttachmentBuilder } = require('discord.js');
+const { Client, GatewayIntentBits } = require('discord.js');
 const axios = require('axios');
-const path = require('path');
 
-// 引入模組化組件
-const DiscordCommandHandler = require('./discord_commands');
+const DiscordCommands = require('./discord_commands');
+let discordCommands = null;
+
 
 // Express 設定
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-console.log('🚀 Discord頻道監控 + Family Club博客監控 + Instagram監控機器人啟動中...');
-console.log('📱 Instagram監控: Mode 1 (貼文 + Bio + 頭像變更)');
-console.log('📺 Discord頻道監控 + 📝 Family Club博客監控 + 📸 Instagram監控');
+console.log('🚀 Discord頻道監控 + Family Club博客監控機器人啟動中...');
+console.log('📱 Instagram監控已轉移至CloudPhone (24/7外部監控)');
+console.log('📺 Discord頻道監控 + 📝 Family Club博客監控');
 
 // === 環境變數檢查 ===
 const requiredEnvVars = [
@@ -52,7 +52,7 @@ if (process.env.CHANNEL_CONFIGS) {
             console.log(`✅ 頻道 ${channelId} (${channelConfig.name || '未命名'}) 配置有效`);
         }
     } catch (error) {
-        console.warn('⚠️ Discord頻道配置解析失敗，將只運行博客和Instagram監控');
+        console.warn('⚠️ Discord頻道配置解析失敗，將只運行博客監控');
         console.warn('錯誤詳情:', error.message);
     }
 } else {
@@ -65,19 +65,6 @@ if (BLOG_NOTIFICATION_CHANNEL_ID) {
     console.log('📝 Family Club博客監控已啟用');
 } else {
     console.log('📝 博客監控未配置 (BLOG_NOTIFICATION_CHANNEL_ID 未設定)');
-}
-
-// Instagram監控配置
-const INSTAGRAM_USERNAME = process.env.INSTAGRAM_USERNAME;
-const INSTAGRAM_NOTIFICATION_CHANNEL_ID = process.env.INSTAGRAM_NOTIFICATION_CHANNEL_ID;
-const INSTAGRAM_CHECK_INTERVAL = parseInt(process.env.INSTAGRAM_CHECK_INTERVAL) || 5 * 60 * 1000; // 預設5分鐘
-
-if (INSTAGRAM_USERNAME && INSTAGRAM_NOTIFICATION_CHANNEL_ID) {
-    console.log('📸 Instagram監控已啟用');
-    console.log(`👤 監控用戶: @${INSTAGRAM_USERNAME}`);
-    console.log(`⏰ 檢查間隔: ${INSTAGRAM_CHECK_INTERVAL / 60000} 分鐘`);
-} else {
-    console.log('📸 Instagram監控未配置 (INSTAGRAM_USERNAME 或 INSTAGRAM_NOTIFICATION_CHANNEL_ID 未設定)');
 }
 
 const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
@@ -95,9 +82,6 @@ const config = {
     PUSHCALL_FROM: process.env.PUSHCALL_FROM,
     PUSHCALL_TO: process.env.PUSHCALL_TO,
     BLOG_NOTIFICATION_CHANNEL_ID: process.env.BLOG_NOTIFICATION_CHANNEL_ID,
-    INSTAGRAM_USERNAME: INSTAGRAM_USERNAME,
-    INSTAGRAM_NOTIFICATION_CHANNEL_ID: INSTAGRAM_NOTIFICATION_CHANNEL_ID,
-    INSTAGRAM_CHECK_INTERVAL: INSTAGRAM_CHECK_INTERVAL,
     CLOUDPHONE_NOTIFICATION_CHANNEL: process.env.CLOUDPHONE_NOTIFICATION_CHANNEL || null
 };
 
@@ -122,17 +106,6 @@ let unifiedState = {
         totalChecks: 0,
         articlesFound: 0,
         lastCheck: null
-    },
-    instagram: {
-        isMonitoring: false,
-        username: config.INSTAGRAM_USERNAME,
-        totalChecks: 0,
-        newPostsFound: 0,
-        bioChanges: 0,
-        profilePicChanges: 0,
-        lastCheck: null,
-        lastPostId: null,
-        storageCleanups: 0
     },
     notifications: {
         discordMessages: 0,
@@ -176,86 +149,9 @@ const client = new Client({
     ]
 });
 
-// === 監控系統變數 ===
-let instagramMonitor = null;
-let blogMonitor = null;
-let commandHandler = null;
-
-// === Instagram 監控系統 ===
-async function startInstagramMonitoring() {
-    if (!config.INSTAGRAM_USERNAME || !config.INSTAGRAM_NOTIFICATION_CHANNEL_ID) {
-        console.log('⚠️ [Instagram] 未配置監控參數，跳過Instagram監控');
-        return;
-    }
-
-    try {
-        const InstagramMonitor = require('./instagram_monitor');
-        
-        instagramMonitor = new InstagramMonitor(
-            async (message, type, source, mediaFiles = []) => {
-                try {
-                    const channel = await client.channels.fetch(config.INSTAGRAM_NOTIFICATION_CHANNEL_ID);
-                    
-                    // 準備附件
-                    const attachments = [];
-                    if (mediaFiles && mediaFiles.length > 0) {
-                        for (const filePath of mediaFiles) {
-                            try {
-                                const attachment = new AttachmentBuilder(filePath, {
-                                    name: path.basename(filePath)
-                                });
-                                attachments.push(attachment);
-                            } catch (error) {
-                                console.error(`❌ [Instagram] 附件準備失敗: ${error.message}`);
-                            }
-                        }
-                    }
-                    
-                    // 發送訊息
-                    const messageOptions = { content: message };
-                    if (attachments.length > 0) {
-                        messageOptions.files = attachments;
-                    }
-                    
-                    await channel.send(messageOptions);
-                    
-                    unifiedState.notifications.discordMessages++;
-                    if (type === 'new_post') unifiedState.instagram.newPostsFound++;
-                    if (type === 'bio_change') unifiedState.instagram.bioChanges++;
-                    if (type === 'profile_pic_change') unifiedState.instagram.profilePicChanges++;
-                    
-                    console.log(`📤 [${source}] Instagram通知已發送: ${type} ${attachments.length > 0 ? `(含${attachments.length}個附件)` : ''}`);
-                    
-                    // 如果是新貼文，可選擇撥打電話通知
-                    if (type === 'new_post' && config.PUSHCALL_API_KEY) {
-                        await makePhoneCall(`Instagram @${config.INSTAGRAM_USERNAME} 發布新貼文！`, source);
-                    }
-                    
-                } catch (error) {
-                    console.error('❌ Instagram通知發送失敗:', error.message);
-                }
-            },
-            {
-                username: config.INSTAGRAM_USERNAME,
-                checkInterval: config.INSTAGRAM_CHECK_INTERVAL
-            }
-        );
-        
-        instagramMonitor.startMonitoring();
-        unifiedState.instagram.isMonitoring = true;
-        
-        console.log('🚀 [Instagram] Instagram監控已啟動');
-        console.log(`👤 [Instagram] 監控用戶: @${config.INSTAGRAM_USERNAME}`);
-        console.log(`⏰ [Instagram] 檢查間隔: ${config.INSTAGRAM_CHECK_INTERVAL / 60000} 分鐘`);
-        console.log(`🎯 [Instagram] 監控模式: Mode 1 (貼文 + Bio + 頭像變更)`);
-        console.log(`💾 [Instagram] 存儲策略: Koyeb臨時存儲 + 即時清理`);
-        
-    } catch (error) {
-        console.error('❌ [Instagram] Instagram監控啟動失敗:', error.message);
-    }
-}
-
 // === 博客監控系統 ===
+let blogMonitor = null;
+
 async function startBlogMonitoring() {
     if (!BLOG_NOTIFICATION_CHANNEL_ID) {
         console.log('⚠️ [Blog] 未配置通知頻道，跳過博客監控');
@@ -263,13 +159,13 @@ async function startBlogMonitoring() {
     }
 
     try {
+        // 使用新的真正API監控器
         const FamilyClubBlogMonitor = require('./family_club_blog_monitor');
         
         blogMonitor = new FamilyClubBlogMonitor(async (message, type, source) => {
             try {
                 const channel = await client.channels.fetch(BLOG_NOTIFICATION_CHANNEL_ID);
                 await channel.send(message);
-                unifiedState.blog.articlesFound++;
                 console.log(`📤 [${source}] 博客通知已發送: ${type}`);
             } catch (error) {
                 console.error('❌ 博客通知發送失敗:', error.message);
@@ -277,8 +173,6 @@ async function startBlogMonitoring() {
         });
         
         blogMonitor.startMonitoring();
-        unifiedState.blog.isMonitoring = true;
-        
         console.log('🚀 [Blog] Family Club 博客監控已啟動');
         console.log('🎯 [Blog] 監控模式: 真正的API端點 (diarkiji_list)');
         console.log('🔗 [Blog] API端點: https://web.familyclub.jp/s/jwb/api/list/diarkiji_list?code=F2017&so=JW5&page=0');
@@ -302,7 +196,7 @@ async function sendNotification(message, type = 'info', source = 'system') {
         console.log(`📤 [${source}] Discord通知已發送: ${type}`);
         
         if (type === 'live_alert' && source === 'Discord' && config.PUSHCALL_API_KEY) {
-            await makePhoneCall(`直播開始了！`, source);
+            await makePhoneCall(`Instagram直播開始了！`, source);
         }
     } catch (error) {
         console.error('❌ Discord通知發送失敗:', error.message);
@@ -337,31 +231,24 @@ async function makePhoneCall(message, source = 'system') {
 client.once('ready', () => {
     unifiedState.botReady = true;
     
-    // 先啟動監控系統
+    // 初始化Discord命令處理器
+    discordCommands = new DiscordCommands(
+        config, 
+        unifiedState, 
+        () => blogMonitor, // 使用函數返回 blogMonitor，確保獲取最新狀態
+        sendNotification
+    );
+    
     startBlogMonitoring();
-    startInstagramMonitoring();
-    
-    // 在監控系統啟動後初始化命令處理器
-    setTimeout(() => {
-        commandHandler = new DiscordCommandHandler(
-            unifiedState, 
-            config, 
-            () => blogMonitor, 
-            () => instagramMonitor
-        );
-        console.log('🎮 [Discord] 命令處理器已初始化');
-    }, 1000);
-    
     console.log(`✅ Discord Bot 已上線: ${client.user.tag}`);
     console.log(`📋 Discord頻道監控: ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道`);
     console.log(`🕐 當前日本時間: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}`);
     
-    // 發送啟動通知
+    // 發送啟動通知（修改版本）
     sendNotification(`🚀 **統一監控機器人已啟動** (日本時間)
 
 **Discord頻道監控:** ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道
 **博客監控:** ${config.BLOG_NOTIFICATION_CHANNEL_ID ? '✅ Family Club 高木雄也' : '❌ 未配置'}
-**Instagram監控:** ${config.INSTAGRAM_USERNAME ? `✅ @${config.INSTAGRAM_USERNAME}` : '❌ 未配置'}
 **電話通知:** ${config.PUSHCALL_API_KEY ? '✅ 已配置' : '❌ 未配置'}
 `, 'info', 'System');
     
@@ -379,17 +266,17 @@ client.on('messageCreate', async (message) => {
         
         if (message.author.bot && message.author.id === client.user.id) return;
         
-        // 處理命令
+        // 處理命令（使用新的命令處理器）
         if (message.content.startsWith('!')) {
-            if (commandHandler) {
-                await commandHandler.handleCommand(message);
+            if (discordCommands) {
+                await discordCommands.handleCommand(message);
             } else {
-                await message.reply('❌ 命令處理器尚未初始化，請稍後再試');
+                await message.reply('❌ 命令處理器未初始化，請稍後再試');
             }
             return;
         }
         
-        // 處理頻道監控
+        // 原有的頻道監控邏輯保持不變
         const channelId = message.channel.id;
         if (!config.CHANNEL_CONFIGS[channelId]) return;
         
@@ -421,12 +308,11 @@ client.on('messageCreate', async (message) => {
             };
             unifiedState.discord.lastDetections.push(detection);
             
-            // 保持最多20個檢測記錄
-            if (unifiedState.discord.lastDetections.length > 20) {
-                unifiedState.discord.lastDetections = unifiedState.discord.lastDetections.slice(-20);
+            if (channelConfig.api_key && channelConfig.phone_number) {
+                await callChannelSpecificAPI(channelId, channelConfig, foundKeyword, message.content);
             }
-            
-            // 發送自定義通知訊息到主通知頻道
+
+            // 新增：發送自定義通知訊息到主通知頻道
             if (channelConfig.message) {
                 const customMessage = channelConfig.message
                     .replace('{keyword}', foundKeyword)
@@ -493,66 +379,29 @@ function initializeWebStatusPanel() {
             unifiedState, 
             config, 
             client, 
-            () => instagramMonitor,
+            null, // 不需要Instagram監控函數
             () => blogMonitor
         );
         console.log('🌐 [Web面板] 狀態面板已初始化');
     } catch (error) {
         console.error('❌ [Web面板] 初始化失敗:', error.message);
         setTimeout(() => {
-            console.log('🔄 [Web面板] 重試初始化狀態面板...');
+            console.log('🔄 [Web面板] 開始初始化狀態面板...');
             initializeWebStatusPanel();
-        }, 5000);
+        }, 3000);
     }
 }
+
 
 // 健康檢查端點
 app.get('/health', (req, res) => {
     res.status(200).json({
         status: 'healthy',
         uptime: Math.round((Date.now() - unifiedState.startTime) / 1000),
-        services: {
-            discord: unifiedState.botReady,
-            blog: blogMonitor ? blogMonitor.getStatus().isMonitoring : false,
-            instagram: instagramMonitor ? instagramMonitor.getStatus().isMonitoring : false
-        },
         channels: Object.keys(config.CHANNEL_CONFIGS).length,
-        monitoring: {
-            blog: !!config.BLOG_NOTIFICATION_CHANNEL_ID,
-            instagram: !!(config.INSTAGRAM_USERNAME && config.INSTAGRAM_NOTIFICATION_CHANNEL_ID)
-        }
+        blog: blogMonitor ? blogMonitor.getStatus().isMonitoring : false,
+        discord: unifiedState.botReady
     });
-});
-
-// 基本路由
-app.get('/', (req, res) => {
-    res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>統一監控機器人</title>
-        <meta charset="utf-8">
-        <style>
-            body { font-family: Arial, sans-serif; margin: 40px; }
-            .status { padding: 20px; margin: 10px 0; border-radius: 5px; }
-            .online { background-color: #d4edda; border: 1px solid #c3e6cb; }
-            .offline { background-color: #f8d7da; border: 1px solid #f5c6cb; }
-        </style>
-    </head>
-    <body>
-        <h1>🚀 統一監控機器人</h1>
-        <div class="status ${unifiedState.botReady ? 'online' : 'offline'}">
-            <h3>系統狀態: ${unifiedState.botReady ? '✅ 在線' : '❌ 離線'}</h3>
-            <p>運行時間: ${Math.floor((Date.now() - unifiedState.startTime) / 60000)} 分鐘</p>
-            <p>Discord頻道監控: ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道</p>
-            <p>博客監控: ${config.BLOG_NOTIFICATION_CHANNEL_ID ? '✅ 已啟用' : '❌ 未配置'}</p>
-            <p>Instagram監控: ${config.INSTAGRAM_USERNAME ? `✅ @${config.INSTAGRAM_USERNAME}` : '❌ 未配置'}</p>
-        </div>
-        <p>查看健康狀態: <a href="/health">/health</a></p>
-        <p>當前時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} (日本時間)</p>
-    </body>
-    </html>
-    `);
 });
 
 // 啟動Express服務器
@@ -585,12 +434,6 @@ process.on('SIGINT', async () => {
     
     if (blogMonitor) {
         blogMonitor.stopMonitoring();
-        console.log('📝 [Blog] 博客監控已停止');
-    }
-    
-    if (instagramMonitor) {
-        instagramMonitor.stopMonitoring();
-        console.log('📸 [Instagram] Instagram監控已停止');
     }
     
     if (unifiedState.botReady) {
@@ -598,25 +441,16 @@ process.on('SIGINT', async () => {
     }
     
     client.destroy();
-    console.log('🤖 [Discord] Bot連接已關閉');
     process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
-    console.log('🛑 收到終止信號，正在安全關閉...');
-    
+    console.log('🛑 收到終止信號，正在安全關閉...');    
     if (blogMonitor) {
         blogMonitor.stopMonitoring();
-        console.log('📝 [Blog] 博客監控已停止');
-    }
-    
-    if (instagramMonitor) {
-        instagramMonitor.stopMonitoring();
-        console.log('📸 [Instagram] Instagram監控已停止');
     }
     
     client.destroy();
-    console.log('🤖 [Discord] Bot連接已關閉');
     process.exit(0);
 });
 

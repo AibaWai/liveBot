@@ -1,177 +1,78 @@
-// Discord命令處理模組
-class DiscordCommandHandler {
-    constructor(unifiedState, config, getBlogMonitor, getInstagramMonitor) {
-        this.state = unifiedState;
+class DiscordCommands {
+    constructor(config, unifiedState, blogMonitorGetter, sendNotification) {
         this.config = config;
-        this.getBlogMonitor = getBlogMonitor;
-        this.getInstagramMonitor = getInstagramMonitor;
+        this.unifiedState = unifiedState;
+        this.getBlogMonitor = blogMonitorGetter; // 使用函數來動態獲取 blogMonitor
+        this.sendNotification = sendNotification;
+    }
+
+    get blogMonitor() {
+        return typeof this.getBlogMonitor === 'function' ? this.getBlogMonitor() : this.getBlogMonitor;
     }
 
     async handleCommand(message) {
         const cmd = message.content.toLowerCase();
         
         try {
-            if (cmd === '!status') {
-                await this.handleStatusCommand(message);
-            } else if (cmd === '!ig-status') {
-                await this.handleInstagramStatusCommand(message);
-            } else if (cmd === '!ig-test') {
-                await this.handleInstagramTestCommand(message);
-            } else if (cmd === '!ig-restart') {
-                await this.handleInstagramRestartCommand(message);
-            } else if (cmd === '!blog-status') {
-                await this.handleBlogStatusCommand(message);
-            } else if (cmd === '!blog-test') {
-                await this.handleBlogTestCommand(message);
-            } else if (cmd === '!blog-check') {
-                await this.handleBlogCheckCommand(message);
-            } else if (cmd === '!blog-restart') {
-                await this.handleBlogRestartCommand(message);
-            } else if (cmd === '!channels') {
-                await this.handleChannelsCommand(message);
-            } else if (cmd === '!help') {
-                await this.handleHelpCommand(message);
+            switch (cmd) {
+                case '!status':
+                    await this.handleStatusCommand(message);
+                    break;
+                    
+                case '!blog-status':
+                    await this.handleBlogStatusCommand(message);
+                    break;
+                    
+                case '!blog-test':
+                    await this.handleBlogTestCommand(message);
+                    break;
+                    
+                case '!blog-check':
+                    await this.handleBlogCheckCommand(message);
+                    break;
+                    
+                case '!blog-restart':
+                    await this.handleBlogRestartCommand(message);
+                    break;
+                    
+                case '!channels':
+                    await this.handleChannelsCommand(message);
+                    break;
+                    
+                case '!help':
+                    await this.handleHelpCommand(message);
+                    break;
+                    
+                default:
+                    // 未知命令，可以選擇忽略或回覆
+                    break;
             }
         } catch (error) {
-            console.error('❌ [Discord命令] 處理失敗:', error.message);
-            await message.reply(`❌ 命令執行失敗: ${error.message}`);
+            console.error('❌ [Discord命令] 處理錯誤:', error.message);
+            await message.reply('❌ 命令執行失敗，請稍後再試');
         }
     }
 
     async handleStatusCommand(message) {
-        const runtime = Math.round((Date.now() - this.state.startTime) / 60000);
-        const blogMonitor = this.getBlogMonitor();
-        const instagramMonitor = this.getInstagramMonitor();
-        
-        const blogStatus = blogMonitor ? blogMonitor.getStatus() : { isMonitoring: false };
-        const instagramStatus = instagramMonitor ? instagramMonitor.getStatus() : { isMonitoring: false };
+        const runtime = Math.round((Date.now() - this.unifiedState.startTime) / 60000);
+        const blogStatus = this.blogMonitor ? this.blogMonitor.getStatus() : { isMonitoring: false };
         
         const statusMsg = `📊 **系統狀態** \`${Math.floor(runtime / 60)}h ${runtime % 60}m\`
 
-🤖 **Bot**: ${this.state.botReady ? '✅ 在線' : '❌ 離線'}
+🤖 **Bot**: ${this.unifiedState.botReady ? '✅ 在線' : '❌ 離線'}
 📝 **博客**: ${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 停止'} (\`${blogStatus.totalChecks}\` 次檢查，\`${blogStatus.articlesFound}\` 篇新文章)
-📸 **Instagram**: ${instagramStatus.isMonitoring ? '✅ 運行中' : '❌ 停止'} (\`${instagramStatus.totalChecks}\` 次檢查，\`${instagramStatus.newPostsFound}\` 篇新貼文)
-💬 **Discord**: \`${Object.keys(this.config.CHANNEL_CONFIGS).length}\` 個頻道，\`${this.state.discord.lastDetections.length}\` 次檢測
-📞 **通知**: \`${this.state.notifications.phoneCallsMade}\` 次電話通知
+💬 **Discord**: \`${Object.keys(this.config.CHANNEL_CONFIGS).length}\` 個頻道，\`${this.unifiedState.discord.lastDetections.length}\` 次檢測
+📞 **通知**: \`${this.unifiedState.notifications.phoneCallsMade}\` 次電話通知
 
-🌐 Web面板查看詳情: https://tame-amalee-k-326-34061d70.koyeb.app/`;
+🌐 Web面板查看詳情:https://tame-amalee-k-326-34061d70.koyeb.app/`;
 
         await message.reply(statusMsg);
     }
 
-    async handleInstagramStatusCommand(message) {
-        const instagramMonitor = this.getInstagramMonitor();
-        
-        if (instagramMonitor) {
-            const instagramStatus = instagramMonitor.getStatus();
-            
-            const statusMsg = `📸 **Instagram監控狀態** (@${instagramStatus.username})
-
-**監控狀態:** ${instagramStatus.isMonitoring ? '✅ 運行中' : '❌ 已停止'}
-**目標用戶:** @${instagramStatus.username}
-**監控模式:** Mode 1 (貼文 + Bio + 頭像變更)
-**存儲策略:** ${instagramStatus.storageUsage}
-
-**檢查統計:**
-• 總檢查次數: ${instagramStatus.totalChecks}
-• 發現新貼文: ${instagramStatus.newPostsFound} 篇
-• Bio變更: ${instagramStatus.bioChanges} 次
-• 頭像變更: ${instagramStatus.profilePicChanges} 次
-• 最後檢查: ${instagramStatus.lastCheck || '尚未檢查'}
-• 下次檢查: ${instagramStatus.nextCheck || '未安排'}
-
-**監控設定:**
-• 檢查間隔: ${instagramStatus.checkInterval}
-• 日本時間: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-
-**用戶資訊:**
-• 帳戶類型: ${instagramStatus.isPrivate ? '🔒 私人帳戶' : '🌐 公開帳戶'}
-• 追蹤者數: ${instagramStatus.followerCount || 'N/A'}
-• 追蹤中數: ${instagramStatus.followingCount || 'N/A'}
-• 貼文數: ${instagramStatus.postCount || 'N/A'}
-
-💡 **監控邏輯:**
-• 每${instagramStatus.checkInterval}檢查新貼文、Bio變更、頭像變更
-• 自動下載媒體並發送到Discord
-• 發送後立即清理Koyeb臨時存儲
-• 遇到速率限制自動暫停並恢復`;
-
-            await message.reply(statusMsg);
-        } else {
-            await message.reply('❌ Instagram監控未啟用');
-        }
-    }
-
-    async handleInstagramTestCommand(message) {
-        const instagramMonitor = this.getInstagramMonitor();
-        
-        if (instagramMonitor) {
-            await message.reply('🔍 執行Instagram連接測試...');
-            try {
-                const testResult = await instagramMonitor.testConnection();
-                
-                if (testResult.success) {
-                    const testMsg = `✅ **Instagram連接測試成功**
-
-👤 **目標用戶:** @${testResult.username}
-🔒 **帳戶類型:** ${testResult.isPrivate ? '私人帳戶' : '公開帳戶'}
-👥 **追蹤者數:** ${testResult.followerCount || 'N/A'}
-📸 **貼文總數:** ${testResult.postCount || 'N/A'}
-📝 **最新貼文:** ${testResult.hasRecentPosts ? `✅ 找到 (ID: ${testResult.latestPostId})` : '❌ 無貼文'}
-
-📋 **Bio預覽:**
-${testResult.bio}
-
-✅ Instagram API連接正常！`;
-                    
-                    await message.reply(testMsg);
-                } else {
-                    await message.reply(`❌ **Instagram連接測試失敗**
-
-👤 **目標用戶:** @${testResult.username}
-❌ **錯誤:** ${testResult.error}
-
-🔧 **故障排除建議:**
-• 檢查網絡連接
-• 確認用戶名是否正確
-• 確認帳戶是否為公開帳戶
-• 可能遇到Instagram速率限制，稍後再試`);
-                }
-            } catch (error) {
-                await message.reply(`❌ 測試執行失敗: ${error.message}`);
-            }
-        } else {
-            await message.reply('❌ Instagram監控未啟用');
-        }
-    }
-
-    async handleInstagramRestartCommand(message) {
-        const instagramMonitor = this.getInstagramMonitor();
-        
-        if (instagramMonitor) {
-            await message.reply('🔄 重新啟動Instagram監控...');
-            try {
-                instagramMonitor.stopMonitoring();
-                await new Promise(resolve => setTimeout(resolve, 3000)); // 等待3秒
-                
-                instagramMonitor.startMonitoring();
-                this.state.instagram.isMonitoring = true;
-                
-                await message.reply('✅ **Instagram監控重新啟動成功！**\n\n📊 已重設監控狀態\n⏰ 恢復定期檢查排程\n🧹 已清理臨時存儲');
-            } catch (error) {
-                await message.reply(`❌ 重新啟動失敗: ${error.message}`);
-            }
-        } else {
-            await message.reply('❌ Instagram監控未啟用');
-        }
-    }
-
     async handleBlogStatusCommand(message) {
-        const blogMonitor = this.getBlogMonitor();
-        
-        if (blogMonitor) {
-            const blogStatus = blogMonitor.getStatus();
-            const latestRecord = blogMonitor.getLatestRecord();
+        if (this.blogMonitor) {
+            const blogStatus = this.blogMonitor.getStatus();
+            const latestRecord = this.blogMonitor.getLatestRecord();
             
             const statusMsg = `📝 **Family Club 博客監控狀態** (${blogStatus.artistName})
 
@@ -211,12 +112,10 @@ ${latestRecord.url ? `🔗 連結: ${latestRecord.url}` : ''}
     }
 
     async handleBlogTestCommand(message) {
-        const blogMonitor = this.getBlogMonitor();
-        
-        if (blogMonitor) {
+        if (this.blogMonitor) {
             await message.reply('🔍 執行博客API連接測試...');
             try {
-                const testResult = await blogMonitor.testWebsiteAccess();
+                const testResult = await this.blogMonitor.testWebsiteAccess();
                 
                 if (testResult.success) {
                     const testMsg = `✅ **博客API連接測試成功**
@@ -262,12 +161,11 @@ ${testResult.sampleArticles.map((article, index) =>
     }
 
     async handleBlogCheckCommand(message) {
-        const blogMonitor = this.getBlogMonitor();
-        
-        if (blogMonitor) {
+        if (this.blogMonitor) {
             await message.reply('🔍 執行手動博客檢查...');
             try {
-                const newArticle = await blogMonitor.checkForNewArticles(true);
+                // 調用測試模式檢查
+                const newArticle = await this.blogMonitor.checkForNewArticles(true);
                 
                 if (newArticle) {
                     const checkMsg = `📊 **手動檢查結果**
@@ -281,12 +179,13 @@ ${testResult.sampleArticles.map((article, index) =>
 ${newArticle.url ? `🔗 **連結:** ${newArticle.url}` : ''}
 
 🕐 **檢查時間:** ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })}
-📊 **當前記錄:** ${blogMonitor.getLatestRecord()?.articleCode || '無'}
+📊 **當前記錄:** ${this.blogMonitor.getLatestRecord()?.articleCode || '無'}
 🎯 **API狀態:** 正常運行`;
 
                     await message.reply(checkMsg);
                 } else {
-                    const status = blogMonitor.getStatus();
+                    // 如果沒有返回文章，嘗試獲取狀態信息
+                    const status = this.blogMonitor.getStatus();
                     await message.reply(`❌ **手動檢查完成但無法獲取詳細信息**
 
 📊 **基本狀態:**
@@ -314,17 +213,15 @@ ${newArticle.url ? `🔗 **連結:** ${newArticle.url}` : ''}
     }
 
     async handleBlogRestartCommand(message) {
-        const blogMonitor = this.getBlogMonitor();
-        
-        if (blogMonitor) {
+        if (this.blogMonitor) {
             await message.reply('🔄 重新啟動博客監控...');
             try {
-                blogMonitor.stopMonitoring();
+                this.blogMonitor.stopMonitoring();
                 await new Promise(resolve => setTimeout(resolve, 2000)); // 等待2秒
                 
-                const success = await blogMonitor.reinitialize();
+                const success = await this.blogMonitor.reinitialize();
                 if (success) {
-                    blogMonitor.startMonitoring();
+                    this.blogMonitor.startMonitoring();
                     await message.reply('✅ **博客監控重新啟動成功！**\n\n📊 已重新初始化最新文章記錄\n⏰ 恢復定期檢查排程');
                 } else {
                     await message.reply('❌ **博客監控重新啟動失敗**\n\n無法重新初始化，請檢查API連接和藝人代碼');
@@ -344,7 +241,7 @@ ${newArticle.url ? `🔗 **連結:** ${newArticle.url}` : ''}
         }
 
         const channelsInfo = Object.entries(this.config.CHANNEL_CONFIGS).map(([channelId, channelConfig]) => {
-            const stats = this.state.discord.channelStats[channelId];
+            const stats = this.unifiedState.discord.channelStats[channelId];
             const phoneIcon = channelConfig.phone_number ? '📞' : '❌';
             return `${phoneIcon}**${channelConfig.name || '未命名'}** 
 關鍵字: \`${channelConfig.keywords.join(' / ')}\`
@@ -352,8 +249,8 @@ ${newArticle.url ? `🔗 **連結:** ${newArticle.url}` : ''}
         }).join('\n\n');
 
         let recentPart = '';
-        if (this.state.discord.lastDetections.length > 0) {
-            const recent = this.state.discord.lastDetections.slice(-3).reverse()
+        if (this.unifiedState.discord.lastDetections.length > 0) {
+            const recent = this.unifiedState.discord.lastDetections.slice(-3).reverse()
                 .map(d => `\`${d.關鍵字}\` 在 ${d.頻道}`)
                 .join(', ');
             recentPart = `\n\n**最近檢測:** ${recent}`;
@@ -363,12 +260,7 @@ ${newArticle.url ? `🔗 **連結:** ${newArticle.url}` : ''}
     }
 
     async handleHelpCommand(message) {
-        await message.reply(`🤖 **Discord頻道監控 + 博客監控 + Instagram監控機器人**
-
-📸 **Instagram監控命令**
-\`!ig-status\` - Instagram監控狀態
-\`!ig-test\` - 測試Instagram連接  
-\`!ig-restart\` - 重新啟動Instagram監控
+        await message.reply(`🤖 **Discord頻道監控 + 博客監控機器人**
 
 📝 **博客監控命令**
 \`!blog-status\` - 博客監控狀態
@@ -384,15 +276,14 @@ ${newArticle.url ? `🔗 **連結:** ${newArticle.url}` : ''}
 🚀 **系統功能**
 - Discord頻道關鍵字監控 + 自動電話通知
 - Family Club博客新文章監控  
-- Instagram貼文/Bio/頭像變更監控 (Mode 1)
 - 實時Web狀態面板
-- Koyeb臨時存儲 + 自動清理
+- 多API Key電話通知支援
 
 💡 **使用說明**
-機器人會自動監控配置的Discord頻道、博客和Instagram，檢測到變更時自動發送通知。媒體檔案會在發送後立即從Koyeb臨時存儲中清理。
+機器人會自動監控配置的Discord頻道，檢測到關鍵字時自動發送通知和撥打電話。博客監控每小時自動檢查新文章。
 
 🌐 **Web面板**: https://tame-amalee-k-326-34061d70.koyeb.app/`);
     }
 }
 
-module.exports = DiscordCommandHandler;
+module.exports = DiscordCommands;

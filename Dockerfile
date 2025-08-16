@@ -1,38 +1,31 @@
-# 使用包含 Python 的 Node.js 映像
-FROM node:18
+FROM node:18-alpine
 
-# 安裝基本工具
-RUN apt-get update && apt-get install -y \
-    python3 \
-    python3-pip \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# 設定工作目錄
 WORKDIR /app
 
-# 複製 package.json 和 package-lock.json
-COPY package*.json ./
+# Copy package files first for better caching
+COPY app/package.json package.json
 
-# 安裝 Node.js 依賴
-RUN npm ci --only=production
+# Install dependencies
+RUN npm install --only=production && \
+    npm cache clean --force
 
-# 複製應用程式碼
-COPY . .
+# Copy application files
+COPY app/main_blog.js main_blog.js
+COPY app/discord_commands.js discord_commands.js
+COPY app/family_club_blog_monitor.js family_club_blog_monitor.js
+COPY app/web_status_panel.js web_status_panel.js
 
-# 建立必要的目錄
-RUN mkdir -p /tmp/instagram_cache
+# Create a non-root user for security
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nextjs -u 1001
+RUN chown -R nextjs:nodejs /app
+USER nextjs
 
-# 設定環境變數
-ENV NODE_ENV=production
-ENV TZ=Asia/Tokyo
+# Health check (更新為新的端點)
+HEALTHCHECK --interval=5m --timeout=30s --start-period=5s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })" || exit 1
 
-# 暴露端口
+# Expose port
 EXPOSE 3000
 
-# 健康檢查
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:3000/health || exit 1
-
-# 啟動應用
-CMD ["node", "app/main_blog.js"]
+CMD ["node", "main_blog.js"]
