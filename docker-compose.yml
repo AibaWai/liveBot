@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  livebot:
+    build: .
+    container_name: livebot-instagram
+    ports:
+      - "3000:3000"
+    environment:
+      # Discord 設定
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - NOTIFICATION_CHANNEL_ID=${NOTIFICATION_CHANNEL_ID}
+      - CHANNEL_CONFIGS=${CHANNEL_CONFIGS}
+      
+      # 博客監控設定
+      - BLOG_NOTIFICATION_CHANNEL_ID=${BLOG_NOTIFICATION_CHANNEL_ID}
+      
+      # Instagram 監控設定
+      - INSTAGRAM_TARGET_USERNAME=${INSTAGRAM_TARGET_USERNAME}
+      - INSTAGRAM_SESSION_FILE=/app/sessions/instagram_session.json
+      - INSTAGRAM_MODE1_INTERVAL=600
+      - INSTAGRAM_TRIGGER_CHANNELS=${INSTAGRAM_TRIGGER_CHANNELS}
+      
+      # 電話通知設定
+      - PUSHCALL_API_KEY=${PUSHCALL_API_KEY}
+      - PUSHCALL_FROM=${PUSHCALL_FROM}
+      - PUSHCALL_TO=${PUSHCALL_TO}
+      
+      # CloudPhone 設定
+      - CLOUDPHONE_NOTIFICATION_CHANNEL=${CLOUDPHONE_NOTIFICATION_CHANNEL}
+      
+      # 代理設定（可選）
+      - HTTP_PROXY=${HTTP_PROXY}
+      - HTTPS_PROXY=${HTTPS_PROXY}
+      
+    volumes:
+      # 持久化儲存
+      - ./data/sessions:/app/sessions
+      - ./data/downloads:/app/downloads
+      - ./data/stories:/app/stories
+      - ./data/logs:/app/logs
+    
+    restart: unless-stopped
+    
+    # 資源限制
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    
+    # 健康檢查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 5m
+      timeout: 30s
+      retries: 3
+      start_period: 10s
