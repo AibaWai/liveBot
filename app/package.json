@@ -1,38 +1,28 @@
 {
   "name": "discord-blog-monitor-bot",
   "version": "2.0.0",
-  "description": "Discord頻道監控 + Family Club博客監控機器人 (CloudPhone Instagram架構)",
+  "description": "Discord頻道監控 + Family Club博客監控機器人",
   "main": "main_blog.js",
   "scripts": {
     "start": "node main_blog.js",
-    "dev": "node main_blog.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "node main_blog.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.11.0",
+    "express": "^4.18.2",
+    "axios": "^1.4.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   },
   "keywords": [
     "discord",
     "bot",
     "monitoring",
     "blog",
-    "cloudphone",
-    "familyclub",
-    "notifications"
+    "family-club",
+    "phone-notification"
   ],
   "author": "LiveBot Team",
-  "license": "MIT",
-  "dependencies": {
-    "discord.js": "^14.14.1",
-    "express": "^4.18.2",
-    "axios": "^1.6.2"
-  },
-  "engines": {
-    "node": ">=18.0.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/your-username/discord-blog-monitor-bot.git"
-  },
-  "bugs": {
-    "url": "https://github.com/your-username/discord-blog-monitor-bot/issues"
-  },
-  "homepage": "https://github.com/your-username/discord-blog-monitor-bot#readme"
+  "license": "MIT"
 }
