@@ -32,7 +32,7 @@ RUN npm install --only=production && \
     npm cache clean --force
 
 # 複製應用程式檔案
-COPY app/main.js main.js
+COPY app/main_blog.js main_blog.js
 COPY app/family_club_blog_monitor.js family_club_blog_monitor.js
 COPY app/web_status_panel.js web_status_panel.js
 COPY app/instagram_dynamic_monitor.js instagram_dynamic_monitor.js
