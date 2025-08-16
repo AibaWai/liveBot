@@ -513,8 +513,8 @@ async function handleDiscordCommands(message) {
         const channelsInfo = Object.entries(config.CHANNEL_CONFIGS).map(([channelId, channelConfig]) => {
             const stats = unifiedState.discord.channelStats[channelId];
             const phoneIcon = channelConfig.phone_number ? '📞' : '❌';
-            return `**${channelConfig.name || '未命名'}** ${phoneIcon}
-    關鍵字: \`${channelConfig.keywords.join(' / ')}\`
+            return `${phoneIcon}**${channelConfig.name || '未命名'}** 
+    關鍵字: \`${channelConfig.keywords.join(' / ')}\`f
     統計: \`${stats.keywordsDetected}\` 次檢測，\`${stats.callsMade}\` 次通話`;
         }).join('\n\n');
 
