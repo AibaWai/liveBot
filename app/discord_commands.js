@@ -13,11 +13,11 @@ class DiscordCommandHandler {
         try {
             if (cmd === '!status') {
                 await this.handleStatusCommand(message);
-            } else if (cmd === '!instagram-status') {
+            } else if (cmd === '!ig-status') {
                 await this.handleInstagramStatusCommand(message);
-            } else if (cmd === '!instagram-test') {
+            } else if (cmd === '!ig-test') {
                 await this.handleInstagramTestCommand(message);
-            } else if (cmd === '!instagram-restart') {
+            } else if (cmd === '!ig-restart') {
                 await this.handleInstagramRestartCommand(message);
             } else if (cmd === '!blog-status') {
                 await this.handleBlogStatusCommand(message);
@@ -366,9 +366,9 @@ ${newArticle.url ? `🔗 **連結:** ${newArticle.url}` : ''}
         await message.reply(`🤖 **Discord頻道監控 + 博客監控 + Instagram監控機器人**
 
 📸 **Instagram監控命令**
-\`!instagram-status\` - Instagram監控狀態
-\`!instagram-test\` - 測試Instagram連接  
-\`!instagram-restart\` - 重新啟動Instagram監控
+\`!ig-status\` - Instagram監控狀態
+\`!ig-test\` - 測試Instagram連接  
+\`!ig-restart\` - 重新啟動Instagram監控
 
 📝 **博客監控命令**
 \`!blog-status\` - 博客監控狀態
