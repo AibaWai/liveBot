@@ -7,7 +7,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 console.log('🚀 Discord頻道監控 + Family Club博客監控機器人啟動中...');
-console.log('📱 Instagram監控已轉移至CloudPhone (24/7外部監控)');
+console.log('📱 Instagram監控：動態雙模式系統');
 console.log('📺 Discord頻道監控 + 📝 Family Club博客監控');
 
 // === 環境變數檢查 ===
@@ -55,20 +55,19 @@ if (process.env.CHANNEL_CONFIGS) {
     console.log('📋 未配置Discord頻道監控 (CHANNEL_CONFIGS 未設定)');
 }
 
+// === Instagram 監控配置 ===
 const DynamicInstagramMonitor = require('./instagram_dynamic_monitor');
 
-// === Instagram 監控配置 ===
 const instagramConfig = {
     username: process.env.INSTAGRAM_TARGET_USERNAME,
-    sessionFile: process.env.INSTAGRAM_SESSION_FILE || './instagram_session.json',
-    mode1Interval: process.env.INSTAGRAM_MODE1_INTERVAL || '600', // 10分鐘
+    sessionFile: process.env.INSTAGRAM_SESSION_FILE || '/app/sessions/instagram_session.json',
+    mode1Interval: process.env.INSTAGRAM_MODE1_INTERVAL || '600',
     triggerChannels: process.env.INSTAGRAM_TRIGGER_CHANNELS ? 
         process.env.INSTAGRAM_TRIGGER_CHANNELS.split(',') : []
 };
 
 let instagramMonitor = null;
 
-// 初始化 Instagram 監控
 if (instagramConfig.username) {
     instagramMonitor = new DynamicInstagramMonitor(
         instagramConfig,
@@ -135,7 +134,6 @@ client.on('messageCreate', async (message) => {
         const channelId = message.channel.id;
         if (!config.CHANNEL_CONFIGS[channelId]) return;
         
-        // ... 原有的頻道監控代碼 ...
         
     } catch (error) {
         console.error('❌ [Discord訊息處理] 錯誤:', error.message);
@@ -212,6 +210,21 @@ let unifiedState = {
         channelId: config.CLOUDPHONE_NOTIFICATION_CHANNEL,
         lastNotification: null,
         totalNotifications: 0
+    },
+    instagram: {
+        configured: !!instagramConfig.username,
+        targetUsername: instagramConfig.username,
+        mode1Running: false,
+        mode2Running: false,
+        mode2CooldownUntil: 0,
+        totalMode1Checks: 0,
+        totalMode2Activations: 0,
+        postsDetected: 0,
+        storiesBackedUp: 0,
+        lastMode1Check: null,
+        lastMode2Activation: null,
+        sessionValid: false,
+        triggerChannels: instagramConfig.triggerChannels
     },
     discord: {
         totalMessagesProcessed: 0,
@@ -346,9 +359,15 @@ async function makePhoneCall(message, source = 'system') {
 }
 
 // Discord ready 事件處理
-client.once('ready', () => {
+client.once('ready', async () => {
+    // 啟動 Instagram Mode1 監控
+
     unifiedState.botReady = true;
     startBlogMonitoring();
+    if (instagramMonitor) {
+        await instagramMonitor.startMode1();
+    }
+
     console.log(`✅ Discord Bot 已上線: ${client.user.tag}`);
     console.log(`📋 Discord頻道監控: ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道`);
     console.log(`🕐 當前日本時間: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}`);
@@ -356,6 +375,7 @@ client.once('ready', () => {
     // 發送啟動通知（修改版本）
     sendNotification(`🚀 **統一監控機器人已啟動** (日本時間)
 
+**Instagram監控:** ${instagramConfig.username ? `✅ @${instagramConfig.username}` : '❌ 未配置'}
 **Discord頻道監控:** ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道
 **博客監控:** ${config.BLOG_NOTIFICATION_CHANNEL_ID ? '✅ Family Club 高木雄也' : '❌ 未配置'}
 **電話通知:** ${config.PUSHCALL_API_KEY ? '✅ 已配置' : '❌ 未配置'}
@@ -439,6 +459,32 @@ client.on('messageCreate', async (message) => {
     }
 });
 
+// === Instagram 觸發器處理函數 ===
+async function handleInstagramTriggers(message) {
+    const content = message.content.toLowerCase();
+    
+    if (content.includes('story') || content.includes('限時動態')) {
+        console.log('🔔 [Instagram觸發器] 檢測到Story關鍵字');
+        const success = await instagramMonitor.handleDiscordTrigger(message, 'story_alert');
+        if (success) await message.react('📱');
+        return;
+    }
+    
+    if (content.includes('live') || content.includes('直播') || content.includes('went live')) {
+        console.log('🔴 [Instagram觸發器] 檢測到直播關鍵字');
+        const success = await instagramMonitor.handleDiscordTrigger(message, 'live_alert');
+        if (success) await message.react('🔴');
+        return;
+    }
+    
+    if (content.includes('ig緊急') || content.includes('instagram緊急')) {
+        console.log('🚨 [Instagram觸發器] 檢測到緊急觸發');
+        const success = await instagramMonitor.startMode2('緊急觸發');
+        if (success) await message.react('🚨');
+        return;
+    }
+}
+
 // Discord命令處理
 async function handleDiscordCommands(message) {
     const cmd = message.content.toLowerCase();
@@ -450,55 +496,37 @@ async function handleDiscordCommands(message) {
         
         const statusMsg = `📊 **系統狀態** \`${Math.floor(runtime / 60)}h ${runtime % 60}m\`
 
-🤖 **Bot**: ${unifiedState.botReady ? '✅ 在線' : '❌ 離線'}
-📝 **博客**: ${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 停止'} (\`${blogStatus.totalChecks}\` 次檢查)
-📸 **Instagram**: ${instagramStatus ? 
-    `Mode1: ${instagramStatus.mode1.運行狀態} | Mode2: ${instagramStatus.mode2.運行狀態}` : 
-    '❌ 未配置'}
-💬 **Discord**: \`${Object.keys(config.CHANNEL_CONFIGS).length}\` 個頻道監控
-📞 **通知**: \`${unifiedState.notifications.phoneCallsMade}\` 次電話通知
+    🤖 **Bot**: ${unifiedState.botReady ? '✅ 在線' : '❌ 離線'}
+    📝 **博客**: ${blogStatus.isMonitoring ? '✅ 運行中' : '❌ 停止'} (\`${blogStatus.totalChecks}\` 次檢查)
+    📸 **Instagram**: ${instagramStatus ? 
+        `Mode1: ${instagramStatus.mode1.運行狀態} | Mode2: ${instagramStatus.mode2.運行狀態}` : 
+        '❌ 未配置'}
+    💬 **Discord**: \`${Object.keys(config.CHANNEL_CONFIGS).length}\` 個頻道
+    📞 **通知**: \`${unifiedState.notifications.phoneCallsMade}\` 次電話
 
-🌐 Web面板: https://tame-amalee-k-326-34061d70.koyeb.app/`;
+    🌐 Web面板: https://tame-amalee-k-326-34061d70.koyeb.app/`;
 
         await message.reply(statusMsg);
     }
-    
+       
     // Instagram 專用命令
     else if (cmd === '!ig-status') {
         if (instagramMonitor) {
             const status = instagramMonitor.getStatus();
-            const statusMsg = `📸 **Instagram 監控詳細狀態**
+            const statusMsg = `📸 **Instagram 監控狀態**
 
-**🔄 Mode1 (24/7 基礎監控)**
-• 狀態: ${status.mode1.運行狀態}
-• 啟動時間: ${status.mode1.啟動時間 || '未啟動'}
-• 檢查次數: ${status.mode1.總檢查次數}
-• 檢測貼文: ${status.mode1.檢測到的貼文}
-• Bio變更: ${status.mode1.bio變更次數}
-• 最後檢查: ${status.mode1.最後檢查時間 || '尚未檢查'}
-
-**🔥 Mode2 (按需進階監控)**
-• 狀態: ${status.mode2.運行狀態}
-• 冷卻狀態: ${status.mode2.冷卻狀態}
-• 啟動次數: ${status.mode2.啟動次數}
-• Story備份: ${status.mode2.story備份次數}
-• 最後啟動: ${status.mode2.最後啟動時間 || '從未啟動'}
-• 下次可用: ${status.mode2.下次可用時間 || '立即可用'}
-
-**🔐 登入憑證**
-• 狀態: ${status.登入憑證.狀態}
-• 最後檢查: ${status.登入憑證.最後檢查 || '未檢查'}
-• 錯誤次數: ${status.登入憑證.錯誤次數}
-
-**🎯 監控目標**: @${status.目標用戶}
-**⏰ 當前時間**: ${status.當前時間}`;
+    **Mode1**: ${status.mode1.運行狀態} (檢查: ${status.mode1.總檢查次數}次)
+    **Mode2**: ${status.mode2.運行狀態} (啟動: ${status.mode2.啟動次數}次)
+    **目標**: @${status.目標用戶}
+    **憑證**: ${status.登入憑證.狀態}
+    **檢測**: 貼文${status.mode1.檢測到的貼文}次, Story備份${status.mode2.story備份次數}次`;
 
             await message.reply(statusMsg);
         } else {
             await message.reply('❌ Instagram監控未啟用');
         }
     }
-    
+
     else if (cmd === '!ig-mode2') {
         if (instagramMonitor) {
             const success = await instagramMonitor.handleDiscordTrigger(message, 'manual_command');
@@ -511,7 +539,7 @@ async function handleDiscordCommands(message) {
             await message.reply('❌ Instagram監控未啟用');
         }
     }
-    
+
     else if (cmd === '!ig-stop-mode2') {
         if (instagramMonitor && instagramMonitor.isMode2Running) {
             instagramMonitor.stopMode2(false);
@@ -520,13 +548,12 @@ async function handleDiscordCommands(message) {
             await message.reply('❌ Mode2 未在運行');
         }
     }
-    
+
     else if (cmd === '!ig-restart') {
         if (instagramMonitor) {
             await message.reply('🔄 **重新啟動Instagram監控...**');
             await instagramMonitor.stopAll();
             
-            // 等待3秒後重新啟動
             setTimeout(async () => {
                 await instagramMonitor.startMode1();
                 await message.channel.send('✅ **Instagram監控重新啟動完成**');
@@ -535,7 +562,7 @@ async function handleDiscordCommands(message) {
             await message.reply('❌ Instagram監控未啟用');
         }
     }
-    
+
     else if (cmd === '!ig-test-session') {
         if (instagramMonitor) {
             await message.reply('🔍 **檢查登入憑證狀態...**');
@@ -550,7 +577,7 @@ async function handleDiscordCommands(message) {
             await message.reply('❌ Instagram監控未啟用');
         }
     }
-    
+
     // 博客監控命令
     else if (cmd === '!blog-status') {
         if (blogMonitor) {
