@@ -1,7 +1,7 @@
 {
-  "name": "discord-blog-monitor-bot",
-  "version": "2.0.0",
-  "description": "Discord頻道監控 + Family Club博客監控機器人",
+  "name": "discord-blog-instagram-monitor-bot",
+  "version": "3.0.0",
+  "description": "Discord頻道監控 + Family Club博客監控 + Instagram監控機器人",
   "main": "main_blog.js",
   "scripts": {
     "start": "node main_blog.js",
@@ -20,8 +20,11 @@
     "bot",
     "monitoring",
     "blog",
+    "instagram",
     "family-club",
-    "phone-notification"
+    "phone-notification",
+    "koyeb",
+    "mode-1"
   ],
   "author": "LiveBot Team",
   "license": "MIT"
