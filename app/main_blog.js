@@ -1,49 +1,22 @@
 const express = require('express');
 const { Client, GatewayIntentBits } = require('discord.js');
-const https = require('https');
 const axios = require('axios');
 
 // Express 設定
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 博客監控配置
-const BLOG_NOTIFICATION_CHANNEL_ID = process.env.BLOG_NOTIFICATION_CHANNEL_ID;
-
-if (BLOG_NOTIFICATION_CHANNEL_ID) {
-    console.log('📝 博客監控已啟用 (API探測模式)');
-} else {
-    console.log('📝 博客監控未配置 (BLOG_NOTIFICATION_CHANNEL_ID 未設定)');
-}
-
-console.log('🚀 輕量級統一直播監控機器人啟動中...');
-console.log('📺 Instagram 監控 + Discord 頻道監控 + API探測博客監控');
+console.log('🚀 Discord頻道監控 + Family Club博客監控機器人啟動中...');
+console.log('📱 Instagram監控已轉移至CloudPhone (24/7外部監控)');
+console.log('📺 Discord頻道監控 + 📝 Family Club博客監控');
 
 // === 環境變數檢查 ===
 const requiredEnvVars = [
     'DISCORD_TOKEN', 
-    'NOTIFICATION_CHANNEL_ID',
-    'TARGET_USERNAME'
+    'NOTIFICATION_CHANNEL_ID'
 ];
 
-// 檢查多帳號配置
-let hasMultiAccount = false;
-for (let i = 1; i <= 10; i++) {
-    if (process.env[`IG_ACCOUNT_${i}`]) {
-        hasMultiAccount = true;
-        console.log(`✅ 發現Instagram帳號 ${i}`);
-        break;
-    }
-}
-
-if (!hasMultiAccount) {
-    requiredEnvVars.push('IG_SESSION_ID', 'IG_CSRF_TOKEN', 'IG_DS_USER_ID');
-    console.log('📱 使用單帳號模式');
-} else {
-    console.log('🔄 使用多帳號輪換模式');
-}
-
-// Discord監控配置（可選）
+// Discord監控配置（必要）
 let discordChannelConfigs = {};
 if (process.env.CHANNEL_CONFIGS) {
     try {
@@ -75,9 +48,19 @@ if (process.env.CHANNEL_CONFIGS) {
             console.log(`✅ 頻道 ${channelId} (${channelConfig.name || '未命名'}) 配置有效`);
         }
     } catch (error) {
-        console.warn('⚠️ Discord頻道配置解析失敗，將只監控Instagram');
+        console.warn('⚠️ Discord頻道配置解析失敗，將只運行博客監控');
         console.warn('錯誤詳情:', error.message);
     }
+} else {
+    console.log('📋 未配置Discord頻道監控 (CHANNEL_CONFIGS 未設定)');
+}
+
+// 博客監控配置
+const BLOG_NOTIFICATION_CHANNEL_ID = process.env.BLOG_NOTIFICATION_CHANNEL_ID;
+if (BLOG_NOTIFICATION_CHANNEL_ID) {
+    console.log('📝 Family Club博客監控已啟用');
+} else {
+    console.log('📝 博客監控未配置 (BLOG_NOTIFICATION_CHANNEL_ID 未設定)');
 }
 
 const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
@@ -90,37 +73,35 @@ if (missingVars.length > 0) {
 const config = {
     DISCORD_TOKEN: process.env.DISCORD_TOKEN,
     NOTIFICATION_CHANNEL_ID: process.env.NOTIFICATION_CHANNEL_ID,
-    TARGET_USERNAME: process.env.TARGET_USERNAME,
-    IG_SESSION_ID: process.env.IG_SESSION_ID,
-    IG_CSRF_TOKEN: process.env.IG_CSRF_TOKEN,
-    IG_DS_USER_ID: process.env.IG_DS_USER_ID,
     CHANNEL_CONFIGS: discordChannelConfigs,
     PUSHCALL_API_KEY: process.env.PUSHCALL_API_KEY,
     PUSHCALL_FROM: process.env.PUSHCALL_FROM,
     PUSHCALL_TO: process.env.PUSHCALL_TO,
-    BLOG_NOTIFICATION_CHANNEL_ID: process.env.BLOG_NOTIFICATION_CHANNEL_ID
+    BLOG_NOTIFICATION_CHANNEL_ID: process.env.BLOG_NOTIFICATION_CHANNEL_ID,
+    CLOUDPHONE_NOTIFICATION_CHANNEL: process.env.CLOUDPHONE_NOTIFICATION_CHANNEL || null
 };
 
 // === 統一狀態管理 ===
 let unifiedState = {
     startTime: Date.now(),
     botReady: false,
-    instagram: {
-        isLiveNow: false,
-        targetUserId: null,
-        isMonitoring: false,
-        consecutiveErrors: 0,
-        accountStatus: 'unknown',
-        totalRequests: 0,
-        successfulRequests: 0,
-        lastSuccessTime: Date.now(),
-        lastCheck: null
+    cloudphone: {
+        configured: !!config.CLOUDPHONE_NOTIFICATION_CHANNEL,
+        channelId: config.CLOUDPHONE_NOTIFICATION_CHANNEL,
+        lastNotification: null,
+        totalNotifications: 0
     },
     discord: {
         totalMessagesProcessed: 0,
         channelStats: {},
         lastDetections: [],
         apiUsage: {}
+    },
+    blog: {
+        isMonitoring: false,
+        totalChecks: 0,
+        articlesFound: 0,
+        lastCheck: null
     },
     notifications: {
         discordMessages: 0,
@@ -164,150 +145,7 @@ const client = new Client({
     ]
 });
 
-// === Instagram監控系統 ===
-let instagramMonitor = null;
-
-async function startInstagramMonitoring() {
-    try {
-        if (instagramMonitor && instagramMonitor.isMonitoring) {
-            console.log('⚠️ [Instagram] 監控已在運行中');
-            return;
-        }
-        
-        // 使用新的平衡安全監控器
-        const BalancedSafeInstagramMonitor = require('./balanced_safe_instagram_monitor');
-        
-        instagramMonitor = new BalancedSafeInstagramMonitor(sendNotification);
-        
-        console.log('🚀 [Instagram] 啟動平衡安全監控系統');
-        console.log('🔧 [手動啟動] 監控不會自動開始，請使用 !ig-start 命令');
-        
-        // 預載入目標用戶ID但不開始監控
-        try {
-            console.log(`🔄 [預載] 預載入 @${config.TARGET_USERNAME} 的用戶ID...`);
-            await instagramMonitor.preloadUserIds([config.TARGET_USERNAME]);
-            console.log('✅ [預載] 用戶ID預載入完成，系統準備就緒');
-            
-            // 發送準備就緒通知
-            await sendNotification(`🔧 **Instagram監控系統準備就緒** 
-
-**目標用戶:** @${config.TARGET_USERNAME}
-**用戶ID:** 已預載入 ✅
-**監控狀態:** 等待手動啟動
-
-**🛡️ 平衡安全特性:**
-• 每次檢查只需1個API請求 (預載入用戶ID)
-• 睡眠時段 (02:00-06:00) 完全停止
-• 間隔設定: 2-5分鐘 (保持檢測頻率)
-• 每日限制: 500次總請求, 200次/帳號
-• 🔄 智能輪換: 每2次成功輪換帳號
-• 🚫 嚴格策略: 一次錯誤即停用帳號
-
-**📋 啟動命令:**
-\`!ig-start\` - 開始監控
-\`!ig-status\` - 查看狀態
-\`!ig-accounts\` - 查看帳號狀態
-\`!ig-reset\` - 重置停用的帳號狀態
-
-⚠️ **注意:** 監控不會自動開始，請手動啟動！`, 'info', 'Instagram');
-            
-        } catch (preloadError) {
-            console.error('❌ [預載] 用戶ID預載入失敗:', preloadError.message);
-            
-            await sendNotification(`⚠️ **Instagram監控系統警告** 
-
-**系統狀態:** 已初始化但預載入失敗
-**目標用戶:** @${config.TARGET_USERNAME}
-**錯誤:** ${preloadError.message}
-
-**可能原因:**
-• Instagram帳號認證失效
-• 網絡連接問題
-• 用戶名不存在
-
-**解決方案:**
-1. 檢查帳號cookies是否有效
-2. 使用 \`!ig-start\` 嘗試手動啟動
-3. 使用 \`!ig-accounts\` 檢查帳號狀態
-
-系統已初始化，可嘗試手動操作`, 'warning', 'Instagram');
-        }
-        
-        unifiedState.instagram.isMonitoring = false; // 不自動開始
-        
-    } catch (error) {
-        console.error('❌ [Instagram] 平衡安全監控啟動失敗:', error.message);
-        
-        await sendNotification(`❌ **Instagram監控系統啟動失敗** 
-
-**錯誤:** ${error.message}
-
-**可能原因:**
-• 環境變數配置錯誤
-• Instagram帳號格式錯誤
-• 系統資源不足
-
-**檢查項目:**
-\`IG_ACCOUNT_1\` 格式: sessionid|csrftoken|ds_user_id
-\`IG_ACCOUNT_2\` 格式: sessionid|csrftoken|ds_user_id
-
-請修復配置後重新部署`, 'error', 'Instagram');
-    }
-}
-
-function stopInstagramMonitoring() {
-    if (instagramMonitor) {
-        instagramMonitor.stopMonitoring();
-        unifiedState.instagram.isMonitoring = false;
-        unifiedState.instagram.isLiveNow = false;
-        console.log('⏹️ [Instagram] 監控已停止');
-    }
-}
-
-function getInstagramStatus() {
-    try {
-        if (instagramMonitor && typeof instagramMonitor.getStatus === 'function') {
-            const status = instagramMonitor.getStatus();
-            status.isLiveNow = unifiedState.instagram.isLiveNow;
-            return status;
-        }
-    } catch (error) {
-        console.error('❌ [狀態] 獲取Instagram狀態失敗:', error.message);
-    }
-    
-    // 返回默認狀態
-    return {
-        isMonitoring: false,
-        isLiveNow: false,
-        accountStatus: 'initializing',
-        successRate: 0,
-        totalRequests: 0,
-        successfulRequests: 0,
-        consecutiveErrors: 0,
-        totalAccounts: 0,
-        availableAccounts: 0,
-        disabledAccounts: 0,
-        dailyRequests: 0,
-        maxDailyRequests: 500, // 更新為新的限制
-        lastCheck: null,
-        targetUserId: null,
-        japanTime: new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' }),
-        japanHour: parseInt(new Date().toLocaleString('zh-TW', { 
-            timeZone: 'Asia/Tokyo',
-            hour: '2-digit',
-            hour12: false
-        }).split(':')[0]),
-        currentTimeSlot: 'unknown',
-        sleepHours: [2, 3, 4, 5, 6],
-        lowActivityHours: [0, 1, 7, 8, 23],
-        preloadedUsers: [],
-        errorHandling: 'one_error_disable',
-        rotationStrategy: 'every_2_success',
-        accountDetails: []
-    };
-}
-
-// === 輕量級博客監控系統 ===
+// === 博客監控系統 ===
 let blogMonitor = null;
 
 async function startBlogMonitoring() {
