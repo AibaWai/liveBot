@@ -68,24 +68,29 @@ const instagramConfig = {
 
 let instagramMonitor = null;
 
-if (instagramConfig.username) {
-    instagramMonitor = new DynamicInstagramMonitor(
-        instagramConfig,
-        async (message, type, source) => {
-            await sendNotification(message, type, source || 'Instagram');
-        }
-    );
-    
-    console.log('📸 Instagram動態監控系統已初始化');
-    console.log(`🎯 目標用戶: @${instagramConfig.username}`);
-    console.log(`📺 觸發頻道: ${instagramConfig.triggerChannels.length} 個`);
-} else {
-    console.log('⚠️ Instagram監控未配置 (INSTAGRAM_TARGET_USERNAME 未設定)');
-}
-
 // === 在 Discord ready 事件中啟動 Mode1 ===
 client.once('ready', async () => {
     unifiedState.botReady = true;
+
+    // 初始化 Instagram 監控
+    if (instagramConfig.username) {
+        instagramMonitor = new DynamicInstagramMonitor(
+            instagramConfig,
+            async (message, type, source) => {
+                await sendNotification(message, type, source || 'Instagram');
+            }
+        );
+        
+        console.log('📸 Instagram動態監控系統已初始化');
+        console.log(`🎯 目標用戶: @${instagramConfig.username}`);
+        console.log(`📺 觸發頻道: ${instagramConfig.triggerChannels.length} 個`);
+        
+        // 啟動 Mode1 監控
+        await instagramMonitor.startMode1();
+    } else {
+        console.log('⚠️ Instagram監控未配置 (INSTAGRAM_TARGET_USERNAME 未設定)');
+    }
+    
     startBlogMonitoring();
     
     // 啟動 Instagram Mode1 監控
