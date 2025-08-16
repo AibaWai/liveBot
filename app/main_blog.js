@@ -326,12 +326,7 @@ async function handleDiscordCommands(message) {
 • 電話通知: ${unifiedState.notifications.phoneCallsMade}
 • 最後通知: ${unifiedState.notifications.lastNotification || '無'}
 
-**🛡️ 平衡安全特性:**
-• 預載入用戶ID: ✅ 每次檢查只需1個請求
-• 睡眠模式: ✅ 02:00-06:00完全停止
-• 手動啟動: ✅ 防止意外啟動
-• 智能輪換: ✅ 每2次成功輪換帳號
-• 嚴格策略: ✅ 一次錯誤即停用保護帳號`;
+`;
 
         await message.reply(statusMsg);
     }
@@ -601,26 +596,26 @@ async function callChannelSpecificAPI(channelId, channelConfig, keyword, origina
 let webStatusPanel = null;
 
 function initializeWebStatusPanel() {
-    if (!webStatusPanel  === 'function') {
-        try {
-            const WebStatusPanel = require('./web_status_panel');
-            webStatusPanel = new WebStatusPanel(
-                app, 
-                unifiedState, 
-                config, 
-                client, 
-                () => blogMonitor
-            );
-            console.log('🌐 [Web面板] 狀態面板已初始化');
-        } catch (error) {
-            console.error('❌ [Web面板] 初始化失敗:', error.message);
-            setTimeout(() => {
-                console.log('🔄 [Web面板] 嘗試重新初始化...');
-                initializeWebStatusPanel();
-            }, 5000);
-        }
+    try {
+        const WebStatusPanel = require('./web_status_panel');
+        webStatusPanel = new WebStatusPanel(
+            app, 
+            unifiedState, 
+            config, 
+            client, 
+            null, // 不需要Instagram監控函數
+            () => blogMonitor
+        );
+        console.log('🌐 [Web面板] 狀態面板已初始化');
+    } catch (error) {
+        console.error('❌ [Web面板] 初始化失敗:', error.message);
+        setTimeout(() => {
+            console.log('🔄 [Web面板] 開始初始化狀態面板...');
+            initializeWebStatusPanel();
+        }, 3000);
     }
 }
+
 
 // 健康檢查端點
 app.get('/health', (req, res) => {
