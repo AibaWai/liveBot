@@ -80,50 +80,75 @@ let instagramMonitor = null;
 // === 在 Discord ready 事件中啟動 Mode1 ===
 client.once('ready', async () => {
     unifiedState.botReady = true;
-
-    // 初始化 Instagram 監控
-    if (instagramConfig.username) {
-        instagramMonitor = new DynamicInstagramMonitor(
-            instagramConfig,
-            async (message, type, source) => {
-                await sendNotification(message, type, source || 'Instagram');
-            }
-        );
-        
-        console.log('📸 Instagram動態監控系統已初始化');
-        console.log(`🎯 目標用戶: @${instagramConfig.username}`);
-        console.log(`📺 觸發頻道: ${instagramConfig.triggerChannels.length} 個`);
-        
-        // 啟動 Mode1 監控
-        await instagramMonitor.startMode1();
-    } else {
-        console.log('⚠️ Instagram監控未配置 (INSTAGRAM_TARGET_USERNAME 未設定)');
-    }
-
-    startBlogMonitoring();
-    
-    // 啟動 Instagram Mode1 監控
-    if (instagramMonitor) {
-        await instagramMonitor.startMode1();
-    }
-    
     console.log(`✅ Discord Bot 已上線: ${client.user.tag}`);
-    console.log(`📋 Discord頻道監控: ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道`);
-    console.log(`📸 Instagram監控: ${instagramConfig.username ? '✅ 已啟動' : '❌ 未配置'}`);
-    console.log(`🕐 當前日本時間: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}`);
     
-    // 發送啟動通知
-    sendNotification(`🚀 **統一監控機器人已啟動** (日本時間)
+    try {
+        // 1. Start blog monitoring first (if configured)
+        if (BLOG_NOTIFICATION_CHANNEL_ID) {
+            await startBlogMonitoring();
+            console.log('📝 [Blog] 博客監控已啟動');
+        }
+        
+        // 2. Initialize Instagram monitoring (if configured and username is valid)
+        if (instagramConfig.username && instagramConfig.username !== 'undefined') {
+            try {
+                instagramMonitor = new DynamicInstagramMonitor(
+                    instagramConfig,
+                    async (message, type, source) => {
+                        await sendNotification(message, type, source || 'Instagram');
+                    }
+                );
+                
+                console.log('📸 Instagram動態監控系統已初始化');
+                console.log(`🎯 目標用戶: @${instagramConfig.username}`);
+                console.log(`📺 觸發頻道: ${instagramConfig.triggerChannels.length} 個`);
+                
+                // Start Mode1 monitoring
+                await instagramMonitor.startMode1();
+                
+            } catch (instagramError) {
+                console.error('❌ [Instagram] 初始化失敗:', instagramError.message);
+                instagramMonitor = null; // Disable Instagram monitoring
+            }
+        } else {
+            console.log('⚠️ Instagram監控未配置 (INSTAGRAM_TARGET_USERNAME 未設定或無效)');
+        }
+        
+        // 3. Initialize web status panel (after a delay)
+        setTimeout(() => {
+            try {
+                initializeWebStatusPanel();
+            } catch (error) {
+                console.error('❌ [Web面板] 初始化失敗:', error.message);
+            }
+        }, 3000);
+        
+        // 4. Send startup notification
+        const startupMessage = `🚀 **統一監控機器人已啟動** (日本時間)
 
 **Discord頻道監控:** ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道
 **博客監控:** ${config.BLOG_NOTIFICATION_CHANNEL_ID ? '✅ Family Club 高木雄也' : '❌ 未配置'}
-**Instagram監控:** ${instagramConfig.username ? `✅ @${instagramConfig.username}` : '❌ 未配置'}
+**Instagram監控:** ${instagramMonitor ? `✅ @${instagramConfig.username}` : '❌ 未配置或啟動失敗'}
 **電話通知:** ${config.PUSHCALL_API_KEY ? '✅ 已配置' : '❌ 未配置'}
 
-📸 **Instagram模式說明:**
-• Mode1: 24/7 基礎監控 (貼文、Bio)
-• Mode2: 按需進階監控 (Story備份等)
-`, 'info', 'System');
+系統已準備就緒！`;
+
+        await sendNotification(startupMessage, 'info', 'System');
+        
+        console.log(`📋 Discord頻道監控: ${Object.keys(config.CHANNEL_CONFIGS).length} 個頻道`);
+        console.log(`📸 Instagram監控: ${instagramMonitor ? '✅ 已啟動' : '❌ 未配置或失敗'}`);
+        console.log(`🕐 當前日本時間: ${new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Tokyo' })}`);
+        
+    } catch (error) {
+        console.error('❌ [啟動] 系統初始化失敗:', error.message);
+        
+        // Send error notification
+        try {
+            await sendNotification(`❌ **系統啟動錯誤**\n${error.message}`, 'error', 'System');
+        } catch (notifError) {
+            console.error('❌ [通知] 無法發送錯誤通知:', notifError.message);
+        }
+    }
 });
 
 // === Discord 訊息監聽 - 添加 Instagram 觸發器處理 ===
