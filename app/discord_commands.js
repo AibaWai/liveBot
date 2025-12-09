@@ -43,6 +43,10 @@ class DiscordCommands {
                     await this.handleHelpCommand(message);
                     break;
                     
+                case '!test-embed':
+                    await this.handleTestEmbedCommand(message);
+                    break;
+                    
                 default:
                     // 未知命令，可以選擇忽略或回覆
                     break;
@@ -259,6 +263,38 @@ ${newArticle.url ? `🔗 **連結:** ${newArticle.url}` : ''}
         await message.reply(`📋 **頻道監控詳情**\n\n${channelsInfo}${recentPart}`);
     }
 
+    async handleTestEmbedCommand(message) {
+        try {
+            await message.reply('🧪 **正在發送測試 Embed 訊息...**');
+            
+            // 創建一個包含 "直播" 關鍵字的 embed
+            const { EmbedBuilder } = require('discord.js');
+            
+            const testEmbed = new EmbedBuilder()
+                .setColor('#FF0000')
+                .setTitle('🔴 直播測試通知')
+                .setDescription('這是一個測試 embed，包含"直播"關鍵字')
+                .addFields(
+                    { name: '狀態', value: '直播中', inline: true },
+                    { name: '平台', value: 'YouTube/Instagram', inline: true },
+                    { name: '時間', value: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }), inline: false }
+                )
+                .setTimestamp()
+                .setFooter({ text: '這是測試訊息 - 用於測試關鍵字檢測' });
+            
+            await message.channel.send({ 
+                content: '測試訊息 (應該觸發關鍵字檢測)',
+                embeds: [testEmbed] 
+            });
+            
+            console.log('✅ [測試] 已發送測試 embed 訊息');
+            
+        } catch (error) {
+            console.error('❌ [測試] 發送測試 embed 失敗:', error.message);
+            await message.reply(`❌ 測試 embed 發送失敗: ${error.message}`);
+        }
+    }
+
     async handleHelpCommand(message) {
         await message.reply(`🤖 **Discord頻道監控 + 博客監控機器人**
 
@@ -271,6 +307,7 @@ ${newArticle.url ? `🔗 **連結:** ${newArticle.url}` : ''}
 💬 **Discord監控命令**
 \`!channels\` - 查看頻道監控詳情
 \`!status\` - 完整系統狀態
+\`!test-embed\` - 發送測試 embed (測試關鍵字檢測)
 \`!help\` - 顯示此幫助
 
 🚀 **系統功能**
@@ -278,6 +315,7 @@ ${newArticle.url ? `🔗 **連結:** ${newArticle.url}` : ''}
 - Family Club博客新文章監控  
 - 實時Web狀態面板
 - 多API Key電話通知支援
+- 支援檢測 embed 中的關鍵字
 
 💡 **使用說明**
 機器人會自動監控配置的Discord頻道，檢測到關鍵字時自動發送通知和撥打電話。博客監控每小時自動檢查新文章。
