@@ -259,7 +259,7 @@ client.once('ready', () => {
     }, 3000);
 });
 
-// Discord消息監聽
+// Discord消息監聽 - 修改版：支持檢測 embed 中的關鍵字
 client.on('messageCreate', async (message) => {
     try {
         unifiedState.discord.totalMessagesProcessed++;
@@ -276,18 +276,53 @@ client.on('messageCreate', async (message) => {
             return;
         }
         
-        // 原有的頻道監控邏輯保持不變
+        // 頻道監控邏輯
         const channelId = message.channel.id;
         if (!config.CHANNEL_CONFIGS[channelId]) return;
         
         const channelConfig = config.CHANNEL_CONFIGS[channelId];
-        const messageContent = message.content.toLowerCase();
+        
+        // === 關鍵修改：收集所有可檢查的文本內容 ===
+        let searchableText = message.content.toLowerCase();
+        let embedDetected = false;
+        
+        // 添加 embed 內容到搜索文本
+        if (message.embeds && message.embeds.length > 0) {
+            console.log(`📦 [Discord] 檢測到 ${message.embeds.length} 個 embed`);
+            
+            for (const embed of message.embeds) {
+                if (embed.title) {
+                    searchableText += ' ' + embed.title.toLowerCase();
+                    console.log(`   📝 Embed Title: ${embed.title}`);
+                }
+                if (embed.description) {
+                    searchableText += ' ' + embed.description.toLowerCase();
+                    console.log(`   📝 Embed Description: ${embed.description.substring(0, 100)}...`);
+                }
+                if (embed.author?.name) {
+                    searchableText += ' ' + embed.author.name.toLowerCase();
+                }
+                if (embed.footer?.text) {
+                    searchableText += ' ' + embed.footer.text.toLowerCase();
+                }
+                
+                // 添加 fields 內容
+                if (embed.fields && embed.fields.length > 0) {
+                    for (const field of embed.fields) {
+                        if (field.name) searchableText += ' ' + field.name.toLowerCase();
+                        if (field.value) searchableText += ' ' + field.value.toLowerCase();
+                    }
+                }
+            }
+            embedDetected = true;
+        }
         
         unifiedState.discord.channelStats[channelId].messagesProcessed++;
         
+        // 在合併的文本中搜索關鍵字
         let foundKeyword = null;
         for (const keyword of channelConfig.keywords) {
-            if (messageContent.includes(keyword.toLowerCase())) {
+            if (searchableText.includes(keyword.toLowerCase())) {
                 foundKeyword = keyword;
                 break;
             }
@@ -297,22 +332,20 @@ client.on('messageCreate', async (message) => {
             unifiedState.discord.channelStats[channelId].keywordsDetected++;
             unifiedState.discord.channelStats[channelId].lastDetection = new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
             
-            console.log(`🔔 [Discord頻道監控] 檢測到關鍵字: "${foundKeyword}"`);
+            const detectionSource = embedDetected ? 'embed' : '訊息內容';
+            console.log(`🔔 [Discord頻道監控] 檢測到關鍵字: "${foundKeyword}" (來源: ${detectionSource})`);
             
             const detection = {
                 時間: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }),
                 頻道: channelConfig.name || channelId,
                 關鍵字: foundKeyword,
-                訊息: message.content.substring(0, 150),
-                作者: message.author.username
+                訊息: searchableText.substring(0, 150),
+                作者: message.author.username,
+                來源: detectionSource
             };
             unifiedState.discord.lastDetections.push(detection);
             
-            if (channelConfig.api_key && channelConfig.phone_number) {
-                await callChannelSpecificAPI(channelId, channelConfig, foundKeyword, message.content);
-            }
-
-            // 新增：發送自定義通知訊息到主通知頻道
+            // 發送自定義通知訊息到主通知頻道
             if (channelConfig.message) {
                 const customMessage = channelConfig.message
                     .replace('{keyword}', foundKeyword)
@@ -325,7 +358,7 @@ client.on('messageCreate', async (message) => {
             
             // 撥打頻道專用電話
             if (channelConfig.api_key && channelConfig.phone_number) {
-                await callChannelSpecificAPI(channelId, channelConfig, foundKeyword, message.content);
+                await callChannelSpecificAPI(channelId, channelConfig, foundKeyword, searchableText);
             }
         }
         
