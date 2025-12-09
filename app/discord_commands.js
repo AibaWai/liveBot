@@ -265,29 +265,46 @@ ${newArticle.url ? `🔗 **連結:** ${newArticle.url}` : ''}
 
     async handleTestEmbedCommand(message) {
         try {
-            await message.reply('🧪 **正在發送測試 Embed 訊息...**');
+            // 檢查當前頻道是否在監控列表中
+            const currentChannelId = message.channel.id;
+            const isMonitoredChannel = !!this.config.CHANNEL_CONFIGS[currentChannelId];
+            
+            if (isMonitoredChannel) {
+                await message.reply('🧪 **正在當前頻道發送測試 Embed 訊息...**\n⚠️ 注意：這將觸發關鍵字檢測和電話通知！');
+            } else {
+                // 列出所有監控頻道
+                const monitoredChannels = Object.entries(this.config.CHANNEL_CONFIGS)
+                    .map(([id, config]) => `• ${config.name} (ID: ${id})`)
+                    .join('\n');
+                
+                await message.reply(`⚠️ **當前頻道不在監控列表中**\n\n📋 **監控的頻道:**\n${monitoredChannels}\n\n💡 請在監控頻道中使用此命令，或使用 \`!test-embed <頻道ID>\` 指定頻道`);
+                return;
+            }
             
             // 創建一個包含 "直播" 關鍵字的 embed
             const { EmbedBuilder } = require('discord.js');
             
+            const channelConfig = this.config.CHANNEL_CONFIGS[currentChannelId];
+            const testKeyword = channelConfig.keywords[0]; // 使用該頻道配置的第一個關鍵字
+            
             const testEmbed = new EmbedBuilder()
                 .setColor('#FF0000')
-                .setTitle('🔴 直播測試通知')
-                .setDescription('這是一個測試 embed，包含"直播"關鍵字')
+                .setTitle(`🔴 ${testKeyword}測試通知`)
+                .setDescription(`這是一個測試 embed，包含"${testKeyword}"關鍵字`)
                 .addFields(
-                    { name: '狀態', value: '直播中', inline: true },
-                    { name: '平台', value: 'YouTube/Instagram', inline: true },
+                    { name: '狀態', value: `${testKeyword}中`, inline: true },
+                    { name: '頻道', value: channelConfig.name, inline: true },
                     { name: '時間', value: new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' }), inline: false }
                 )
                 .setTimestamp()
-                .setFooter({ text: '這是測試訊息 - 用於測試關鍵字檢測' });
+                .setFooter({ text: '這是測試訊息 - 應該觸發關鍵字檢測和電話通知' });
             
             await message.channel.send({ 
-                content: '測試訊息 (應該觸發關鍵字檢測)',
+                content: `測試訊息 - 關鍵字: ${testKeyword}`,
                 embeds: [testEmbed] 
             });
             
-            console.log('✅ [測試] 已發送測試 embed 訊息');
+            console.log(`✅ [測試] 已在頻道 ${channelConfig.name} 發送測試 embed，關鍵字: ${testKeyword}`);
             
         } catch (error) {
             console.error('❌ [測試] 發送測試 embed 失敗:', error.message);
