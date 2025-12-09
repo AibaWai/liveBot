@@ -264,7 +264,14 @@ client.on('messageCreate', async (message) => {
     try {
         unifiedState.discord.totalMessagesProcessed++;
         
-        if (message.author.bot && message.author.id === client.user.id) return;
+        // 忽略自己的命令回覆,但不忽略自己發送的測試 embed
+        if (message.author.bot && message.author.id === client.user.id) {
+            // 如果是測試訊息(包含 embed),允許繼續處理
+            if (!message.embeds || message.embeds.length === 0) {
+                return;
+            }
+            console.log('🧪 [測試] 檢測到 Bot 自己發送的 embed 訊息,繼續處理...');
+        }
         
         // 處理命令（使用新的命令處理器）
         if (message.content.startsWith('!')) {
